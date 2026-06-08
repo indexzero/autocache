@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { waybackifyMarkdown } from '../index.js';
+import { extractLinks, waybackifyMarkdown } from '../index.js';
 
 // Deterministic, offline wayback: every http(s) URL "has" an archive at a
 // fixed timestamp, except hosts listed in `dead` (no snapshot → null).
@@ -13,6 +13,33 @@ function fakeWayback(dead = []) {
   };
 }
 const archived = url => `https://web.archive.org/web/20140101000000/${url}`;
+
+describe('extractLinks (pure detection for the ledger)', () => {
+  it('returns unique archivable URLs in document order; excludes the rest', () => {
+    const md = [
+      'inline [a](http://a.com/1)',
+      'ref: [b][x]',
+      '[x]: https://b.com/2',
+      '<a href="http://c.com/3">c</a>',
+      'bare http://a.com/1 again (dup)',
+      'prose http://d.com/4',
+      'image ![i](http://img.com/x.png)',
+      'internal [h](/whoami) and [m](mailto:x@y.z)',
+      'archived [z](https://web.archive.org/web/20200101000000/http://e.com)'
+    ].join('\n');
+    assert.deepEqual(extractLinks(md), [
+      'http://a.com/1',
+      'https://b.com/2',
+      'http://c.com/3',
+      'http://d.com/4'
+    ]);
+  });
+
+  it('honors the skip (liveUrls) list', () => {
+    const md = '[a](http://live.com/keep) [b](http://dead.com/x)';
+    assert.deepEqual(extractLinks(md, { skip: ['http://live.com'] }), ['http://dead.com/x']);
+  });
+});
 
 describe('waybackifyMarkdown — link forms', () => {
   const wayback = fakeWayback();

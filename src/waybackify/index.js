@@ -35,15 +35,20 @@ class WaybackMachine {
     api.searchParams.set('filter', 'statuscode:200');
     api.searchParams.set('fl', 'timestamp,original');
 
+    let lastError;
     for (let attempt = 0; attempt < this.maxAttempts; attempt++) {
       if (attempt > 0) {
         await new Promise(r => setTimeout(r, 400 * 2 ** (attempt - 1))); // 400/800/1600ms
       }
       try {
         const res = await this.impit.fetch(api.toString());
-        if (res.status !== 200) continue; // transient — back off and retry
+        if (res.status !== 200) {
+          lastError = new Error(`HTTP ${res.status}`);
+          continue; // transient — back off and retry
+        }
         const rows = await res.json();
-        // rows[0] is the header; a data row is [timestamp, original].
+        // rows[0] is the header; a data row is [timestamp, original]. A clean
+        // 200 with no data row is authoritative: the URL is NOT archived.
         if (Array.isArray(rows) && rows.length > 1) {
           const [ts, original] = rows[1];
           return {
@@ -52,14 +57,15 @@ class WaybackMachine {
             available: true
           };
         }
-        return null; // clean empty result → genuinely not archived
+        return null;
       } catch (error) {
-        if (attempt === this.maxAttempts - 1) {
-          console.error(`waybackify: ${url}: ${error.message}`);
-        }
+        lastError = error;
       }
     }
-    return null;
+    // Every attempt failed transiently (timeout / non-200). Distinct from a
+    // clean "not archived" (null): callers that cache results must NOT record
+    // this as a negative — it should be retried later. So we throw.
+    throw lastError ?? new Error(`waybackify: lookup failed for ${url}`);
   }
 
   /**
@@ -121,13 +127,12 @@ class WaybackMachine {
  * Transform a URL into an Internet Archive Wayback Machine permalink
  * @param {string} url - The URL to waybackify
  * @param {Object} [options] - Wayback options
- * @param {string} [options.timestamp] - Preferred timestamp
  * @param {WaybackMachine} [options.wayback] - Custom wayback instance
- * @returns {Promise<string|null>} Wayback URL or null if not found
+ * @returns {Promise<string|null>} Wayback URL, or null if not archived / lookup failed
  */
 export async function waybackify(url, options = {}) {
-  const { timestamp, wayback = new WaybackMachine() } = options;
-  
+  const { wayback = new WaybackMachine() } = options;
+
   // Skip if already a wayback URL
   if (url.includes('web.archive.org/web/')) {
     return url;
@@ -138,7 +143,15 @@ export async function waybackify(url, options = {}) {
     return null;
   }
 
-  const snapshot = await wayback.getSnapshot(url, timestamp);
+  // A transient lookup failure throws; here we treat it the same as "not
+  // archived" — leave the link unchanged. Callers that need to retry later
+  // (the ledger builder) call getSnapshot directly and handle the throw.
+  let snapshot;
+  try {
+    snapshot = await wayback.getSnapshot(url);
+  } catch {
+    return null;
+  }
   return snapshot?.available ? snapshot.url : null;
 }
 
@@ -175,6 +188,38 @@ function classifyMatch(m) {
   if (m[5] !== undefined) return { url: m[5], form: 'reference', text: m[4] };
   if (m[6] !== undefined) return { url: m[6], form: 'html', text: m[7] };
   return { url: m[0], form: 'bare', text: m[0] };
+}
+
+/**
+ * Extract the unique external http(s) URLs from markdown that
+ * waybackifyMarkdown would archive — inline / reference / HTML links and bare
+ * prose URLs, in document order. PURE (no network): this is the detection half
+ * of waybackifyMarkdown, for callers that resolve + cache separately (e.g. an
+ * incremental ledger builder). Image embeds, internal/relative links,
+ * non-http(s) schemes, already-archived URLs, and anything in `skip` are
+ * excluded.
+ * @param {string} markdown
+ * @param {Object} [options]
+ * @param {Array<string>} [options.skip] - URLs to exclude (exact or prefix)
+ * @returns {string[]} unique archivable URLs
+ */
+export function extractLinks(markdown, options = {}) {
+  const { skip = [] } = options;
+  const isSkipped = url => skip.some(s => url === s || url.startsWith(s));
+  const seen = new Set();
+  const out = [];
+  for (const m of markdown.matchAll(LINK_PATTERN)) {
+    const { url, form } = classifyMatch(m);
+    if (form === 'image') continue;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) continue;
+    if (url.includes('web.archive.org/web/')) continue;
+    if (isSkipped(url)) continue;
+    if (!seen.has(url)) {
+      seen.add(url);
+      out.push(url);
+    }
+  }
+  return out;
 }
 
 /**

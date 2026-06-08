@@ -27,19 +27,28 @@ class WaybackMachine {
   }
 
   /**
-   * Get an archived snapshot for a URL via the CDX index (earliest 200
-   * capture). Retries transient failures (timeouts, non-200) with backoff;
-   * a clean empty result is treated as "not archived" → null.
+   * Get an archived snapshot for a URL via the CDX index. Returns the 200
+   * capture CLOSEST to `near` (a YYYYMMDD[HHMMSS] target — e.g. the post's
+   * date) so a link points at the version that was live when it was written,
+   * not the earliest snapshot ever taken. Without `near`, returns the latest
+   * capture. Retries transient failures with backoff; a clean empty result is
+   * "not archived" → null.
    * @param {string} url - The URL to find an archived version of
+   * @param {Object} [opts]
+   * @param {string} [opts.near] - Preferred timestamp (YYYYMMDD[HHMMSS])
    * @returns {Promise<Object|null>} { url, timestamp, available } or null
    */
-  async getSnapshot(url) {
+  async getSnapshot(url, { near } = {}) {
     const api = new URL('https://web.archive.org/cdx/search/cdx');
     api.searchParams.set('url', url);
     api.searchParams.set('output', 'json');
-    api.searchParams.set('limit', '1'); // one capture is enough to build a permalink
     api.searchParams.set('filter', 'statuscode:200');
     api.searchParams.set('fl', 'timestamp,original');
+    // Collapse to one capture per year so the response stays small even for
+    // heavily-archived URLs, while still spanning the URL's whole lifetime —
+    // enough granularity to pick the year nearest the post.
+    api.searchParams.set('collapse', 'timestamp:4');
+    api.searchParams.set('limit', '200');
 
     let lastError;
     for (let attempt = 0; attempt < this.maxAttempts; attempt++) {
@@ -66,18 +75,21 @@ class WaybackMachine {
           lastError = new Error(`HTTP ${res.status}`);
           continue; // transient — back off and retry
         }
-        const rows = await res.json();
-        // rows[0] is the header; a data row is [timestamp, original]. A clean
+        const data = await res.json();
+        // data[0] is the header; data rows are [timestamp, original]. A clean
         // 200 with no data row is authoritative: the URL is NOT archived.
-        if (Array.isArray(rows) && rows.length > 1) {
-          const [ts, original] = rows[1];
-          return {
-            url: `https://web.archive.org/web/${ts}/${original}`,
-            timestamp: ts,
-            available: true
-          };
-        }
-        return null;
+        const rows = Array.isArray(data) ? data.slice(1) : [];
+        if (rows.length === 0) return null;
+        // Pick the capture nearest `near` (else the most recent).
+        const target = near ? Number(near.padEnd(14, '0')) : Number(rows[rows.length - 1][0]);
+        const [ts, original] = rows.reduce((best, r) =>
+          Math.abs(Number(r[0]) - target) < Math.abs(Number(best[0]) - target) ? r : best
+        );
+        return {
+          url: `https://web.archive.org/web/${ts}/${original}`,
+          timestamp: ts,
+          available: true
+        };
       } catch (error) {
         lastError = error;
         this.onResponse?.({

@@ -17,6 +17,6 @@
   "author": "Charlie Robbins <npm@charlie.dev>",
   "license": "MIT",
   "dependencies": {
-    "undici": "^6.0.0"
+    "impit": "^0.14.1"
   }
 }

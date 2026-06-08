@@ -1,68 +1,65 @@
-import { Agent, request } from 'undici';
-
-// Custom Agent with extended timeouts for Internet Archive requests
-const agentDefaults = {
-  keepAliveTimeout: 10 * 1000,
-  keepAliveMaxTimeout: 10 * 60 * 1000,
-  connections: 128,
-  headersTimeout: 5 * 60 * 1000,
-  bodyTimeout: 10 * 60 * 1000
-};
-
-const agent = new Agent(agentDefaults);
+import { Impit } from 'impit';
 
 /**
- * Internet Archive Wayback Machine API client
+ * Internet Archive Wayback Machine API client.
+ *
+ * HTTP goes through `impit` (browser impersonation) rather than a plain client
+ * — the Internet Archive throttles/blocks naive bulk clients, and impit's
+ * real-browser TLS/HTTP fingerprint sustains the throughput a corpus-wide
+ * re-import needs.
+ *
+ * Lookups use the CDX index (`/cdx/search/cdx`), not `/wayback/available`:
+ * `/available` intermittently returns an empty result for URLs that ARE
+ * archived (even on a single request), which silently leaves live links
+ * un-rewritten. CDX is authoritative.
  */
 class WaybackMachine {
   constructor(options = {}) {
     this.baseUrl = options.baseUrl || 'http://archive.org';
-    this.agent = options.agent || agent;
+    this.maxAttempts = options.maxAttempts ?? 3;
+    this.impit = options.impit || new Impit({ browser: 'chrome', timeout: options.timeout ?? 20000 });
   }
 
   /**
-   * Get the closest archived snapshot for a URL
+   * Get an archived snapshot for a URL via the CDX index (earliest 200
+   * capture). Retries transient failures (timeouts, non-200) with backoff;
+   * a clean empty result is treated as "not archived" → null.
    * @param {string} url - The URL to find an archived version of
-   * @param {string} [timestamp] - Optional timestamp (YYYYMMDDHHMMSS format)
-   * @returns {Promise<Object|null>} Archive info or null if not found
+   * @returns {Promise<Object|null>} { url, timestamp, available } or null
    */
-  async getSnapshot(url, timestamp) {
-    const apiUrl = new URL('/wayback/available', this.baseUrl);
-    apiUrl.searchParams.set('url', url);
-    if (timestamp) {
-      apiUrl.searchParams.set('timestamp', timestamp);
-    }
+  async getSnapshot(url) {
+    const api = new URL('https://web.archive.org/cdx/search/cdx');
+    api.searchParams.set('url', url);
+    api.searchParams.set('output', 'json');
+    api.searchParams.set('limit', '1'); // one capture is enough to build a permalink
+    api.searchParams.set('filter', 'statuscode:200');
+    api.searchParams.set('fl', 'timestamp,original');
 
-    try {
-      const response = await request(apiUrl.toString(), {
-        method: 'GET',
-        dispatcher: this.agent,
-        headers: {
-          'User-Agent': 'waybackify/0.0.0 (+https://github.com/indexzero/.online)'
+    for (let attempt = 0; attempt < this.maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise(r => setTimeout(r, 400 * 2 ** (attempt - 1))); // 400/800/1600ms
+      }
+      try {
+        const res = await this.impit.fetch(api.toString());
+        if (res.status !== 200) continue; // transient — back off and retry
+        const rows = await res.json();
+        // rows[0] is the header; a data row is [timestamp, original].
+        if (Array.isArray(rows) && rows.length > 1) {
+          const [ts, original] = rows[1];
+          return {
+            url: `https://web.archive.org/web/${ts}/${original}`,
+            timestamp: ts,
+            available: true
+          };
         }
-      });
-
-      if (response.statusCode !== 200) {
-        return null;
+        return null; // clean empty result → genuinely not archived
+      } catch (error) {
+        if (attempt === this.maxAttempts - 1) {
+          console.error(`waybackify: ${url}: ${error.message}`);
+        }
       }
-
-      const data = await response.body.json();
-      
-      // Return the closest snapshot if available
-      if (data.archived_snapshots && data.archived_snapshots.closest) {
-        return {
-          url: data.archived_snapshots.closest.url,
-          timestamp: data.archived_snapshots.closest.timestamp,
-          status: data.archived_snapshots.closest.status,
-          available: data.archived_snapshots.closest.available
-        };
-      }
-
-      return null;
-    } catch (error) {
-      console.error(`Error fetching snapshot for ${url}:`, error.message);
-      return null;
     }
+    return null;
   }
 
   /**
@@ -90,20 +87,14 @@ class WaybackMachine {
     }
 
     try {
-      const response = await request(apiUrl.toString(), {
-        method: 'GET',
-        dispatcher: this.agent,
-        headers: {
-          'User-Agent': 'waybackify/0.0.0 (+https://github.com/indexzero/.online)'
-        }
-      });
+      const response = await this.impit.fetch(apiUrl.toString());
 
-      if (response.statusCode !== 200) {
+      if (response.status !== 200) {
         return [];
       }
 
-      const data = await response.body.json();
-      
+      const data = await response.json();
+
       // First row is headers, skip it
       if (data.length <= 1) {
         return [];

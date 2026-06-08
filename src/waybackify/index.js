@@ -39,23 +39,46 @@ class WaybackMachine {
    * @returns {Promise<Object|null>} { url, timestamp, available } or null
    */
   async getSnapshot(url, { near } = {}) {
+    // Bound the CDX scan with a date window around the target rather than
+    // collapsing the URL's whole history — `collapse` forces a full-history
+    // scan that hangs on heavily-archived domains (e.g. github.com paths).
+    let rows;
+    if (near) {
+      const year = Number(near.slice(0, 4));
+      rows = await this.#cdxRows(url, { from: `${year - 3}0101`, to: `${year + 3}1231`, limit: 50 });
+      // Nothing captured near the post date → fall back to any capture (latest).
+      if (rows.length === 0) rows = await this.#cdxRows(url, { fastLatest: 'true', limit: 1 });
+    } else {
+      rows = await this.#cdxRows(url, { fastLatest: 'true', limit: 1 });
+    }
+    if (rows.length === 0) return null; // authoritatively not archived
+
+    const target = near ? Number(near.padEnd(14, '0')) : Number(rows[rows.length - 1][0]);
+    const [ts, original] = rows.reduce((best, r) =>
+      Math.abs(Number(r[0]) - target) < Math.abs(Number(best[0]) - target) ? r : best
+    );
+    return { url: `https://web.archive.org/web/${ts}/${original}`, timestamp: ts, available: true };
+  }
+
+  /**
+   * One CDX query → its data rows ([timestamp, original]). Retries transient
+   * failures (timeout / non-200) with backoff and THROWS if all attempts fail,
+   * so a caller never mistakes a throttle for "not archived".
+   */
+  async #cdxRows(url, params) {
     const api = new URL('https://web.archive.org/cdx/search/cdx');
     api.searchParams.set('url', url);
     api.searchParams.set('output', 'json');
     api.searchParams.set('filter', 'statuscode:200');
     api.searchParams.set('fl', 'timestamp,original');
-    // Collapse to one capture per year so the response stays small even for
-    // heavily-archived URLs, while still spanning the URL's whole lifetime —
-    // enough granularity to pick the year nearest the post.
-    api.searchParams.set('collapse', 'timestamp:4');
-    api.searchParams.set('limit', '200');
+    for (const [k, v] of Object.entries(params)) api.searchParams.set(k, String(v));
+    const requestUrl = api.toString();
 
     let lastError;
     for (let attempt = 0; attempt < this.maxAttempts; attempt++) {
       if (attempt > 0) {
         await new Promise(r => setTimeout(r, 400 * 2 ** (attempt - 1))); // 400/800/1600ms
       }
-      const requestUrl = api.toString();
       this.onRequest?.({
         method: 'GET',
         url: requestUrl,
@@ -65,31 +88,14 @@ class WaybackMachine {
       const started = Date.now();
       try {
         const res = await this.impit.fetch(requestUrl);
-        this.onResponse?.({
-          url: requestUrl,
-          status: res.status,
-          ms: Date.now() - started,
-          attempt: attempt + 1
-        });
+        this.onResponse?.({ url: requestUrl, status: res.status, ms: Date.now() - started, attempt: attempt + 1 });
         if (res.status !== 200) {
           lastError = new Error(`HTTP ${res.status}`);
           continue; // transient — back off and retry
         }
         const data = await res.json();
-        // data[0] is the header; data rows are [timestamp, original]. A clean
-        // 200 with no data row is authoritative: the URL is NOT archived.
-        const rows = Array.isArray(data) ? data.slice(1) : [];
-        if (rows.length === 0) return null;
-        // Pick the capture nearest `near` (else the most recent).
-        const target = near ? Number(near.padEnd(14, '0')) : Number(rows[rows.length - 1][0]);
-        const [ts, original] = rows.reduce((best, r) =>
-          Math.abs(Number(r[0]) - target) < Math.abs(Number(best[0]) - target) ? r : best
-        );
-        return {
-          url: `https://web.archive.org/web/${ts}/${original}`,
-          timestamp: ts,
-          available: true
-        };
+        // data[0] is the header; data rows are [timestamp, original].
+        return Array.isArray(data) ? data.slice(1) : [];
       } catch (error) {
         lastError = error;
         this.onResponse?.({
@@ -101,9 +107,6 @@ class WaybackMachine {
         });
       }
     }
-    // Every attempt failed transiently (timeout / non-200). Distinct from a
-    // clean "not archived" (null): callers that cache results must NOT record
-    // this as a negative — it should be retried later. So we throw.
     throw lastError ?? new Error(`waybackify: lookup failed for ${url}`);
   }
 

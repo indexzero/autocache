@@ -1,5 +1,18 @@
 import { Impit } from 'impit';
 
+/** CDX from/to (YYYYMMDD) spanning ±`months` around a YYYYMMDD[HHMMSS] date. */
+function window(near, months) {
+  const y = Number(near.slice(0, 4));
+  const m = Number(near.slice(4, 6)) || 1;
+  const d = Number(near.slice(6, 8)) || 1;
+  const fmt = dt => dt.toISOString().slice(0, 10).replace(/-/g, '');
+  const from = new Date(Date.UTC(y, m - 1, d));
+  from.setUTCMonth(from.getUTCMonth() - months);
+  const to = new Date(Date.UTC(y, m - 1, d));
+  to.setUTCMonth(to.getUTCMonth() + months);
+  return { from: fmt(from), to: fmt(to) };
+}
+
 /**
  * Internet Archive Wayback Machine API client.
  *
@@ -39,18 +52,22 @@ class WaybackMachine {
    * @returns {Promise<Object|null>} { url, timestamp, available } or null
    */
   async getSnapshot(url, { near } = {}) {
-    // Bound the CDX scan with a date window around the target rather than
+    // Bound the CDX scan with a date WINDOW around the target rather than
     // collapsing the URL's whole history — `collapse` forces a full-history
     // scan that hangs on heavily-archived domains (e.g. github.com paths).
-    let rows;
+    //
+    // Try a tight window first (a capture from the post's exact era), widening
+    // only when the IA simply has nothing that close — archiving is sparse, so
+    // a fixed ±2mo window would usually be empty. Each step is still bounded.
+    let rows = [];
     if (near) {
-      const year = Number(near.slice(0, 4));
-      rows = await this.#cdxRows(url, { from: `${year - 3}0101`, to: `${year + 3}1231`, limit: 50 });
-      // Nothing captured near the post date → fall back to any capture (latest).
-      if (rows.length === 0) rows = await this.#cdxRows(url, { fastLatest: 'true', limit: 1 });
-    } else {
-      rows = await this.#cdxRows(url, { fastLatest: 'true', limit: 1 });
+      for (const months of [2, 12, 60]) {
+        rows = await this.#cdxRows(url, { ...window(near, months), limit: 50 });
+        if (rows.length > 0) break;
+      }
     }
+    // No date, or nothing within ~5y of it: take the latest capture (if any).
+    if (rows.length === 0) rows = await this.#cdxRows(url, { fastLatest: 'true', limit: 1 });
     if (rows.length === 0) return null; // authoritatively not archived
 
     const target = near ? Number(near.padEnd(14, '0')) : Number(rows[rows.length - 1][0]);

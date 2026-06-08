@@ -18,6 +18,12 @@ class WaybackMachine {
     this.baseUrl = options.baseUrl || 'http://archive.org';
     this.maxAttempts = options.maxAttempts ?? 3;
     this.impit = options.impit || new Impit({ browser: 'chrome', timeout: options.timeout ?? 20000 });
+    // Optional observer, called with the LITERAL request just before each
+    // fetch: ({ method, url, attempt, maxAttempts }). Lets a caller log exactly
+    // what is hitting the wire (e.g. the ledger CLI surfaces it via pino).
+    this.onRequest = options.onRequest;
+    // Optional observer of each response: ({ url, status, ms, attempt }).
+    this.onResponse = options.onResponse;
   }
 
   /**
@@ -40,8 +46,22 @@ class WaybackMachine {
       if (attempt > 0) {
         await new Promise(r => setTimeout(r, 400 * 2 ** (attempt - 1))); // 400/800/1600ms
       }
+      const requestUrl = api.toString();
+      this.onRequest?.({
+        method: 'GET',
+        url: requestUrl,
+        attempt: attempt + 1,
+        maxAttempts: this.maxAttempts
+      });
+      const started = Date.now();
       try {
-        const res = await this.impit.fetch(api.toString());
+        const res = await this.impit.fetch(requestUrl);
+        this.onResponse?.({
+          url: requestUrl,
+          status: res.status,
+          ms: Date.now() - started,
+          attempt: attempt + 1
+        });
         if (res.status !== 200) {
           lastError = new Error(`HTTP ${res.status}`);
           continue; // transient — back off and retry
@@ -60,6 +80,13 @@ class WaybackMachine {
         return null;
       } catch (error) {
         lastError = error;
+        this.onResponse?.({
+          url: requestUrl,
+          status: null,
+          ms: Date.now() - started,
+          attempt: attempt + 1,
+          error: error?.message
+        });
       }
     }
     // Every attempt failed transiently (timeout / non-200). Distinct from a

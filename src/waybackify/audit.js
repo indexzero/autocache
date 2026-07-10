@@ -59,9 +59,12 @@ const CHROME_PATTERNS = [
   /<script[^>]*src=["'][^"']*(?:archive\.org\/includes\/analytics|\/_static\/js\/)[^"']*["'][\s\S]*?<!--\s*End Wayback Rewrite JS Include\s*-->/i,
   // Toolbar block.
   /<!--\s*BEGIN WAYBACK TOOLBAR INSERT\s*-->[\s\S]*?<!--\s*END WAYBACK TOOLBAR INSERT\s*-->/i,
-  // Trailing archive provenance + timing comments.
-  /<!--[\s\S]*?FILE ARCHIVED ON[\s\S]*?-->/gi,
-  /<!--\s*playback timings[\s\S]*?-->/gi,
+  // Trailing archive provenance + timing comments. Tempered scan — the
+  // marker must occur INSIDE the comment ((?!-->) at every step), otherwise
+  // any early comment in the captured page would anchor a match that devours
+  // the whole document down to the trailing provenance block.
+  /<!--(?:(?!-->)[\s\S])*?FILE ARCHIVED ON(?:(?!-->)[\s\S])*-->/gi,
+  /<!--\s*playback timings(?:(?!-->)[\s\S])*-->/gi,
   // Defensive sweep for stragglers when the head-inject span didn't match
   // (older replay layouts): individual _static assets and __wm bootstrap.
   /<script[^>]*src=["'][^"']*\/_static\/js\/[^"']*["'][^>]*>\s*<\/script>/gi,

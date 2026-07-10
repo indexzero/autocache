@@ -1,0 +1,98 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><script src="//archive.org/includes/analytics.js?v=cf34f82" type="text/javascript"></script>
+<script type="text/javascript" src="/_static/js/bundle-playback.js?v=7YQSqjSh" charset="utf-8"></script>
+<script type="text/javascript" src="/_static/js/wombat.js?v=txqj7nKC" charset="utf-8"></script>
+<script>window.RufflePlayer=window.RufflePlayer||{};window.RufflePlayer.config={"autoplay":"on","unmuteOverlay":"hidden"};</script>
+<script type="text/javascript" src="/_static/js/ruffle/ruffle.js"></script>
+<script type="text/javascript">
+  __wm.init("https://web.archive.org/web");
+  __wm.wombat("http://blog.example.com/2009/03/distributing-node-services.html","20090315123456","https://web.archive.org/","web","https://web-static.archive.org/_static/",
+	      "1237120496");
+</script>
+<link rel="stylesheet" type="text/css" href="/_static/css/banner-styles.css?v=p7PEIJWi" />
+<link rel="stylesheet" type="text/css" href="/_static/css/iconochive.css?v=qtvMKcIJ" />
+<!-- End Wayback Rewrite JS Include -->
+<title>Distributing Node.js services with cluster - example blog</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+<body class="post">
+<!-- BEGIN WAYBACK TOOLBAR INSERT -->
+<script>__wm.rw(0);</script>
+<div id="wm-ipp-base" lang="en" style="display:none;direction:ltr;">
+<div id="wm-ipp" style="position:fixed;left:0;top:0;right:0;">
+<div id="donato" style="position:relative;width:100%;">
+  <div id="donato-base">
+    <iframe id="donato-if" src="https://archive.org/includes/donate.php?as_page=1" scrolling="no" frameborder="0" style="width:100%; height:100%">
+    </iframe>
+  </div>
+</div><div id="wm-ipp-inside">
+  <div id="wm-toolbar" style="position:relative;display:flex;flex-flow:row nowrap;justify-content:space-between;">
+    <div id="wm-logo" style="/*width:110px;*/padding-top:12px;">
+      <a href="/web/" title="Wayback Machine home page"><img src="/_static/images/toolbar/wayback-toolbar-logo-200.png" alt="Wayback Machine" width="100" border="0" /></a>
+    </div>
+    <div class="c" style="display:flex;flex-flow:column nowrap;justify-content:space-between;flex:1;">
+      <form target="_top" method="get" action="/web/submit" name="wmtb" id="wmtb"><input type="text" name="url" id="wmtbURL" value="http://blog.example.com/2009/03/distributing-node-services.html" onfocus="this.focus();this.select();" /><input type="hidden" name="type" value="replay" /><input type="hidden" name="date" value="20090315123456" /><input type="submit" value="Go" /></form>
+      <div style="display:flex;flex-flow:row nowrap;align-items:flex-end;">
+        <div class="s" id="wm-nav-captures" style="flex:1;">
+          <a class="t" href="/web/20090315123456*/http://blog.example.com/2009/03/distributing-node-services.html" title="See a list of every capture for this URL">54 captures</a>
+          <div class="r" title="Timespan for captures of this URL">09 Mar 2009 - 21 Nov 2014</div>
+        </div>
+      </div>
+    </div>
+    <div id="wm-btns" style="text-align:right;height:23px;">
+      <a id="wm-expand" class="wm-btn wm-closed" href="#expand" onclick="__wm.ex(event);return false;"><span id="wm-expand-icon" class="iconochive-down-solid"></span> <span class="txt">About this capture</span></a>
+    </div>
+  </div>
+</div></div></div>
+<!-- END WAYBACK TOOLBAR INSERT -->
+<div id="header">
+  <h1><a href="https://web.archive.org/web/20090315123456/http://blog.example.com/">example blog</a></h1>
+</div>
+<div id="content">
+  <h2 class="post-title">Distributing Node.js services with cluster</h2>
+  <p class="byline">March 15, 2009 &middot; 6 min read</p>
+  <p>Last week we shipped a small internal service that fans requests out to a
+  pool of worker processes. A few people asked how we keep the workers honest,
+  so here is the whole recipe: a supervisor, a heartbeat, and a boring amount
+  of logging. The supervisor forks one worker per core and re-forks on exit;
+  the heartbeat is a five-second ping over the IPC channel; and the logs go to
+  syslog, because at 3am you do not want to be inventing log rotation.</p>
+  <p>The trick that surprised people is the graceful handoff. When a worker is
+  told to retire, it stops accepting new connections but drains the ones it
+  has, with a hard deadline of thirty seconds. The supervisor forks the
+  replacement <em>before</em> sending the retirement notice, so capacity never
+  dips. None of this is clever &mdash; it's just sequencing &mdash; but the
+  sequencing is exactly the part everyone gets wrong the first time.</p>
+  <pre><code>var cluster = require('cluster');
+if (cluster.isMaster) {
+  for (var i = 0; i &lt; require('os').cpus().length; i++) cluster.fork();
+} else {
+  require('./service').listen(8080);
+}</code></pre>
+  <p>Next post: how we measure drain time in production without lying to
+  ourselves about percentiles.</p>
+</div>
+<div id="footer">&copy; 2009 example blog &middot; <a href="https://web.archive.org/web/20090315123456/http://blog.example.com/feed.xml">rss</a></div>
+</body>
+</html>
+<!--
+     FILE ARCHIVED ON 12:34:56 Mar 15, 2009 AND RETRIEVED FROM THE
+     INTERNET ARCHIVE ON 03:12:45 Jul 10, 2026.
+     JAVASCRIPT APPENDED BY WAYBACK MACHINE, COPYRIGHT INTERNET ARCHIVE.
+
+     ALL OTHER CONTENT MAY ALSO BE PROTECTED BY COPYRIGHT (17 U.S.C.
+     SECTION 108(a)(3)).
+-->
+<!--
+playback timings (ms):
+  captures_list: 89.523
+  exclusion.robots: 0.154
+  exclusion.robots.policy: 0.144
+  esindex: 0.011
+  cdx.remote: 55.417
+  LoadShardBlock: 337.617 (3)
+  PetaboxLoader3.datanode: 250.397 (4)
+  PetaboxLoader3.resolve: 141.632 (2)
+  load_resource: 168.229
+-->

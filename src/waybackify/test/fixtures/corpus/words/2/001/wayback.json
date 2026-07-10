@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entries": {
+    "http://nodejitsu.com/": {
+      "wayback": "https://web.archive.org/web/20120101000000/http://nodejitsu.com/",
+      "timestamp": "20120101000000",
+      "checkedAt": "2026-06-09T04:00:00.000Z"
+    }
+  }
+}

@@ -78,9 +78,40 @@ class WaybackMachine {
   }
 
   /**
+   * The CDX record for one EXACT capture (timestamp + original URL), with its
+   * archived `statuscode` — the field the replay UI hides (web.archive.org
+   * returns HTTP 200 for a replay whose captured content was itself a 404).
+   * This is the audit primitive behind the wayback-404 verdicts (audit.js).
+   *
+   * No `statuscode:200` filter here — seeing the error captures is the point.
+   * Returns { timestamp, original, statuscode, mimetype } for the row whose
+   * timestamp matches exactly, null when the CDX index has no such capture.
+   * Throws (like getSnapshot) if every attempt fails, so a throttle is never
+   * mistaken for "capture does not exist".
+   * @param {string} url - The ORIGINAL captured URL
+   * @param {string} timestamp - Exact capture timestamp (YYYYMMDDHHMMSS)
+   * @returns {Promise<Object|null>}
+   */
+  async getCapture(url, timestamp) {
+    const rows = await this.#cdxRows(url, {
+      from: timestamp,
+      to: timestamp,
+      limit: 10,
+      filter: null, // drop the default statuscode:200 — error captures are the quarry
+      fl: 'timestamp,original,statuscode,mimetype'
+    });
+    const row = rows.find(r => r[0] === timestamp);
+    if (!row) return null;
+    return { timestamp: row[0], original: row[1], statuscode: row[2], mimetype: row[3] };
+  }
+
+  /**
    * One CDX query → its data rows ([timestamp, original]). Retries transient
    * failures (timeout / non-200) with backoff and THROWS if all attempts fail,
    * so a caller never mistakes a throttle for "not archived".
+   * `params` land after the defaults, so they can override them; a null/
+   * undefined value DELETES the default (getCapture drops the statuscode:200
+   * filter this way).
    */
   async #cdxRows(url, params) {
     const api = new URL('https://web.archive.org/cdx/search/cdx');
@@ -88,7 +119,10 @@ class WaybackMachine {
     api.searchParams.set('output', 'json');
     api.searchParams.set('filter', 'statuscode:200');
     api.searchParams.set('fl', 'timestamp,original');
-    for (const [k, v] of Object.entries(params)) api.searchParams.set(k, String(v));
+    for (const [k, v] of Object.entries(params)) {
+      if (v === null || v === undefined) api.searchParams.delete(k);
+      else api.searchParams.set(k, String(v));
+    }
     const requestUrl = api.toString();
 
     let lastError;
@@ -347,4 +381,5 @@ export async function waybackifyMarkdown(markdown, options = {}) {
 }
 
 export { WaybackMachine };
+export { auditCapture, parseWaybackUrl, stripWaybackChrome, classifyReplayHtml } from './audit.js';
 export default waybackify;

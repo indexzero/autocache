@@ -1,0 +1,3 @@
+# Audit runner state (bin/audit-corpus.js): resumable JSONL checkpoint +
+# generated reports. Local, supervised runs only — never committed, never CI.
+.audit/

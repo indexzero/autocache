@@ -191,6 +191,48 @@ for (const file of files) {
 }
 ```
 
+### Wayback-404 verdicts (`audit.js`)
+
+A wayback URL can lie: web.archive.org returns HTTP 200 for a replay page
+whose captured content is itself a 404, soft-error page, or parked domain.
+`auditCapture` classifies one capture:
+
+```js
+import { auditCapture } from 'waybackify';
+
+const v = await auditCapture('https://web.archive.org/web/20081221144742/http://blogs.msdn.com:80/mharsh/archive/2008/03/05/slides-and-demos-from-my-mix-08-talk.aspx');
+// { verdict: 'good' | 'wayback404' | 'suspect',
+//   statuscode, reason, evidence, checkedAt, url, timestamp, original }
+```
+
+Two signals, in order: the capture's own archived `statuscode` from the CDX
+index (`WaybackMachine#getCapture` — captures archived AS 404/5xx are
+`wayback404` immediately), then soft-404 content heuristics on the replay body
+with the wayback toolbar chrome stripped (`stripWaybackChrome` +
+`classifyReplayHtml`, both exported and pure). Uncertain is always `suspect`,
+never silently `good`; every verdict carries a short `evidence` snippet for
+human review.
+
+### Corpus audit runner (`bin/audit-corpus.js`)
+
+Checkpointed, resumable audit over every wayback URL the corpus references
+(inline `words/**/index.md` links + `wayback.json` ledgers — enumerated by
+`enumerate.js`, which converges with render/wayback's canonical enumerator
+when PR #255 merges):
+
+```sh
+# offline: enumeration counts only
+pnpm --filter waybackify run audit -- --enumerate-only
+
+# supervised network run (slow!); resumes from the JSONL checkpoint
+pnpm --filter waybackify run audit -- --limit 50 --verbose
+```
+
+Verdicts append to `.audit/checkpoint.jsonl` (gitignored — never committed,
+and the runner refuses to run under CI); the summary lists every
+`wayback404`/`suspect` with its posts, reason, and evidence. See
+`bin/audit-corpus.js` for all flags.
+
 ## Implementation Details
 
 - Uses the Internet Archive Wayback Machine API directly

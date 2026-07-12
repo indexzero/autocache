@@ -66,7 +66,7 @@ Rationale, per path:
   would silently turn the commit step into a non-atomic copy.
 - **`aa` shard.** 256-way fan-out of directory entries, matching
   cacache/Nix practice. Flat would work at this corpus size (~12k entries) —
-  see [Artur's dissent](#recorded-dissents-design-notes-not-implemented).
+  see [the shard-sizing dissent](#recorded-dissents-design-notes-not-implemented).
 
 ## Identity: captureKey → hash
 
@@ -107,10 +107,10 @@ authoritative and mandatory.
 | `v` | int | always | Schema version. Bump on any incompatible change, coordinated across every consumer (mirror server, sync tooling, this CLI). |
 | `key` | string | always | **Verbatim** captureKey, UTF-8. The R2 object key and the sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
 | `contentType` | string | always (`''` when the archive sent none) | Feeds R2 `httpMetadata.contentType` AND Fastly KV item metadata. Write-time enforced (key.js `captureMetadata`): no CR/LF (the value rides the `Fastly-Metadata` HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes ([js-compute `put()` limit](https://docs.fastly.com/products/compute-resource-limits); the management API allows 2000 — designed to the smaller). |
-| `status` | `body \| redirect \| error \| empty` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (Mikeal's hardened point in the debate). |
-| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (Kat's non-negotiable in the debate). **Integrity, not addressing**: the filename stays the identity hash. |
+| `status` | `body \| redirect \| error \| empty` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
+| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (a non-negotiable from the design debate). **Integrity, not addressing**: the filename stays the identity hash. |
 | `contentLength` | int | iff `status == "body"` | Byte count, counted during the same streaming write. |
-| `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern (Eelco's argument in the debate). Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
+| `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern. Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
 | `flag` | `im_ \| cs_ \| js_ \| oe_ \| null` | always | Requisite-type tag when this entry is itself a requisite (image / stylesheet / script / object-embed replay flags); `null` for operator-named documents. |
 | `fetchedAt` | string | always | ISO-8601 fetch time. Provenance only — identity is entirely in `key`. |
 
@@ -118,7 +118,7 @@ authoritative and mandatory.
 
 Sidecars are **canonical JSON**: recursively sorted keys, no insignificant
 whitespace, single line, **no CR/LF anywhere** (not even a trailing newline —
-the normative schema says "no CR/LF"; Eelco's canonicalization
+the normative schema says "no CR/LF"; the canonicalization dissent's
 dissent is adopted minus its trailing-newline detail). Two writers producing
 the same logical entry produce byte-identical files, so rsync/diff/dedupe
 tooling sees stability, not JSON key-order noise.
@@ -214,14 +214,14 @@ page and are not requisites).
 
 - Edges live in the document sidecar's `requisites[]` — written atomically
   with the document entry, so the frontier is recomputable on every resume
-  (an absent edge list would make resume silently under-fetch — Mikeal's
+  (an absent edge list would make resume silently under-fetch — a DAG-integrity
   point in the debate).
 - Edges are **always recorded** for HTML documents, even under
   `--no-requisites`: the edges are facts of the captured page and the bytes
   are in hand. `--no-requisites` opts out of *fetching* children ("stores
   exactly one entry"), and a later default run resumes straight into the
   recorded frontier.
-- **Closure is a query, never a write barrier** (Artur's argument): each
+- **Closure is a query, never a write barrier** (the read-path-pragmatics argument): each
   entry (document or requisite) completes on its own body+sidecar. "Is this
   document requisite-complete?" = stat each child's sidecar. This keeps
   independent concurrent invocations from coupling through shared requisites
@@ -253,28 +253,28 @@ semantics; recorded here as the contract):
 - **No dedupe at write time.** Byte-identical bodies under distinct keys are
   stored independently (EC-3). `contentHash` makes a future GC pass —
   group sidecars by hash, hardlink the identity-named bodies — cheap and
-  safe, but GC is **explicitly out of scope**: see Tõnis's leases dissent.
+  safe, but GC is **explicitly out of scope**: see the GC-leases dissent.
 
 ## Recorded dissents (design notes, not implemented)
 
 Preserved verbatim from the debate so future work starts from the residue,
 not from scratch:
 
-- **Kat Marchan:** ship a first-class `waybackify fsck` — scan `meta/`,
+- **Verification:** ship a first-class `waybackify fsck` — scan `meta/`,
   re-verify every `contentHash`, reap orphan `tmp/`/`cap/` files. "A store
   without a verify command rots silently." *(File as a follow-up issue when
   this lands.)*
-- **Mikeal Rogers:** requisite edges could carry the child's `contentHash`
+- **DAG integrity:** requisite edges could carry the child's `contentHash`
   alongside its key, so a requisite whose bytes ever change under a shared
   timestamp is detectable — "you're trusting the timestamp to pin content;
   I'd rather the graph SAY it."
-- **Artur Bergman:** the 2-char shard is unjustified until directory-size
+- **Shard sizing:** the 2-char shard is unjustified until directory-size
   measurements exist — "flat `cap/` is one fewer directory op on the read
   path; add shards when you measure a problem." *(Shard kept: changing it
   later is a straight re-shard of derivable paths.)*
-- **Eelco Dolstra:** canonicalize sidecars (sorted keys, newline-terminated)
+- **Canonical serialization:** canonicalize sidecars (sorted keys, newline-terminated)
   — adopted, except newline-termination lost to the schema's "no CR/LF".
-- **Tõnis Tiigi:** add explicit leases/refcounts before ANY GC ships —
+- **GC safety:** add explicit leases/refcounts before ANY GC ships —
   "GC without leases will race a concurrent writer and delete a live
   requisite."
 

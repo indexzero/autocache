@@ -119,7 +119,7 @@ export async function entryPaths(root, key) {
  * — "in ascending chronological order of property creation"), so building
  * the object sorted IS emitting it sorted. Control characters in strings
  * are escaped by JSON.stringify, so the output never contains raw CR/LF —
- * the sidecar is one line, byte-reproducible (Eelco's canonicalization
+ * the sidecar is one line, byte-reproducible (the canonical-serialization
  * dissent, adopted minus his trailing newline: the normative schema
  * says "no CR/LF", so there is none anywhere in the file).
  * @param {unknown} value
@@ -147,7 +147,7 @@ export function canonicalJSON(value) {
  * crashed before the sidecar rename — an orphan cap/ file does not count).
  * A sidecar that exists but fails to parse THROWS: that is disk rot, not
  * an incomplete write (the rename either published a whole fsync'd file or
- * nothing), and silently re-fetching over evidence would mask it. (Kat's
+ * nothing), and silently re-fetching over evidence would mask it. (The verify-on-read
  * fsck dissent is the follow-up tool for exactly this.)
  * @param {string} root
  * @param {string} key

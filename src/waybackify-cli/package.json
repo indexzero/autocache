@@ -1,7 +1,7 @@
 {
   "name": "@charlie.dev/waybackify-cli",
   "version": "0.0.0",
-  "description": "waybackify — check / search / manifest / cache over the spv/waybackify library. paparam argv surface plus per-command handlers as they land.",
+  "description": "waybackify \u2014 check / search / manifest / cache over the spv/waybackify library. paparam argv surface plus per-command handlers as they land.",
   "private": true,
   "type": "module",
   "bin": {
@@ -19,6 +19,7 @@
   "author": "Charlie Robbins <npm@charlie.dev>",
   "license": "MIT",
   "dependencies": {
-    "paparam": "^1.10.1"
+    "paparam": "^1.10.1",
+    "waybackify": "workspace:*"
   }
 }

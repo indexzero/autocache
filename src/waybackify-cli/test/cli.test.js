@@ -129,20 +129,27 @@ test('bare invocation prints root help to stderr and exits 2', () => {
 // 3. Not-implemented contract (exit 70) + full flag-surface parsing
 // ---------------------------------------------------------------------------
 
-test('every command with valid usage exits 70 (not implemented)', () => {
+test('every unimplemented command with valid usage exits 70 (cache landed in #267)', () => {
   for (const argv of [
     ['check', WB],
     ['search', 'http://example.com/'],
     ['search', 'http://example.com/', '--near', '20140403', '--limit', '5'],
     ['manifest', 'words/1/001/index.md'],
-    ['manifest', 'words/1/001/index.md', '--ledger'],
-    ['cache', WB, '-o', '/tmp/cache-root'],
-    ['cache', WB, '--output', '/tmp/cache-root', '--no-requisites']
+    ['manifest', 'words/1/001/index.md', '--ledger']
   ]) {
     const { status, stderr } = cli(...argv);
     assert.equal(status, EXIT.NOT_IMPLEMENTED, `argv: ${argv.join(' ')}`);
     assert.match(stderr, /not implemented/);
   }
+});
+
+test('cache is WIRED in the bin: a non-replay URL is a domain failure (1), not a 70', () => {
+  // Proves bin/waybackify.js hands `cache` the real #267 handler: the
+  // library rejects the URL before any I/O, and run() maps the throw to
+  // exit 1. (Offline by construction — parseWaybackUrl fails first.)
+  const { status, stderr } = cli('cache', 'https://example.com/not-wayback', '-o', '/tmp/never-created');
+  assert.equal(status, EXIT.DOMAIN);
+  assert.match(stderr, /not a wayback replay URL/);
 });
 
 test('handlers receive the fully parsed surface (args + flags)', async () => {
@@ -197,11 +204,16 @@ test('run() maps handler outcomes to the documented exit codes', async () => {
   assert.equal(await run(['check', WB], { handlers: { check: () => {} }, ...silent }), EXIT.OK);
 });
 
-test('thin-CLI rule: the package imports nothing from spv/waybackify yet', () => {
+test('thin-CLI rule: the parsing layer imports nothing from spv/waybackify', () => {
+  // Evolved from #266's "imports NOTHING yet": with #267 landed, the library
+  // is reached ONLY through src/commands/* wiring modules. The argv surface
+  // (src/cli.js) and the bin stay library-free so --help and usage errors
+  // never load fetch machinery.
   const src = fs.readFileSync(path.join(PKG, 'src', 'cli.js'), 'utf8');
   const bin = fs.readFileSync(BIN, 'utf8');
   for (const code of [src, bin]) {
-    assert.doesNotMatch(code, /from\s+['"](?:\.\.\/)*\.\.\/waybackify\//);
+    assert.doesNotMatch(code, /import\s*\(?\s*['"][^'"]*\/waybackify\//);
+    assert.doesNotMatch(code, /from\s+['"][^'"]*\/waybackify\//);
     assert.doesNotMatch(code, /from\s+['"]waybackify['"]/);
   }
 });

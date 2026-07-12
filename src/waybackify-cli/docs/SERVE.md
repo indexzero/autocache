@@ -1,13 +1,10 @@
 # Reading the cache root — the consumer contract
 
-How anything that CONSUMES a `waybackify cache` root reads it: the
-[#271](https://github.com/indexzero/charlie.dev/issues/271) FsStore (Hono on
-Node), the R2 sync loop, and the Fastly KV sync loop
-([#249](https://github.com/indexzero/charlie.dev/issues/249) deployment).
-Written so #271's implementer needs nothing else; the producer-side story
-(write protocol, resume, schema rationale) is [CACHE.md](./CACHE.md), and the
-normative design record is
-`0x/slop/debate/web-cache/2026-07-12-waybackify-serve-cache.md`.
+How anything that CONSUMES a `waybackify cache` root reads it: the mirror
+server's FsStore (Hono on Node), the R2 sync loop, and the Fastly KV sync
+loop (syncing IS deployment). Written so the FsStore's implementer needs
+nothing else; the producer-side story (write protocol, resume, schema
+rationale) is [CACHE.md](./CACHE.md).
 
 The one-sentence version: **hash the key, stat one sidecar, trust only the
 sidecar** — the root has no index to consult, no lock to take, and no state
@@ -124,12 +121,12 @@ so the two states can never be confused (edge case EC-1).
 ## Serving a document with its requisites
 
 A mirrored HTML page references its assets via wayback-shaped paths; after
-#271's host-swap the mirror receives those requests as ordinary capture
-keys. Requisite closure is a **derived query, not a serving precondition**:
+the mirror's host-swap the server receives those requests as ordinary
+capture keys. Requisite closure is a **derived query, not a serving precondition**:
 
 - To serve page + assets, just serve each `get(key)` independently. A
   missing requisite 404s exactly like the live web — graceful degradation
-  (debate thought 16).
+  (a deliberate debate decision).
 - To ANSWER "is this document requisite-complete?" (a health/verify view,
   or a sync pre-check): read the document sidecar's `requisites[]` (verbatim
   child keys) and `head()` each. That's the entire DAG walk — edges are only
@@ -152,17 +149,18 @@ PUT object:
   **1,024 bytes** ([R2 limits: "Object key length — 1,024 bytes"](https://developers.cloudflare.com/r2/reference/limits/)).
   Keys longer than that cannot exist as R2 objects — skip + report them
   (the local root and Fastly, both hash-named, hold them fine; the serving
-  path for R2 then misses and falls back per #249's redirect behavior).
+  path for R2 then misses and falls back to its redirect-to-archive.org
+  miss behavior).
 - `sidecar.key` round-trips byte-exact by construction (EC-2): the R2Store
   in `render/wayback/src/store.ts` does `bucket.get(key)` with the parsed
   request key — those bytes must be THESE bytes.
 - \* Bodiless entries: today's `R2Store.get()` expects a body for any
   present key, so the pragmatic v1 sync is to sync `status == "body"`
-  entries only and let bodiless keys miss (the #249 skeleton's miss path
+  entries only and let bodiless keys miss (the mirror's miss path
   redirects to archive.org, which is also the correct UX for archived
   redirects/errors). If/when the store learns statuses, sync the sidecar as
-  R2 `customMetadata` — the decision is #271's, recorded here so it's made
-  consciously.
+  R2 `customMetadata` — the decision belongs to the FsStore's implementer,
+  recorded here so it's made consciously.
 
 ## Fastly KV sync mapping
 
@@ -194,7 +192,7 @@ recorded during the write. Consumers SHOULD verify it:
 
 - **on sync** (cheap, sequential): hash `cap/<aa>/<hash>` while uploading;
   abort the object on mismatch.
-- **on read** (optional, #271's latency call): a Node FsStore can hash the
+- **on read** (optional — the server's latency call): a Node FsStore can hash the
   stream as it serves and log mismatches after the fact.
 
 A mismatch means disk rot or a torn write that somehow survived fsync —
@@ -219,7 +217,5 @@ Safe by construction — this is the debate's composability constraint:
 ## Sources
 
 - [CACHE.md](./CACHE.md) — producer-side data structure (layout, schema, write protocol, dissents).
-- `0x/slop/debate/web-cache/2026-07-12-waybackify-serve-cache.md` — the design record; "How each consumer reads the root" is its §Decision.
-- Issues: [#271](https://github.com/indexzero/charlie.dev/issues/271) (FsStore + Node target — the primary audience), [#249](https://github.com/indexzero/charlie.dev/issues/249) (mirror + sync), [#267](https://github.com/indexzero/charlie.dev/issues/267) (the writer), [#254](https://github.com/indexzero/charlie.dev/issues/254) (CLI parent).
 - Contracts in code: `render/wayback/src/store.ts` (Store/R2Store/FastlyKVStore shapes) · `render/wayback/src/path.ts` (request → capture key) · `spv/waybackify/key.js` (key/hash/metadata derivation).
 - External: [Cloudflare R2 limits](https://developers.cloudflare.com/r2/reference/limits/) · [Fastly Compute resource limits](https://docs.fastly.com/products/compute-resource-limits) · [W3C SRI](https://www.w3.org/TR/sri-1/#integrity-metadata-description) · [POSIX rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html).

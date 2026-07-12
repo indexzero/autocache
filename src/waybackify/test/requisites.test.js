@@ -1,4 +1,4 @@
-// Requisite-extraction tests (#267) — offline, fixture-driven.
+// Requisite-extraction tests — offline, fixture-driven.
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';

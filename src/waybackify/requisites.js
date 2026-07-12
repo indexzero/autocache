@@ -1,13 +1,13 @@
-// Page-requisite extraction from wayback replay HTML (#267).
+// Page-requisite extraction from wayback replay HTML.
 //
 // The wayback replay rewrites every asset reference in a captured HTML page
 // to point back into the archive, tagging the timestamp with a replay flag
 // that selects raw/asset rendering: `im_` (images), `cs_` (stylesheets),
 // `js_` (scripts), `oe_` (media/objects/embeds). Those flagged refs ARE the
 // page's requisites: cache each one and a mirrored page renders with local
-// assets (#249, #271).
+// assets.
 //
-// Scope is DELIBERATE (issue #267): exactly the four flags above, extracted
+// Scope is DELIBERATE: exactly the four flags above, extracted
 // from the replayed document's raw HTML. `if_`/`id_` frame the page itself
 // and are not requisites; refs inside fetched CSS/JS bodies (e.g. url(...)
 // inside an im_'d stylesheet) are one level deeper than the document scan
@@ -33,8 +33,8 @@
 // common while unbalanced parens in real URLs are not — the exact tempered
 // rule enumerate.js applies corpus-wide (balanced pairs like msdn's
 // `(VS.85)` are kept). Both trade vanishing-rare URL shapes for the
-// overwhelmingly common contexts; the doubt log on PR #267 records the
-// residual cases.
+// overwhelmingly common contexts; the residual cases are recorded
+// trade-offs, not oversights.
 
 const REQUISITE_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);
 

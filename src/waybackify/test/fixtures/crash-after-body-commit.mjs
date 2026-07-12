@@ -1,4 +1,4 @@
-// EC-1 crash-atomicity child (#267): cache one document and SIGKILL the
+// EC-1 crash-atomicity child: cache one document and SIGKILL the
 // process in the exact window between the body rename (protocol step 3) and
 // the sidecar rename (step 5). The parent test then asserts the orphan cap/
 // file is treated as ingest garbage. SIGKILL — not exit() — so nothing gets

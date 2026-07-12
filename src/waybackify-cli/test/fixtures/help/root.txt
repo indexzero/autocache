@@ -2,12 +2,12 @@ waybackify [flags] [command]
 
 check / search / manifest / cache over the spv/waybackify library
 
-Human-operable, xargs-composable front door over spv/waybackify (#254):
+Human-operable, xargs-composable front door over spv/waybackify:
 hand-check a capture, re-pick a better one, enumerate a file's wayback
-refs, or populate the wayback.charlie.dev mirror (#249).
+refs, or populate the wayback.charlie.dev mirror.
 
 Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·
-2 usage error · 70 not implemented (temporary, #254 scaffold).
+2 usage error · 70 not implemented (temporary, scaffold).
 
 Flags:
   --help|-h   Show help
@@ -18,4 +18,4 @@ Commands:
   manifest    Per-file enumeration of wayback refs
   cache       Fetch the capture into a local bucket image
 
-issues: #254 (parent) · #248 (audit) · #249 (mirror)
+part of the wayback.charlie.dev mirror tooling

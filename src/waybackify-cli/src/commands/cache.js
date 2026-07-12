@@ -1,5 +1,5 @@
-// `waybackify cache` handler (#267) — thin wiring over the library, per
-// #254's hard rule: the load-bearing implementation (layout, write protocol,
+// `waybackify cache` handler — thin wiring over the library, per the
+// CLI's hard thin-wrapper rule: the load-bearing implementation (layout, write protocol,
 // resume, requisites) is spv/waybackify/cache.js; this file translates the
 // parsed argv payload into a cacheCapture() call, streams progress to
 // stderr, prints the summary line to stdout, and turns requisite failures
@@ -37,7 +37,7 @@ export function cacheHandler(deps = {}) {
       }
     });
 
-    // The #254 contract: files under the shared key scheme; ONE summary
+    // The CLI contract: files under the shared key scheme; ONE summary
     // line on stdout (JSON, jq/xargs-friendly).
     log(
       JSON.stringify({

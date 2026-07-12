@@ -1,12 +1,12 @@
-// waybackify CLI surface (#266 — sub-issue 1/6 of #254).
+// waybackify CLI surface.
 //
 // This module pins the ENTIRE command/option contract — names, args, flags,
 // help text, exit codes — with ZERO implementation. Every default handler
-// throws Not implemented (exit 70). The four implementation sub-issues
-// (#267 cache, #268 check, #269 search, #270 manifest) each replace one
-// handler without ever touching argv parsing again.
+// throws Not implemented (exit 70). The per-command implementations
+// (cache, check, search, manifest) each replace one handler without ever
+// touching argv parsing again.
 //
-// Thin-CLI rule (#254, hard constraint): this package is argv parsing
+// Thin-CLI rule (hard constraint): this package is argv parsing
 // (paparam), output formatting, and exit codes. All plumbing lands in
 // spv/waybackify (the library). This module imports NOTHING from it yet.
 //
@@ -51,7 +51,8 @@
 //     `--no-requisites` registers under the name `requisites` with default
 //     value `true` (parseFlag, index.js:793-799: `value = inverse`). So
 //     `flags.requisites` is true by default and false when --no-requisites
-//     is passed — exactly #267's requisites-by-default semantics. UNVERIFIED
+//     is passed — exactly the cache command's requisites-by-default
+//     semantics. UNVERIFIED
 //     in the README (undocumented behavior); verified against the 1.10.1
 //     source and pinned by test/cli.test.js so an upgrade that changes it
 //     fails loudly.
@@ -62,12 +63,12 @@
 //     exit codes are entirely this module's job.
 //
 // ---------------------------------------------------------------------------
-// Exit-code convention (#266, documented in README.md)
+// Exit-code convention (documented in README.md)
 // ---------------------------------------------------------------------------
 //   0   success (and --help)
 //   1   domain failure (bad verdict, not found, fetch failure)
 //   2   usage error (unknown flag/arg, missing required arg/flag)
-//   70  not implemented — TEMPORARY, removed as handlers land per sub-issue.
+//   70  not implemented — TEMPORARY, removed as handlers land per command.
 //       70 is BSD sysexits EX_SOFTWARE ("internal software error", the
 //       closest sysexits fit for "this code path does not exist yet") — see
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
@@ -81,11 +82,11 @@ export const EXIT = {
   NOT_IMPLEMENTED: 70
 };
 
-/** The error every scaffold handler throws until its sub-issue lands. */
+/** The error every scaffold handler throws until its implementation lands. */
 export class NotImplementedError extends Error {
   code = 'ERR_NOT_IMPLEMENTED';
   constructor(commandName) {
-    super(`waybackify ${commandName}: not implemented (#254 sub-issue pending)`);
+    super(`waybackify ${commandName}: not implemented (handler pending)`);
     this.name = 'NotImplementedError';
   }
 }
@@ -97,12 +98,12 @@ const notImplemented = name => () => {
 /**
  * Build the full waybackify command tree.
  *
- * Command descriptions are cribbed verbatim from #254's table (per #266's
- * acceptance criteria) — do not reword here without rewording the issue.
+ * Command descriptions are part of the pinned CLI contract — do not reword
+ * casually; the help snapshots exist to catch drift.
  *
  * @param {Object} [options]
  * @param {Object} [options.handlers] - Per-command runners, injected by the
- *   implementation sub-issues (and by tests). Each receives paparam's runner
+ *   per-command implementations (and by tests). Each receives paparam's runner
  *   payload `{ args, flags, positionals, rest, indices, argv, command }`.
  *   Missing handlers throw NotImplementedError (exit 70).
  * @param {Function} [options.onBail] - Observer for every bail (usage errors
@@ -116,7 +117,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     summary('Full wayback-404 verdict for the exact capture'),
     description(
       'Full wayback-404 verdict for the exact capture: CDX statuscode +\n' +
-        'soft-404 content heuristics on the replay body — the #248 audit\n' +
+        'soft-404 content heuristics on the replay body — the corpus audit\n' +
         'primitive.\n' +
         '\n' +
         'Output: JSON verdict on stdout\n' +
@@ -174,9 +175,9 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     'cache',
     summary('Fetch the capture into a local bucket image'),
     description(
-      'Fetch the capture into a local bucket image at <root> — the #249\n' +
-        "mirror's population path. Syncing that dir to R2 / Fastly KV\n" +
-        '(rclone/wrangler/fastly tooling) IS deployment.\n' +
+      'Fetch the capture into a local bucket image at <root> — the\n' +
+        "wayback.charlie.dev mirror's population path. Syncing that dir to\n" +
+        'R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment.\n' +
         '\n' +
         'Output: files written under the shared key scheme; summary line on\n' +
         'stdout.'
@@ -184,7 +185,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     arg('<wayback-url>', 'full web.archive.org/web/<timestamp>/<original> replay URL'),
     flag('--output|-o <root>', 'cache root directory (the local bucket image) — required'),
     // Defined as `--no-requisites` so paparam registers flag `requisites`
-    // defaulting to TRUE (requisites-by-default, #267) — source-driven note 5.
+    // defaulting to TRUE (requisites-by-default) — source-driven note 5.
     flag(
       '--no-requisites',
       'store only the named capture; skip its im_/cs_/js_/oe_ page requisites'
@@ -198,14 +199,14 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     'waybackify',
     summary('check / search / manifest / cache over the spv/waybackify library'),
     description(
-      'Human-operable, xargs-composable front door over spv/waybackify (#254):\n' +
+      'Human-operable, xargs-composable front door over spv/waybackify:\n' +
         'hand-check a capture, re-pick a better one, enumerate a file\'s wayback\n' +
-        'refs, or populate the wayback.charlie.dev mirror (#249).\n' +
+        'refs, or populate the wayback.charlie.dev mirror.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
-        '2 usage error · 70 not implemented (temporary, #254 scaffold).'
+        '2 usage error · 70 not implemented (temporary, scaffold).'
     ),
-    footer('issues: #254 (parent) · #248 (audit) · #249 (mirror)'),
+    footer('part of the wayback.charlie.dev mirror tooling'),
     check,
     search,
     manifest,

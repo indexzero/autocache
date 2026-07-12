@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// waybackify bin (#266/#267). Argv parsing + exit codes live in src/cli.js;
-// implemented handlers are wired here as they land per sub-issue (#267
-// cache; #268 check, #269 search, #270 manifest still exit 70).
+// waybackify bin. Argv parsing + exit codes live in src/cli.js;
+// implemented handlers are wired here as they land (cache is real;
+// check, search, and manifest still exit 70).
 // process.exitCode (not process.exit) so stdout/stderr flush naturally
 // before the process ends.
 import { run } from '../src/cli.js';

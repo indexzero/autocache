@@ -3,7 +3,7 @@ waybackify check [flags] <wayback-url>
 Full wayback-404 verdict for the exact capture
 
 Full wayback-404 verdict for the exact capture: CDX statuscode +
-soft-404 content heuristics on the replay body — the #248 audit
+soft-404 content heuristics on the replay body — the corpus audit
 primitive.
 
 Output: JSON verdict on stdout
@@ -16,4 +16,4 @@ Arguments:
 Flags:
   --help|-h       Show help
 
-issues: #254 (parent) · #248 (audit) · #249 (mirror)
+part of the wayback.charlie.dev mirror tooling

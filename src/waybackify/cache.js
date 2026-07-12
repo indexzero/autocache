@@ -1,10 +1,9 @@
-// Local mirror-image cache store (#267) — the population path for the
-// wayback.charlie.dev capture mirror (#249). `waybackify cache` is a thin
+// Local mirror-image cache store — the population path for the
+// wayback.charlie.dev capture mirror. `waybackify cache` is a thin
 // wrapper over cacheCapture() below; everything load-bearing lives here.
 //
-// ON-DISK LAYOUT (normative — the debate's position E, recorded in
-// 0x/slop/debate/web-cache/2026-07-12-waybackify-serve-cache.md and issue
-// #267; field-by-field docs in spv/waybackify-cli/docs/CACHE.md):
+// ON-DISK LAYOUT (normative — the design debate's position E;
+// field-by-field docs in spv/waybackify-cli/docs/CACHE.md):
 //
 //   <root>/cap/<aa>/<hash>        body bytes, verbatim, NO extension
 //   <root>/meta/<aa>/<hash>.json  authoritative sidecar (canonical JSON)
@@ -121,7 +120,7 @@ export async function entryPaths(root, key) {
  * the object sorted IS emitting it sorted. Control characters in strings
  * are escaped by JSON.stringify, so the output never contains raw CR/LF —
  * the sidecar is one line, byte-reproducible (Eelco's canonicalization
- * dissent, adopted minus his trailing newline: the issue's normative schema
+ * dissent, adopted minus his trailing newline: the normative schema
  * says "no CR/LF", so there is none anywhere in the file).
  * @param {unknown} value
  * @returns {string}
@@ -140,7 +139,7 @@ export function canonicalJSON(value) {
 }
 
 /* ------------------------------------------------------------------------ *
- * Read side (resume + tests; #271's FsStore reads the same way)
+ * Read side (resume + tests; the mirror server's FsStore reads the same way)
  * ------------------------------------------------------------------------ */
 
 /**
@@ -341,7 +340,7 @@ export async function commitEntry(root, entry, hooks = {}) {
 /**
  * Read a fetch response's bytes verbatim. Prefers arrayBuffer() (byte-exact,
  * what impit provides); falls back to text() for fetch shims that only
- * decode (the unit-test mocks) — same seam the #249 body-capture reference
+ * decode (the unit-test mocks) — same seam the corpus body-capture reference
  * patch proved over 720 real bodies.
  */
 async function responseBytes(res) {
@@ -433,7 +432,7 @@ export async function cacheCapture(waybackUrl, options = {}) {
     // The requisites[] edge list is recorded UNCONDITIONALLY for HTML
     // documents — the edges are facts of the captured page, and extraction
     // from in-hand bytes is free. --no-requisites opts out of FETCHING the
-    // children only ("stores exactly one entry", #267); a later default run
+    // children only ("stores exactly one entry"); a later default run
     // then resumes straight into the recorded frontier instead of finding
     // an empty edge list and silently never completing the closure.
     const requisiteRefs = isHtmlish(contentType)

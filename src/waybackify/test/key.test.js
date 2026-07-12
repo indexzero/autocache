@@ -1,4 +1,4 @@
-// Key-derivation contract tests for the EXTRACTED key module (#267).
+// Key-derivation contract tests for the EXTRACTED key module.
 //
 // key.js moved here from render/wayback/src/key.ts (now a re-export shim);
 // that package's test/key.test.ts keeps pinning the same digests through the
@@ -22,9 +22,10 @@ describe('captureKey', () => {
 });
 
 describe('captureHash / fastlyKVKey', () => {
-  it('reproduces the cross-package pinned digest (the #249/#254 tripwire)', async () => {
+  it('reproduces the cross-package pinned digest (the cross-package tripwire)', async () => {
     // Identical to the pin in render/wayback/test/key.test.ts. Recompute
-    // only on a DELIBERATE layout change, coordinated across #249 + #254.
+    // only on a DELIBERATE layout change, coordinated across the mirror
+    // server and the population CLI.
     assert.equal(
       await fastlyKVKey('20140403040000/http://example.com/'),
       'cap:77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac'
@@ -36,7 +37,7 @@ describe('captureHash / fastlyKVKey', () => {
   });
 
   it('WebCrypto digest === node:crypto digest (the reference patch equivalence)', async () => {
-    // The #249 body-capture patch asserted "node's crypto SHA-256 hex is
+    // The corpus body-capture patch asserted "node's crypto SHA-256 hex is
     // byte-identical to key.ts's WebCrypto digest" — pin it as a fact.
     const key = '2014/http://x.com/a?b=c#d;e^f|g';
     assert.equal(await captureHash(key), crypto.createHash('sha256').update(key, 'utf8').digest('hex'));

@@ -1,19 +1,17 @@
 # The cache root — on-disk data structure
 
 Living documentation for the directory `waybackify cache <wayback-url> -o <root>`
-writes ([#267](https://github.com/indexzero/charlie.dev/issues/267), part of
-[#254](https://github.com/indexzero/charlie.dev/issues/254)). This root is not
-a scratch cache: it is the **local mirror image that IS the deploy artifact**
-for wayback.charlie.dev ([#249](https://github.com/indexzero/charlie.dev/issues/249)) —
-syncing it to Cloudflare R2 / Fastly KV is deployment, and a local server
-([#271](https://github.com/indexzero/charlie.dev/issues/271)) reads it directly.
+writes. This root is not a scratch cache: it is the **local mirror image
+that IS the deploy artifact** for wayback.charlie.dev — syncing it to
+Cloudflare R2 / Fastly KV is deployment, and the mirror server reads it
+directly.
 
-The layout is the design debate's **position E** — identity-keyed body +
-authoritative sidecar recording a content hash ("Nix store-realization +
-containerd ingest-commit + cacache's record-on-write integrity, minus
-cacache's authoritative index"). Full record:
-[`0x/slop/debate/web-cache/2026-07-12-waybackify-serve-cache.md`](https://github.com/indexzero/0x)
-(local repo path; condensed decisions reproduced here). Implementation:
+The layout is the outcome of a five-voice design debate — **position E**:
+identity-keyed body + authoritative sidecar recording a content hash
+("Nix store-realization + containerd ingest-commit + cacache's
+record-on-write integrity, minus cacache's authoritative index"). The
+decisions, dissents, and edge cases that debate produced are reproduced in
+full throughout this document. Implementation:
 [`spv/waybackify/cache.js`](../../waybackify/cache.js). Consumer contract:
 [SERVE.md](./SERVE.md).
 
@@ -52,8 +50,8 @@ Rationale, per path:
 - **`cap/<aa>/<hash>` — no extension.** Content-type lives ONLY in the
   sidecar; the filename is pure identity. The bytes are **exactly what
   archive.org returned** — no toolbar stripping, no URL rewriting. Serve-time
-  transforms are #271's job; store-time transforms would make the mirror
-  unable to reproduce the archive (the #267 "verbatim bytes" decision).
+  transforms are the mirror server's job; store-time transforms would make
+  the mirror unable to reproduce the archive (the "verbatim bytes" decision).
 - **`meta/<aa>/<hash>.json` — the sole authority.** The verbatim captureKey
   is unrecoverable from the hash, and R2 needs it verbatim, so the sidecar is
   mandatory — and given a mandatory authoritative sidecar, any second index
@@ -78,12 +76,13 @@ hash        = sha256hex(captureKey)              (64 lowercase hex chars)
 ```
 
 Derived by ONE shared module — [`spv/waybackify/key.js`](../../waybackify/key.js),
-extracted in #267 from `render/wayback/src/key.ts` (now a re-export shim), so
+extracted from `render/wayback/src/key.ts` (now a re-export shim), so
 the writer (this CLI) and the server derive **byte-identical** names. The
 pinned digest `sha256('20140403040000/http://example.com/') = 77c4b856…` is
 tested on both sides as the cross-package tripwire.
 
-Identity-hashing is *forced*, not chosen (debate, thought 19):
+Identity-hashing is *forced*, not chosen — three independent constraints
+converge on it:
 
 1. `cap:` + hash is **exactly the Fastly KV item name** — KV key names
    hard-ban `#` `;` `?` `^` `|` and cap at 1024 UTF-8 bytes
@@ -93,7 +92,7 @@ Identity-hashing is *forced*, not chosen (debate, thought 19):
    at 255 bytes (`NAME_MAX`), keys run past 2000 chars, and APFS is
    case- and unicode-normalization-insensitive by default — raw keys as
    paths would silently collide NFC/NFD variants.
-3. It is the same operation the #271 FsStore performs to resolve an incoming
+3. It is the same operation the mirror server's FsStore performs to resolve an incoming
    request key.
 
 The verbatim key survives ONLY in `sidecar.key` — which is why the sidecar is
@@ -105,13 +104,13 @@ authoritative and mandatory.
 
 | field | type | presence | rationale |
 |---|---|---|---|
-| `v` | int | always | Schema version. Bump on any incompatible change, coordinated across #249/#254 consumers. |
+| `v` | int | always | Schema version. Bump on any incompatible change, coordinated across every consumer (mirror server, sync tooling, this CLI). |
 | `key` | string | always | **Verbatim** captureKey, UTF-8. The R2 object key and the sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
 | `contentType` | string | always (`''` when the archive sent none) | Feeds R2 `httpMetadata.contentType` AND Fastly KV item metadata. Write-time enforced (key.js `captureMetadata`): no CR/LF (the value rides the `Fastly-Metadata` HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes ([js-compute `put()` limit](https://docs.fastly.com/products/compute-resource-limits); the management API allows 2000 — designed to the smaller). |
-| `status` | `body \| redirect \| error \| empty` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (Mikeal's hardened point, debate thought 17). |
-| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (Kat's non-negotiable, thought 15). **Integrity, not addressing**: the filename stays the identity hash. |
+| `status` | `body \| redirect \| error \| empty` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (Mikeal's hardened point in the debate). |
+| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (Kat's non-negotiable in the debate). **Integrity, not addressing**: the filename stays the identity hash. |
 | `contentLength` | int | iff `status == "body"` | Byte count, counted during the same streaming write. |
-| `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern (Eelco, thought 13). Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
+| `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern (Eelco's argument in the debate). Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
 | `flag` | `im_ \| cs_ \| js_ \| oe_ \| null` | always | Requisite-type tag when this entry is itself a requisite (image / stylesheet / script / object-embed replay flags); `null` for operator-named documents. |
 | `fetchedAt` | string | always | ISO-8601 fetch time. Provenance only — identity is entirely in `key`. |
 
@@ -119,7 +118,7 @@ authoritative and mandatory.
 
 Sidecars are **canonical JSON**: recursively sorted keys, no insignificant
 whitespace, single line, **no CR/LF anywhere** (not even a trailing newline —
-the issue's normative schema says "no CR/LF"; Eelco's canonicalization
+the normative schema says "no CR/LF"; Eelco's canonicalization
 dissent is adopted minus its trailing-newline detail). Two writers producing
 the same logical entry produce byte-identical files, so rsync/diff/dedupe
 tooling sees stability, not JSON key-order noise.
@@ -215,14 +214,14 @@ page and are not requisites).
 
 - Edges live in the document sidecar's `requisites[]` — written atomically
   with the document entry, so the frontier is recomputable on every resume
-  (an absent edge list would make resume silently under-fetch; Mikeal,
-  thought 17).
+  (an absent edge list would make resume silently under-fetch — Mikeal's
+  point in the debate).
 - Edges are **always recorded** for HTML documents, even under
   `--no-requisites`: the edges are facts of the captured page and the bytes
   are in hand. `--no-requisites` opts out of *fetching* children ("stores
   exactly one entry"), and a later default run resumes straight into the
   recorded frontier.
-- **Closure is a query, never a write barrier** (Artur, thought 16): each
+- **Closure is a query, never a write barrier** (Artur's argument): each
   entry (document or requisite) completes on its own body+sidecar. "Is this
   document requisite-complete?" = stat each child's sidecar. This keeps
   independent concurrent invocations from coupling through shared requisites
@@ -237,8 +236,8 @@ page and are not requisites).
 
 ## Failure policy
 
-Per entry class (implementation-defined within #267's semantics; recorded
-here as the contract):
+Per entry class (implementation-defined within the command's decided
+semantics; recorded here as the contract):
 
 | event | outcome | why |
 |---|---|---|
@@ -264,7 +263,7 @@ not from scratch:
 - **Kat Marchan:** ship a first-class `waybackify fsck` — scan `meta/`,
   re-verify every `contentHash`, reap orphan `tmp/`/`cap/` files. "A store
   without a verify command rots silently." *(File as a follow-up issue when
-  #267 lands.)*
+  this lands.)*
 - **Mikeal Rogers:** requisite edges could carry the child's `contentHash`
   alongside its key, so a requisite whose bytes ever change under a shared
   timestamp is detectable — "you're trusting the timestamp to pin content;
@@ -345,8 +344,6 @@ The document's sidecar (one line on disk; wrapped here for reading):
 
 ## Sources
 
-- Debate record: `0x/slop/debate/web-cache/2026-07-12-waybackify-serve-cache.md` (the normative design decision; edge cases EC-1..3).
-- Issues: [#267](https://github.com/indexzero/charlie.dev/issues/267) (this command), [#254](https://github.com/indexzero/charlie.dev/issues/254) (CLI parent), [#249](https://github.com/indexzero/charlie.dev/issues/249) (mirror), [#271](https://github.com/indexzero/charlie.dev/issues/271) (consumer).
 - Node.js: [`fsPromises.rename`](https://nodejs.org/api/fs.html#fspromisesrenameoldpath-newpath) · [`filehandle.sync`](https://nodejs.org/api/fs.html#filehandlesync) · [`crypto.createHash`](https://nodejs.org/api/crypto.html#cryptocreatehashalgorithm-options) · [`hash.update`](https://nodejs.org/api/crypto.html#hashupdatedata-inputencoding) · [global WebCrypto](https://nodejs.org/api/globals.html#crypto).
 - POSIX: [rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html) · [fsync(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fsync.html).
 - W3C/MDN: [Subresource Integrity §integrity metadata](https://www.w3.org/TR/sri-1/#integrity-metadata-description) · [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) · [MDN `Object.keys` ordering](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/keys#description).

@@ -1,4 +1,4 @@
-// waybackify CLI scaffold tests (#266) — offline, zero network.
+// waybackify CLI scaffold tests — offline, zero network.
 //
 // Three layers, per the issue's verification list:
 //   1. Help snapshots — root + per-command help pinned byte-for-byte against
@@ -129,7 +129,7 @@ test('bare invocation prints root help to stderr and exits 2', () => {
 // 3. Not-implemented contract (exit 70) + full flag-surface parsing
 // ---------------------------------------------------------------------------
 
-test('every unimplemented command with valid usage exits 70 (cache landed in #267)', () => {
+test('every unimplemented command with valid usage exits 70 (cache is implemented)', () => {
   for (const argv of [
     ['check', WB],
     ['search', 'http://example.com/'],
@@ -144,7 +144,7 @@ test('every unimplemented command with valid usage exits 70 (cache landed in #26
 });
 
 test('cache is WIRED in the bin: a non-replay URL is a domain failure (1), not a 70', () => {
-  // Proves bin/waybackify.js hands `cache` the real #267 handler: the
+  // Proves bin/waybackify.js hands `cache` the real handler: the
   // library rejects the URL before any I/O, and run() maps the throw to
   // exit 1. (Offline by construction — parseWaybackUrl fails first.)
   const { status, stderr } = cli('cache', 'https://example.com/not-wayback', '-o', '/tmp/never-created');
@@ -179,7 +179,7 @@ test('handlers receive the fully parsed surface (args + flags)', async () => {
   assert.equal(await run(['cache', WB, '-o', '/tmp/cr'], { handlers, error: () => {} }), EXIT.OK);
   assert.equal(seen.cache.args.waybackUrl, WB);
   assert.equal(seen.cache.flags.output, '/tmp/cr');
-  // Requisites-by-default (#267 semantics, pinned at the surface now):
+  // Requisites-by-default (the cache command's semantics, pinned at the surface):
   // paparam registers `--no-requisites` under the name `requisites` with
   // default true (parseFlag inversion, index.js:793-799 @1.10.1).
   assert.equal(seen.cache.flags.requisites, true);
@@ -205,7 +205,7 @@ test('run() maps handler outcomes to the documented exit codes', async () => {
 });
 
 test('thin-CLI rule: the parsing layer imports nothing from spv/waybackify', () => {
-  // Evolved from #266's "imports NOTHING yet": with #267 landed, the library
+  // Evolved from the scaffold's "imports NOTHING yet": with cache landed, the library
   // is reached ONLY through src/commands/* wiring modules. The argv surface
   // (src/cli.js) and the bin stay library-free so --help and usage errors
   // never load fetch machinery.

@@ -17,4 +17,4 @@ Flags:
   --ledger    also fold in the sibling wayback.json ledger entries
   --help|-h   Show help
 
-issues: #254 (parent) · #248 (audit) · #249 (mirror)
+part of the wayback.charlie.dev mirror tooling

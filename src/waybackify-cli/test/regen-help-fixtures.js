@@ -4,7 +4,7 @@
 //   node test/regen-help-fixtures.js
 //
 // then review the fixture diff like any contract change — the snapshots exist
-// so the surface cannot drift by accident (#266).
+// so the surface cannot drift by accident.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

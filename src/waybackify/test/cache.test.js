@@ -1,9 +1,8 @@
-// Cache-store tests (#267) — offline, mocked fetch + fixtures, zero network.
+// Cache-store tests — offline, mocked fetch + fixtures, zero network.
 //
 // The three debate edge cases (EC-1 crash atomicity, EC-2 hostile-key
 // round-trip, EC-3 duplicate bodies under concurrency) are MANDATORY here —
-// they are the acceptance criteria the design debate encoded (see
-// 0x/slop/debate/web-cache/2026-07-12-waybackify-serve-cache.md §Edge Cases).
+// they are the acceptance criteria the design debate encoded.
 // Live population runs live in cache-live.test.js behind WAYBACK_LIVE=1.
 import { describe, it, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
@@ -167,7 +166,7 @@ describe('cacheCapture — resume semantics', () => {
     root = await mkroot();
   });
 
-  it('double run is a fetch-free no-op (the #267 manual check, pinned)', async () => {
+  it('double run is a fetch-free no-op (the manual double-run check, pinned)', async () => {
     const first = mockArchive();
     await cacheCapture(DOC_URL, { root, fetch: first.fetchImpl });
     const second = mockArchive();

@@ -1,7 +1,7 @@
 {
   "name": "@charlie.dev/waybackify-cli",
   "version": "0.0.0",
-  "description": "waybackify — check / search / manifest / cache over the spv/waybackify library (#254). paparam argv surface only; handlers land per sub-issue.",
+  "description": "waybackify — check / search / manifest / cache over the spv/waybackify library. paparam argv surface plus per-command handlers as they land.",
   "private": true,
   "type": "module",
   "bin": {

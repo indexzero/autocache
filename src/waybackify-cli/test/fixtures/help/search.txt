@@ -18,4 +18,4 @@ Flags:
   --limit <n>      maximum captures to emit
   --help|-h        Show help
 
-issues: #254 (parent) · #248 (audit) · #249 (mirror)
+part of the wayback.charlie.dev mirror tooling

@@ -1,8 +1,8 @@
 /**
- * Capture-key + capture-metadata derivation (#249/#254/#267) — the storage
+ * Capture-key + capture-metadata derivation — the storage
  * naming contract, alone in its own module ON PURPOSE.
  *
- * EXTRACTED from render/wayback/src/key.ts (#267), which was built pure —
+ * EXTRACTED from render/wayback/src/key.ts, which was built pure —
  * zero imports, zero runtime assumptions beyond WebCrypto — precisely so
  * this extraction is a file move (see that module's original header). The
  * TypeScript module is now a re-export shim over this file; its key.test.ts
@@ -10,7 +10,7 @@
  * '20140403040000/http://example.com/' is the cross-package tripwire).
  *
  * This is a cross-package contract, not an implementation detail: the
- * `waybackify cache` CLI (#254/#267) populates the mirror by writing a local
+ * `waybackify cache` CLI populates the mirror by writing a local
  * bucket image (cache.js) that gets synced to R2 / Fastly KV, so the writer
  * and the wayback.charlie.dev server MUST derive identical keys and metadata
  * from (timestamp, originalUrl, contentType).
@@ -41,7 +41,7 @@
  *                 captureMetadata() below — same object shape as R2's
  *                 httpMetadata, so both backends share one metadata story.
  *
- *   local disk    (#267 cache.js) body at cap/<aa>/<hash>, sidecar at
+ *   local disk    (cache.js) body at cap/<aa>/<hash>, sidecar at
  *                 meta/<aa>/<hash>.json, where <hash> is the SAME sha256 hex
  *                 (captureHash() below) and aa = hash.slice(0, 2). The local
  *                 filename is byte-identical to the Fastly item name minus
@@ -60,7 +60,7 @@ export function captureKey(timestamp, originalUrl) {
 
 /**
  * SHA-256 hex of a capture key — the identity token every hash-keyed
- * consumer shares: the Fastly KV item name is `cap:` + this, and the #267
+ * consumer shares: the Fastly KV item name is `cap:` + this, and the local
  * cache layout's on-disk filename is exactly this. Async because the digest
  * is WebCrypto (`crypto.subtle` is a global in Fastly Compute, Workers, and
  * Node ≥ 19 — https://nodejs.org/api/globals.html#crypto).
@@ -94,7 +94,7 @@ export async function fastlyKVKey(key) {
  *     so it's rejected rather than laundered.
  *   - ≤ 1000 bytes — js-compute documents 1000 for put() while the
  *     management API says 2000; design to the smaller so images written
- *     locally by the #254 CLI stay uploadable through either door.
+ *     locally by the population CLI stay uploadable through either door.
  * @param {{ contentType: string }} meta
  * @returns {string}
  */

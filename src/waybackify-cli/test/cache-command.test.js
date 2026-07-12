@@ -1,4 +1,4 @@
-// `waybackify cache` wiring tests (#267) — offline, library injected.
+// `waybackify cache` wiring tests — offline, library injected.
 //
 // The cache STORE (layout, write protocol, resume, requisites, the three
 // debate edge cases) is tested where it lives: spv/waybackify/test/

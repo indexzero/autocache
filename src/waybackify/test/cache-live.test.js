@@ -1,5 +1,5 @@
 // LIVE cache-population tests — real replay fetches against archive.org.
-// Skipped by default (the PR gate stays offline, #246/#251); run with
+// Skipped by default (the PR gate stays offline); run with
 // WAYBACK_LIVE=1 pnpm test (or pnpm run test:live). Best-effort by design:
 // archive.org throttles, so this pins the invariants (verbatim bytes,
 // sidecar completion, second-run no-op) on ONE small, corpus-real capture.

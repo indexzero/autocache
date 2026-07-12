@@ -1,0 +1,20 @@
+waybackify manifest [flags] <file.md>
+
+Per-file enumeration of wayback refs
+
+Per-file enumeration of wayback refs. Inline links only by default;
+--ledger folds in the sibling wayback.json entries. Corpus scope is
+deliberately NOT built in — that is
+`find words -name index.md | xargs waybackify manifest`.
+
+Output: JSONL, {post, source: inline|ledger, timestamp, originalUrl,
+waybackUrl}.
+
+Arguments:
+  <file.md>   markdown file to enumerate
+
+Flags:
+  --ledger    also fold in the sibling wayback.json ledger entries
+  --help|-h   Show help
+
+issues: #254 (parent) · #248 (audit) · #249 (mirror)

@@ -1,0 +1,21 @@
+waybackify search [flags] <original-url>
+
+CDX capture query — re-pick a better capture
+
+CDX capture query (the library's getSnapshot/getSnapshots face) — for
+re-picking a better capture when check flags one bad. No
+date-anchoring cleverness: --near passes through, default is
+CDX's own ordering.
+
+Output: JSONL, {timestamp, statuscode, mimetype, waybackUrl} per
+capture.
+
+Arguments:
+  <original-url>   the archived-site URL to query captures of
+
+Flags:
+  --near <ts>      preferred timestamp (YYYYMMDD[HHMMSS]); passed through to CDX
+  --limit <n>      maximum captures to emit
+  --help|-h        Show help
+
+issues: #254 (parent) · #248 (audit) · #249 (mirror)

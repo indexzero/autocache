@@ -1,0 +1,24 @@
+{
+  "name": "@charlie.dev/waybackify-cli",
+  "version": "0.0.0",
+  "description": "waybackify — check / search / manifest / cache over the spv/waybackify library (#254). paparam argv surface only; handlers land per sub-issue.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "waybackify": "./bin/waybackify.js"
+  },
+  "main": "src/cli.js",
+  "scripts": {
+    "test": "node --test ./test/*.test.js"
+  },
+  "keywords": [
+    "wayback",
+    "internet-archive",
+    "cli"
+  ],
+  "author": "Charlie Robbins <npm@charlie.dev>",
+  "license": "MIT",
+  "dependencies": {
+    "paparam": "^1.10.1"
+  }
+}

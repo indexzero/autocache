@@ -1,0 +1,289 @@
+// waybackify CLI surface (#266 — sub-issue 1/6 of #254).
+//
+// This module pins the ENTIRE command/option contract — names, args, flags,
+// help text, exit codes — with ZERO implementation. Every default handler
+// throws Not implemented (exit 70). The four implementation sub-issues
+// (#267 cache, #268 check, #269 search, #270 manifest) each replace one
+// handler without ever touching argv parsing again.
+//
+// Thin-CLI rule (#254, hard constraint): this package is argv parsing
+// (paparam), output formatting, and exit codes. All plumbing lands in
+// spv/waybackify (the library). This module imports NOTHING from it yet.
+//
+// ---------------------------------------------------------------------------
+// paparam (v1.10.1) — source-driven notes
+// ---------------------------------------------------------------------------
+// Everything below is verified against the official README
+// (https://github.com/holepunchto/paparam#readme, read at paparam@1.10.1)
+// and, where the README is silent, against the shipped source
+// (node_modules/paparam/index.js @1.10.1). Load-bearing facts:
+//
+//  1. STRICT BY DEFAULT. Commands reject unknown flags (bail reason
+//     UNKNOWN_FLAG) and unexpected positionals (UNKNOWN_ARG) unless
+//     `sloppy()` is applied — README: "### sloppy(opts) — Configures the
+//     command to be non-strict when parsing unknown flags or arguments"
+//     (https://github.com/holepunchto/paparam#sloppyopts); source:
+//     `_strictFlags = true` / `_strictArgs = true` defaults (index.js:107-108),
+//     UNKNOWN_FLAG bail at index.js:499, UNKNOWN_ARG at index.js:568.
+//  2. THE DEFAULT BAIL THROWS. Without a `bail(fn)` modifier, a usage error
+//     throws a Bail error instead of returning null (index.js:593-599 —
+//     `_bail` walks the parent chain, then throws). A root-level `bail(fn)`
+//     covers subcommand bails too, because `_bail` delegates upward
+//     (index.js:594-595). README documents `bail(fn)` ("Set the bail handler
+//     to fn", https://github.com/holepunchto/paparam#bailfn) and the
+//     `cmd.bailed` shape `{ bail: { reason, flag, arg, err }, error?, output? }`
+//     (https://github.com/holepunchto/paparam#cmdbailed-object--null).
+//  3. HELP RETURNS NULL. `parse()` auto-handles -h/--help: it prints
+//     `cmd.help()` via console.log and returns null (README:
+//     https://github.com/holepunchto/paparam#cmdparseargv--processargvslice2-opts,
+//     "Automatically handles '--help' or '-h' flags"; source index.js:246-249).
+//     So a null parse result is EITHER help-shown (success) or a usage bail —
+//     run() disambiguates via the bail handler having fired.
+//  4. MISSING_ARG IS ROOT-ONLY. parse() enforces required args against
+//     `this._definedArgs` — the command parse() was CALLED on, not the
+//     subcommand that matched (index.js:236-243, `this` vs `c`). The README
+//     does not document this. Consequence: each subcommand enforces its own
+//     required positional via `validate()` (README:
+//     https://github.com/holepunchto/paparam#validatevalidator-description);
+//     validator bails carry err.code === 'ERR_INVALID' (index.js:873-875).
+//  5. `--no-<name>` INVERSION. The parser treats a `--no-` prefix as an
+//     inverse write to flag `<name>` (index.js:63-66), and a flag DEFINED as
+//     `--no-requisites` registers under the name `requisites` with default
+//     value `true` (parseFlag, index.js:793-799: `value = inverse`). So
+//     `flags.requisites` is true by default and false when --no-requisites
+//     is passed — exactly #267's requisites-by-default semantics. UNVERIFIED
+//     in the README (undocumented behavior); verified against the 1.10.1
+//     source and pinned by test/cli.test.js so an upgrade that changes it
+//     fails loudly.
+//  6. RUNNERS ARE ASYNC BY DEFAULT. parse() sets `cmd.running` to a promise
+//     (README: https://github.com/holepunchto/paparam#cmdrunning-promise--null);
+//     a throwing runner is caught and routed through the SAME bail path with
+//     `bail.err` set (index.js:900-914). paparam never calls process.exit —
+//     exit codes are entirely this module's job.
+//
+// ---------------------------------------------------------------------------
+// Exit-code convention (#266, documented in README.md)
+// ---------------------------------------------------------------------------
+//   0   success (and --help)
+//   1   domain failure (bad verdict, not found, fetch failure)
+//   2   usage error (unknown flag/arg, missing required arg/flag)
+//   70  not implemented — TEMPORARY, removed as handlers land per sub-issue.
+//       70 is BSD sysexits EX_SOFTWARE ("internal software error", the
+//       closest sysexits fit for "this code path does not exist yet") — see
+//       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
+
+import { arg, bail, command, description, flag, footer, summary, validate } from 'paparam';
+
+export const EXIT = {
+  OK: 0,
+  DOMAIN: 1,
+  USAGE: 2,
+  NOT_IMPLEMENTED: 70
+};
+
+/** The error every scaffold handler throws until its sub-issue lands. */
+export class NotImplementedError extends Error {
+  code = 'ERR_NOT_IMPLEMENTED';
+  constructor(commandName) {
+    super(`waybackify ${commandName}: not implemented (#254 sub-issue pending)`);
+    this.name = 'NotImplementedError';
+  }
+}
+
+const notImplemented = name => () => {
+  throw new NotImplementedError(name);
+};
+
+/**
+ * Build the full waybackify command tree.
+ *
+ * Command descriptions are cribbed verbatim from #254's table (per #266's
+ * acceptance criteria) — do not reword here without rewording the issue.
+ *
+ * @param {Object} [options]
+ * @param {Object} [options.handlers] - Per-command runners, injected by the
+ *   implementation sub-issues (and by tests). Each receives paparam's runner
+ *   payload `{ args, flags, positionals, rest, indices, argv, command }`.
+ *   Missing handlers throw NotImplementedError (exit 70).
+ * @param {Function} [options.onBail] - Observer for every bail (usage errors
+ *   AND runner throws — see note 2 above). Receives paparam's bail object
+ *   `{ command, reason, flag, arg, err }`. Returns the bail output string.
+ * @returns {import('paparam').Command} root command
+ */
+export function createCLI({ handlers = {}, onBail } = {}) {
+  const check = command(
+    'check',
+    summary('Full wayback-404 verdict for the exact capture'),
+    description(
+      'Full wayback-404 verdict for the exact capture: CDX statuscode +\n' +
+        'soft-404 content heuristics on the replay body — the #248 audit\n' +
+        'primitive.\n' +
+        '\n' +
+        'Output: JSON verdict on stdout\n' +
+        '({verdict: good|wayback404|suspect, statuscode, reason, snippet});\n' +
+        'exit 0 = verified good, nonzero = bad/suspect.'
+    ),
+    arg('<wayback-url>', 'full web.archive.org/web/<timestamp>/<original> replay URL'),
+    // Required-arg enforcement is per-subcommand via validate() — see
+    // source-driven note 4 (MISSING_ARG is root-only in paparam 1.10.1).
+    validate(({ args }) => Boolean(args.waybackUrl), 'missing required argument: <wayback-url>'),
+    handlers.check ?? notImplemented('check')
+  );
+
+  const search = command(
+    'search',
+    summary('CDX capture query — re-pick a better capture'),
+    description(
+      "CDX capture query (the library's getSnapshot/getSnapshots face) — for\n" +
+        're-picking a better capture when check flags one bad. No\n' +
+        'date-anchoring cleverness: --near passes through, default is\n' +
+        "CDX's own ordering.\n" +
+        '\n' +
+        'Output: JSONL, {timestamp, statuscode, mimetype, waybackUrl} per\n' +
+        'capture.'
+    ),
+    arg('<original-url>', 'the archived-site URL to query captures of'),
+    flag('--near <ts>', 'preferred timestamp (YYYYMMDD[HHMMSS]); passed through to CDX'),
+    flag('--limit <n>', 'maximum captures to emit'),
+    validate(({ args }) => Boolean(args.originalUrl), 'missing required argument: <original-url>'),
+    handlers.search ?? notImplemented('search')
+  );
+
+  const manifest = command(
+    'manifest',
+    summary('Per-file enumeration of wayback refs'),
+    description(
+      'Per-file enumeration of wayback refs. Inline links only by default;\n' +
+        '--ledger folds in the sibling wayback.json entries. Corpus scope is\n' +
+        'deliberately NOT built in — that is\n' +
+        '`find words -name index.md | xargs waybackify manifest`.\n' +
+        '\n' +
+        'Output: JSONL, {post, source: inline|ledger, timestamp, originalUrl,\n' +
+        'waybackUrl}.'
+    ),
+    // paparam derives the parsed-arg name from the FIRST [a-zA-Z0-9-]+ run in
+    // the spec (snakeToCamel, index.js:772-778 @1.10.1), so `<file.md>` lands
+    // on args.file — the `.md` is help-text only.
+    arg('<file.md>', 'markdown file to enumerate'),
+    flag('--ledger', 'also fold in the sibling wayback.json ledger entries'),
+    validate(({ args }) => Boolean(args.file), 'missing required argument: <file.md>'),
+    handlers.manifest ?? notImplemented('manifest')
+  );
+
+  const cache = command(
+    'cache',
+    summary('Fetch the capture into a local bucket image'),
+    description(
+      'Fetch the capture into a local bucket image at <root> — the #249\n' +
+        "mirror's population path. Syncing that dir to R2 / Fastly KV\n" +
+        '(rclone/wrangler/fastly tooling) IS deployment.\n' +
+        '\n' +
+        'Output: files written under the shared key scheme; summary line on\n' +
+        'stdout.'
+    ),
+    arg('<wayback-url>', 'full web.archive.org/web/<timestamp>/<original> replay URL'),
+    flag('--output|-o <root>', 'cache root directory (the local bucket image) — required'),
+    // Defined as `--no-requisites` so paparam registers flag `requisites`
+    // defaulting to TRUE (requisites-by-default, #267) — source-driven note 5.
+    flag(
+      '--no-requisites',
+      'store only the named capture; skip its im_/cs_/js_/oe_ page requisites'
+    ),
+    validate(({ args }) => Boolean(args.waybackUrl), 'missing required argument: <wayback-url>'),
+    validate(({ flags }) => Boolean(flags.output), 'missing required flag: --output|-o <root>'),
+    handlers.cache ?? notImplemented('cache')
+  );
+
+  const root = command(
+    'waybackify',
+    summary('check / search / manifest / cache over the spv/waybackify library'),
+    description(
+      'Human-operable, xargs-composable front door over spv/waybackify (#254):\n' +
+        'hand-check a capture, re-pick a better one, enumerate a file\'s wayback\n' +
+        'refs, or populate the wayback.charlie.dev mirror (#249).\n' +
+        '\n' +
+        'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
+        '2 usage error · 70 not implemented (temporary, #254 scaffold).'
+    ),
+    footer('issues: #254 (parent) · #248 (audit) · #249 (mirror)'),
+    check,
+    search,
+    manifest,
+    cache
+  );
+
+  // One bail handler at the root covers every subcommand (source-driven
+  // note 2: _bail delegates up the parent chain). Installing it also switches
+  // paparam from throw-on-bail to record-on-bail, which is what lets run()
+  // turn usage errors into exit 2 instead of a stack trace.
+  if (onBail) root.add(bail(onBail));
+
+  return root;
+}
+
+/**
+ * Parse argv, dispatch, and map the outcome to an exit code.
+ *
+ * @param {string[]} argv - e.g. process.argv.slice(2)
+ * @param {Object} [options]
+ * @param {Object} [options.handlers] - see createCLI
+ * @param {Function} [options.error] - stderr line sink (default console.error)
+ * @returns {Promise<number>} exit code per the convention above
+ */
+export async function run(argv, { handlers = {}, error = console.error } = {}) {
+  let exitCode = null;
+
+  const root = createCLI({
+    handlers,
+    onBail(bailed) {
+      // Classification (source-driven notes 2/4/6):
+      //   bail.err with code ERR_NOT_IMPLEMENTED  → scaffold handler   → 70
+      //   bail.err with code ERR_INVALID          → validate() failure → 2
+      //   bail.err (anything else)                → runner threw       → 1
+      //   no bail.err (UNKNOWN_FLAG/INVALID_FLAG/
+      //                UNKNOWN_ARG/MISSING_ARG)   → parse-time usage   → 2
+      const err = bailed.err;
+      if (err?.code === 'ERR_NOT_IMPLEMENTED') {
+        exitCode = EXIT.NOT_IMPLEMENTED;
+        error(err.message);
+        return err.message;
+      }
+      if (err && err.code !== 'ERR_INVALID') {
+        exitCode = EXIT.DOMAIN;
+        error(err.message ?? String(err));
+        return err.message ?? String(err);
+      }
+      exitCode = EXIT.USAGE;
+      const detail = bailed.flag
+        ? `${bailed.reason}: ${bailed.flag.name}`
+        : bailed.arg
+          ? `${bailed.reason}: ${bailed.arg.value}`
+          : err?.message ?? bailed.reason;
+      const cmd = bailed.command;
+      error(`waybackify: ${detail}`);
+      error(cmd.usage().trimEnd());
+      return detail;
+    }
+  });
+
+  const parsed = root.parse(argv);
+
+  if (parsed === null) {
+    // Either a usage bail (onBail fired, exitCode set) or --help was shown
+    // (paparam printed help and returned null — source-driven note 3).
+    return exitCode ?? EXIT.OK;
+  }
+
+  // Bare `waybackify` (no subcommand): paparam matches the root command and
+  // runs its noop runner. Treat as usage: print help, exit 2.
+  if (parsed === root) {
+    error(root.help().trimEnd());
+    return EXIT.USAGE;
+  }
+
+  // Async runner: await completion; a throw routed through bail set exitCode
+  // (source-driven note 6).
+  if (parsed.running) await parsed.running;
+
+  return exitCode ?? EXIT.OK;
+}

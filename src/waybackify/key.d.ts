@@ -16,6 +16,19 @@ export function captureKey(timestamp: string, originalUrl: string): string;
  */
 export function captureHash(key: string): Promise<string>;
 
+/**
+ * Rootless body object key for a capture key: `cap/<aa>/<hash>` (always
+ * `/`-joined — an object key, not an OS path; consumers join it under a root
+ * themselves). The shared source of truth for the `<aa>`-sharded layout.
+ */
+export function capturePath(key: string): Promise<string>;
+
+/**
+ * Rootless sidecar object key for a capture key: `meta/<aa>/<hash>.json`
+ * (always `/`-joined — see capturePath).
+ */
+export function metaPath(key: string): Promise<string>;
+
 /** Derive the Fastly KV item name (`cap:` + sha256 hex) for a capture key. */
 export function fastlyKVKey(key: string): Promise<string>;
 

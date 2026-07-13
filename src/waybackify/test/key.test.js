@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
-import { captureHash, captureKey, captureMetadata, fastlyKVKey } from '../key.js';
+import { captureHash, captureKey, captureMetadata, capturePath, fastlyKVKey, metaPath } from '../key.js';
 
 describe('captureKey', () => {
   it('is `${timestamp}/${originalUrl}`, verbatim — no encoding, no normalization', () => {
@@ -47,6 +47,30 @@ describe('captureHash / fastlyKVKey', () => {
     const monster = `20140403040000/http://example.com/${'a'.repeat(2000)}`;
     assert.match(await fastlyKVKey(monster), /^cap:[0-9a-f]{64}$/);
     assert.match(await captureHash('2014/http://x.com/a?b=c#d;e^f|g'), /^[0-9a-f]{64}$/);
+  });
+});
+
+describe('capturePath / metaPath', () => {
+  it('project the pinned digest into rootless `/`-joined object keys (the bucket-key contract)', async () => {
+    // Same 77c4b856… digest the fastlyKVKey/captureHash pins assert — the
+    // shard is <hash>[0:2], the keys are `/`-joined object keys, NEVER OS
+    // paths and NEVER root-prefixed. Recompute only on a DELIBERATE layout
+    // change, coordinated across the mirror server and the population CLI.
+    assert.equal(
+      await capturePath('20140403040000/http://example.com/'),
+      'cap/77/77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac'
+    );
+    assert.equal(
+      await metaPath('20140403040000/http://example.com/'),
+      'meta/77/77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac.json'
+    );
+  });
+
+  it('shard + hash are exactly captureHash (one source of truth)', async () => {
+    const key = '2014/http://x.com/a?b=c#d;e^f|g';
+    const hash = await captureHash(key);
+    assert.equal(await capturePath(key), `cap/${hash.slice(0, 2)}/${hash}`);
+    assert.equal(await metaPath(key), `meta/${hash.slice(0, 2)}/${hash}.json`);
   });
 });
 

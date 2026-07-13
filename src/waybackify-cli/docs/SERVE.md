@@ -31,16 +31,19 @@ Given a capture key `key = ${timestamp}/${originalUrl}` (what
 body per (timestamp, url) however the replay framed it):
 
 ```js
-import { captureHash } from 'spv/waybackify/key.js'; // or the render/wayback/src/key.ts shim
+import { capturePath, metaPath } from 'spv/waybackify/key.js'; // or the render/wayback/src/key.ts shim
 
-const hash = await captureHash(key);        // sha256hex, 64 lowercase hex chars
-const aa   = hash.slice(0, 2);
-const meta = `${root}/meta/${aa}/${hash}.json`;
-const body = `${root}/cap/${aa}/${hash}`;
+const meta = `${root}/${await metaPath(key)}`;    // <root>/meta/<aa>/<hash>.json
+const body = `${root}/${await capturePath(key)}`; // <root>/cap/<aa>/<hash>
 ```
 
-Always derive through `key.js` (`captureHash`/`fastlyKVKey`) — never
-hand-roll the digest. The pinned test digest
+`capturePath()`/`metaPath()` return **rootless, `/`-joined object keys**
+(`cap/<aa>/<hash>`, `meta/<aa>/<hash>.json`) — the shared source of truth for
+the `<aa>`-sharded layout, and the bucket object keys verbatim (see
+[CACHE.md §Bucket projection](./CACHE.md#bucket-projection)). A local consumer
+joins them under its root itself. Always derive through `key.js`
+(`capturePath`/`metaPath`/`captureHash`/`fastlyKVKey`) — never hand-roll the
+digest or the shard. The pinned test digest
 `sha256('20140403040000/http://example.com/') = 77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac`
 exists in BOTH packages' suites precisely to catch a consumer deriving its
 own variant. The raw `key` must never be used as a path component (2000+

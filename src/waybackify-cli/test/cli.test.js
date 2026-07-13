@@ -129,11 +129,9 @@ test('bare invocation prints root help to stderr and exits 2', () => {
 // 3. Not-implemented contract (exit 70) + full flag-surface parsing
 // ---------------------------------------------------------------------------
 
-test('every unimplemented command with valid usage exits 70 (cache is implemented)', () => {
+test('every unimplemented command with valid usage exits 70 (search and cache are implemented)', () => {
   for (const argv of [
     ['check', WB],
-    ['search', 'http://example.com/'],
-    ['search', 'http://example.com/', '--near', '20140403', '--limit', '5'],
     ['manifest', 'words/1/001/index.md'],
     ['manifest', 'words/1/001/index.md', '--ledger']
   ]) {

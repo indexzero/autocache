@@ -129,16 +129,10 @@ test('bare invocation prints root help to stderr and exits 2', () => {
 // 3. Not-implemented contract (exit 70) + full flag-surface parsing
 // ---------------------------------------------------------------------------
 
-test('every unimplemented command with valid usage exits 70 (only manifest remains a scaffold; check, search, and cache are wired)', () => {
-  for (const argv of [
-    ['manifest', 'words/1/001/index.md'],
-    ['manifest', 'words/1/001/index.md', '--ledger']
-  ]) {
-    const { status, stderr } = cli(...argv);
-    assert.equal(status, EXIT.NOT_IMPLEMENTED, `argv: ${argv.join(' ')}`);
-    assert.match(stderr, /not implemented/);
-  }
-});
+// All four commands (check, search, manifest, cache) are wired to real
+// handlers, so the per-command "exits 70" enumeration retired with the last
+// scaffold. The exit-70 contract itself is still pinned below: run() maps
+// NotImplementedError → EXIT.NOT_IMPLEMENTED in the exit-code mapping test.
 
 test('check is WIRED in the bin: a non-replay URL is a domain failure (1), not a 70', () => {
   // Proves bin/waybackify.js hands `check` the real handler: the library
@@ -156,6 +150,17 @@ test('cache is WIRED in the bin: a non-replay URL is a domain failure (1), not a
   const { status, stderr } = cli('cache', 'https://example.com/not-wayback', '-o', '/tmp/never-created');
   assert.equal(status, EXIT.DOMAIN);
   assert.match(stderr, /not a wayback replay URL/);
+});
+
+test('manifest is WIRED in the bin: a real fixture file enumerates to JSONL (0)', () => {
+  // Proves bin/waybackify.js hands `manifest` the real handler over the real
+  // library. Offline — enumerateFile just reads the committed fixture.
+  const file = path.join(PKG, '..', 'waybackify', 'test', 'fixtures', 'words', '1', '001', 'index.md');
+  const { status, stdout } = cli('manifest', file);
+  assert.equal(status, EXIT.OK);
+  const rows = stdout.trim().split('\n').map(l => JSON.parse(l));
+  assert.equal(rows.length, 5, 'five inline refs, deduped, no ledger by default');
+  assert.ok(rows.every(r => r.source === 'inline' && r.post === '1/001'));
 });
 
 test('handlers receive the fully parsed surface (args + flags)', async () => {

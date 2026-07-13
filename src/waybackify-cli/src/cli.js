@@ -73,7 +73,7 @@
 //       closest sysexits fit for "this code path does not exist yet") — see
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
 
-import { arg, bail, command, description, flag, footer, summary, validate } from 'paparam';
+import { arg, bail, command, description, flag, footer, sloppy, summary, validate } from 'paparam';
 
 export const EXIT = {
   OK: 0,
@@ -171,6 +171,15 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     // the spec (snakeToCamel, index.js:772-778 @1.10.1), so `<file.md>` lands
     // on args.file — the `.md` is help-text only.
     arg('<file.md>', 'markdown file to enumerate'),
+    // Loose ARGS (but still-strict FLAGS) so an `xargs` batch works verbatim:
+    // `find words -name index.md | xargs waybackify manifest` hands ONE
+    // invocation many files, which strict args would reject (UNKNOWN_ARG —
+    // note 1). sloppy({ args: true }) collects every positional into the
+    // runner's `positionals`; sloppy({ flags: false }) keeps flags strict, so
+    // an unknown flag still exits 2 AND --ledger still parses in any position
+    // (unlike a `rest`, which would greedily swallow a trailing flag). The
+    // required <file.md> is still enforced by the validate() below.
+    sloppy({ flags: false, args: true }),
     flag('--ledger', 'also fold in the sibling wayback.json ledger entries'),
     validate(({ args }) => Boolean(args.file), 'missing required argument: <file.md>'),
     handlers.manifest ?? notImplemented('manifest')

@@ -3,12 +3,11 @@
 `waybackify` — the human-operable, `xargs`-composable front door over the
 [`spv/waybackify`](../waybackify) library.
 
-**Status: surface pinned; handlers landing one command at a time.**
+**Status: surface pinned; all four commands implemented.**
 The full command/option surface below is fixed (names, args, flags, help
-text, exit codes — snapshot-tested). `check`, `search`, and `cache` are
-implemented (`cache`: see [docs/CACHE.md](./docs/CACHE.md) and
-[docs/SERVE.md](./docs/SERVE.md)); `manifest` currently exits `70` (not
-implemented) until its handler lands.
+text, exit codes — snapshot-tested). `check`, `search`, `manifest`, and
+`cache` all have real handlers (`cache`: see [docs/CACHE.md](./docs/CACHE.md)
+and [docs/SERVE.md](./docs/SERVE.md)).
 
 ## Commands
 

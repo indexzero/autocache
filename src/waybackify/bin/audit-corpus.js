@@ -14,7 +14,7 @@
 // checkpoint file is never committed (spv/waybackify/.gitignore).
 //
 // Placement note (#254): the runner lives in the LIBRARY package because all
-// its moving parts do (verdict engine, CDX client, minimal enumerator). The
+// its moving parts do (verdict engine, CDX client, enumerator). The
 // future spv/waybackify-cli deliberately does NOT grow a corpus walker
 // (`find | xargs waybackify check` is that); this bin is the interim #248
 // front door and shrinks to a wrapper when #254 lands.
@@ -37,7 +37,38 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WaybackMachine } from '../index.js';
 import { auditCapture } from '../audit.js';
-import { enumerateCorpus } from '../enumerate.js';
+import { enumerateCorpus, summarize as summarizeRefs } from '../enumerate.js';
+
+/**
+ * Roll the flat reference list up into the unique captures the verdict engine
+ * audits — deduped by flagless `<timestamp>/<original>` (the mirror's capture
+ * identity), each carrying the posts that reference it and an occurrence count.
+ * enumerateCorpus already threw on any unparseable reference, so there is no
+ * separate skip list to surface here.
+ */
+function captureScope(refs) {
+  const byKey = new Map();
+  for (const ref of refs) {
+    const key = `${ref.timestamp}/${ref.originalUrl}`;
+    let cap = byKey.get(key);
+    if (!cap) {
+      cap = {
+        key,
+        timestamp: ref.timestamp,
+        original: ref.originalUrl,
+        waybackUrl: ref.waybackUrl,
+        posts: new Set(),
+        refCount: 0
+      };
+      byKey.set(key, cap);
+    }
+    cap.posts.add(ref.post);
+    cap.refCount += 1;
+  }
+  return [...byKey.values()]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map(cap => ({ ...cap, posts: [...cap.posts].sort() }));
+}
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_ROOT = path.resolve(PKG, '../..');
@@ -131,16 +162,13 @@ async function main() {
     process.exit(1);
   }
 
-  const { refs, captures, posts, skipped } = enumerateCorpus(args.root);
-  const inline = refs.filter(r => r.source === 'inline').length;
+  const refs = enumerateCorpus(path.join(args.root, 'words'));
+  const captures = captureScope(refs);
+  const counts = summarizeRefs(refs);
   console.log(
-    `enumerated ${refs.length} wayback refs (${inline} inline, ${refs.length - inline} ledger) — ` +
-      `${captures.length} unique captures across ${posts.length} posts`
+    `enumerated ${counts.total} wayback refs (${counts.inline} inline, ${counts.ledger} ledger) — ` +
+      `${captures.length} unique captures across ${counts.posts} posts`
   );
-  if (skipped.length > 0) {
-    console.log(`WARNING: ${skipped.length} web.archive.org URLs did not parse as replay URLs:`);
-    for (const s of skipped) console.log(`  ${s.post} (${s.source}): ${s.url}`);
-  }
   if (args.enumerateOnly) return;
 
   const scope = captures.slice(0, args.limit === Infinity ? captures.length : args.limit);
@@ -194,7 +222,7 @@ async function main() {
       JSON.stringify(
         {
           generatedAt: new Date().toISOString(),
-          corpus: { refs: refs.length, uniqueCaptures: captures.length, posts: posts.length },
+          corpus: { refs: counts.total, uniqueCaptures: captures.length, posts: counts.posts },
           scope: scope.length,
           counts: summary.counts,
           bad: summary.bad

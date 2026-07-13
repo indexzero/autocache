@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "entries": {
+    "https://nodejitsu.com/npm": {
+      "wayback": "https://web.archive.org/web/20160312105649/https://nodejitsu.com/npm",
+      "timestamp": "20160312105649"
+    },
+    "http://registry.nodejitsu.com/": {
+      "wayback": "https://web.archive.org/web/20140129082008/http://registry.nodejitsu.com:80/",
+      "timestamp": "20140129082008",
+      "checkedAt": "2026-06-22T06:51:59.917Z"
+    },
+    "http://never-captured.example.com/": {
+      "wayback": null,
+      "timestamp": null,
+      "checkedAt": "2026-06-22T06:51:59.917Z"
+    }
+  }
+}

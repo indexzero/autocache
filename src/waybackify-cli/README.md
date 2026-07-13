@@ -5,10 +5,10 @@
 
 **Status: surface pinned; handlers landing one command at a time.**
 The full command/option surface below is fixed (names, args, flags, help
-text, exit codes — snapshot-tested). `cache` is implemented (see
-[docs/CACHE.md](./docs/CACHE.md) and [docs/SERVE.md](./docs/SERVE.md));
-`check`, `search`, and `manifest` currently exit `70` (not implemented)
-until their handlers land.
+text, exit codes — snapshot-tested). `check`, `search`, and `cache` are
+implemented (`cache`: see [docs/CACHE.md](./docs/CACHE.md) and
+[docs/SERVE.md](./docs/SERVE.md)); `manifest` currently exits `70` (not
+implemented) until its handler lands.
 
 ## Commands
 
@@ -36,9 +36,10 @@ find words -name index.md | xargs waybackify manifest | jq -r .waybackUrl | xarg
 
 | code | meaning |
 |---|---|
-| `0` | success (and `--help`) |
-| `1` | domain failure — bad verdict, not found, fetch failure |
+| `0` | success (and `--help`) — `check`: verified **good** |
+| `1` | domain failure — bad verdict (`check`: **wayback404**), not found, fetch failure |
 | `2` | usage error — unknown flag/command, missing required arg/flag (paparam strict mode) |
+| `3` | `check`: **suspect** verdict — uncertain; nonzero **on purpose** (conservative composition — `manifest \| xargs check` must not silently pass junk) |
 | `70` | not implemented — **temporary**, removed as handlers land (BSD sysexits `EX_SOFTWARE`) |
 
 ## Architecture (hard rule)

@@ -129,9 +129,8 @@ test('bare invocation prints root help to stderr and exits 2', () => {
 // 3. Not-implemented contract (exit 70) + full flag-surface parsing
 // ---------------------------------------------------------------------------
 
-test('every unimplemented command with valid usage exits 70 (search and cache are implemented)', () => {
+test('every unimplemented command with valid usage exits 70 (only manifest remains a scaffold; check, search, and cache are wired)', () => {
   for (const argv of [
-    ['check', WB],
     ['manifest', 'words/1/001/index.md'],
     ['manifest', 'words/1/001/index.md', '--ledger']
   ]) {
@@ -139,6 +138,15 @@ test('every unimplemented command with valid usage exits 70 (search and cache ar
     assert.equal(status, EXIT.NOT_IMPLEMENTED, `argv: ${argv.join(' ')}`);
     assert.match(stderr, /not implemented/);
   }
+});
+
+test('check is WIRED in the bin: a non-replay URL is a domain failure (1), not a 70', () => {
+  // Proves bin/waybackify.js hands `check` the real handler: the library
+  // rejects the URL before any network I/O, and run() maps the throw to
+  // exit 1. (Offline by construction — parseWaybackUrl fails first.)
+  const { status, stderr } = cli('check', 'https://example.com/not-wayback');
+  assert.equal(status, EXIT.DOMAIN);
+  assert.match(stderr, /not a wayback replay URL/);
 });
 
 test('cache is WIRED in the bin: a non-replay URL is a domain failure (1), not a 70', () => {

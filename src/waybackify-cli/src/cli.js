@@ -79,6 +79,11 @@ export const EXIT = {
   OK: 0,
   DOMAIN: 1,
   USAGE: 2,
+  // `check`'s suspect verdict: nonzero ON PURPOSE (conservative composition),
+  // yet distinct from DOMAIN so a pipeline can tell "confidently junk" from
+  // "a human should look". A handler requests a specific code by throwing an
+  // error carrying `.exitCode` (honored in run()'s bail handler below).
+  SUSPECT: 3,
   NOT_IMPLEMENTED: 70
 };
 
@@ -246,6 +251,13 @@ export async function run(argv, { handlers = {}, error = console.error } = {}) {
       const err = bailed.err;
       if (err?.code === 'ERR_NOT_IMPLEMENTED') {
         exitCode = EXIT.NOT_IMPLEMENTED;
+        error(err.message);
+        return err.message;
+      }
+      // A handler may request an explicit exit code (e.g. `check` maps its
+      // suspect verdict to 3) by throwing an error carrying `.exitCode`.
+      if (typeof err?.exitCode === 'number') {
+        exitCode = err.exitCode;
         error(err.message);
         return err.message;
       }

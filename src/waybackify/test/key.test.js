@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
-import { captureHash, captureKey, captureMetadata, capturePath, fastlyKVKey, metaPath } from '../key.js';
+import { assertMetadataSafe, captureHash, captureKey, captureMetadata, capturePath, fastlyKVKey, metaPath } from '../key.js';
 
 describe('captureKey', () => {
   it('is `${timestamp}/${originalUrl}`, verbatim — no encoding, no normalization', () => {
@@ -84,5 +84,23 @@ describe('captureMetadata', () => {
     const atLimit = `x/${'y'.repeat(980)}`;
     assert.equal(new TextEncoder().encode(captureMetadata({ contentType: atLimit })).length, 1000);
     assert.throws(() => captureMetadata({ contentType: `${atLimit}z` }), /1000/);
+  });
+});
+
+describe('assertMetadataSafe', () => {
+  it('returns a safe contentType unchanged (spaces/semicolons are fine)', () => {
+    assert.equal(assertMetadataSafe('text/html; charset=utf-8'), 'text/html; charset=utf-8');
+    assert.equal(assertMetadataSafe(''), '');
+  });
+
+  it('enforces the SAME CR/LF + ≤1000-byte bounds as captureMetadata (the #288 rewire target)', () => {
+    // Same rejections captureMetadata makes — assertMetadataSafe is the
+    // extracted validator cache.js is slated to delegate to, so the boundary
+    // must match byte-for-byte.
+    assert.throws(() => assertMetadataSafe('text/html\r\nX-Evil: 1'), /CR\/LF/);
+    const atLimit = `x/${'y'.repeat(980)}`;
+    assert.equal(assertMetadataSafe(atLimit), atLimit); // exactly 1000 encoded bytes passes
+    assert.equal(new TextEncoder().encode(JSON.stringify({ contentType: atLimit })).length, 1000);
+    assert.throws(() => assertMetadataSafe(`${atLimit}z`), /1000/);
   });
 });

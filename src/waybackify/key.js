@@ -143,3 +143,31 @@ export function captureMetadata(meta) {
   }
   return encoded;
 }
+
+/**
+ * Assert a contentType is safe to carry as sync-time object metadata, throwing
+ * if not. The SAME two constraints captureMetadata() enforces, extracted as a
+ * standalone validator so the bucket-sync emitter (bucket-batch.js) can refuse
+ * to emit an unsafe line WITHOUT re-encoding to a Fastly-KV JSON string it does
+ * not use:
+ *   - no CR/LF — the value rides an HTTP header (R2/Fastly-OS `Content-Type`,
+ *     the s5cmd/aws run-line, the Fastly-Metadata header), so a raw newline is
+ *     header/command injection. Rejected, never laundered.
+ *   - ≤ 1000 bytes once JSON-encoded — the smaller of Fastly KV's put()/mgmt
+ *     limits (see captureMetadata), designed to so a locally-written value
+ *     stays uploadable through every door.
+ * Additive and non-breaking: captureMetadata() is unchanged and still owns the
+ * write path; #288 rewires cache.js onto this validator.
+ * @param {string} contentType
+ * @returns {string} the same contentType, once validated
+ */
+export function assertMetadataSafe(contentType) {
+  if (/[\r\n]/.test(contentType)) {
+    throw new Error(`assertMetadataSafe: contentType must not contain CR/LF: ${JSON.stringify(contentType)}`);
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify({ contentType })).length;
+  if (bytes > 1000) {
+    throw new Error(`assertMetadataSafe: encoded metadata is ${bytes} bytes; the sync target caps at 1000`);
+  }
+  return contentType;
+}

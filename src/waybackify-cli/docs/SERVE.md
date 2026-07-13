@@ -139,6 +139,9 @@ capture keys. Requisite closure is a **derived query, not a serving precondition
 
 ## R2 sync mapping
 
+> The operational population runbook is [SYNC.md](./SYNC.md); the sections
+> below are the KV-era mapping, retiring with the KV code.
+
 For each `meta/<aa>/<hash>.json` in the root (never iterate `cap/`):
 
 ```

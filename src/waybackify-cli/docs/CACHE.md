@@ -317,6 +317,9 @@ from a miss at the object level — a `head` on the object returns status
 metadata, the server answers per the [status discriminators](./SERVE.md#status-discriminators),
 and a true miss (no object) stays a 302-to-archive.org.
 
+The step-by-step population runbook (both passes, both targets, creds,
+verification, cost) is [SYNC.md](./SYNC.md).
+
 The existing [R2 sync mapping](./SERVE.md#r2-sync-mapping) and
 [Fastly KV sync mapping](./SERVE.md#fastly-kv-sync-mapping) in SERVE.md
 document the KV-era projection; they retire with the KV code when Fastly

@@ -37,3 +37,10 @@ export function fastlyKVKey(key: string): Promise<string>;
  * shape as R2 httpMetadata. Throws on CR/LF or > 1000 encoded bytes.
  */
 export function captureMetadata(meta: { contentType: string }): string;
+
+/**
+ * Assert a contentType is safe to carry as sync-time object metadata (no
+ * CR/LF, ≤ 1000 encoded bytes) and return it — the standalone validator the
+ * bucket-sync emitter calls. Same bounds as captureMetadata; throws if unsafe.
+ */
+export function assertMetadataSafe(contentType: string): string;

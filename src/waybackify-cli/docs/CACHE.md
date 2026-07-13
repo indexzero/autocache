@@ -27,6 +27,7 @@ full throughout this document. Implementation:
 - [Failure policy](#failure-policy)
 - [Integrity and dedupe stance](#integrity-and-dedupe-stance)
 - [Bucket projection](#bucket-projection)
+- [The root contract and `fsck`](#the-root-contract-and-fsck)
 - [Recorded dissents (design notes, not implemented)](#recorded-dissents-design-notes-not-implemented)
 - [Worked example](#worked-example)
 - [Sources](#sources)
@@ -325,6 +326,53 @@ The existing [R2 sync mapping](./SERVE.md#r2-sync-mapping) and
 document the KV-era projection; they retire with the KV code when Fastly
 migrates to Object Storage.
 
+## The root contract and `fsck`
+
+**A store root contains ONLY `cap/`, `meta/`, and `tmp/`.** Nothing else
+belongs inside it. The root is a *rebuildable projection* — the archive of
+record that syncs verbatim to R2 / Fastly Object Storage (bucket object keys
+ARE the local layout: `cap/<aa>/<hash>`, `meta/<aa>/<hash>.json`) — so any
+foreign entry is either uploaded as a junk object or silently dropped by the
+sync. **Operational artifacts live OUTSIDE the root**: run reports, audit
+checkpoints, driver logs, and any `.runs/`-style scratch belong to an
+operational home alongside the store, never within it. The contract is exactly
+three names so "what is the deploy artifact?" has one answer — walk the root,
+everything you see is `cap/` + `meta/` + `tmp/`.
+
+`fsck` is the verify-on-read command the design debate deferred (see the
+Verification dissent below): a store without a verify pass rots silently,
+because `contentHash` recorded at write only pays off when something later
+re-checks it. Implementation:
+[`spv/waybackify/fsck.js`](../../waybackify/fsck.js) (library) +
+[`spv/waybackify/bin/fsck.js`](../../waybackify/bin/fsck.js) (thin CLI).
+
+```
+node spv/waybackify/bin/fsck.js --root <store> [--fix] [--json] [--quiet]
+```
+
+It walks `meta/` (the authority) and `cap/`, deriving paths exactly as
+`cache.js` does, and reports — **report-only by default**, non-zero exit on any
+discrepancy:
+
+| category | severity | meaning |
+|---|---|---|
+| `hashMismatch` | corruption | `status: "body"` whose `contentHash` ≠ the SRI of the `cap/` bytes — the one failure `fsync` cannot catch (it persists *what* was written, not *that the right bytes* were). |
+| `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
+| `missingBody` | corruption | `status: "body"` with no `cap/` file — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
+| `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing). |
+| `schemaVersion` | advisory | a sidecar whose `v` differs from the current schema — a migration flag. |
+| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` — the check that catches a contract violation like a stray `.runs/`. |
+| `orphanCap` | reapable | a `cap/` file with no sidecar — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). |
+| `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. |
+
+`--fix` reaps **only** the two reapable classes — `orphanCap` and `staleTmp` —
+neither of which is reachable by any reader (an orphan has no completion token;
+a `tmp/` file was never renamed into place). It **never** touches a valid entry
+and **refuses** to "fix" corruption: a `hashMismatch` / `keyMismatch` /
+`missingBody` / `malformed` finding is evidence to investigate, not garbage to
+sweep. It also never deletes a `foreignRoot` entry — that could be precious
+operational data; relocating it is the operator's call.
+
 ## Recorded dissents (design notes, not implemented)
 
 Preserved verbatim from the debate so future work starts from the residue,
@@ -332,8 +380,9 @@ not from scratch:
 
 - **Verification:** ship a first-class `waybackify fsck` — scan `meta/`,
   re-verify every `contentHash`, reap orphan `tmp/`/`cap/` files. "A store
-  without a verify command rots silently." *(File as a follow-up issue when
-  this lands.)*
+  without a verify command rots silently." *(Shipped — see
+  [The root contract and `fsck`](#the-root-contract-and-fsck); the CLI
+  subcommand front-end is the outstanding piece.)*
 - **DAG integrity:** requisite edges could carry the child's `contentHash`
   alongside its key, so a requisite whose bytes ever change under a shared
   timestamp is detectable — "you're trusting the timestamp to pin content;

@@ -1,0 +1,240 @@
+// Cache-store fsck — verify a populated cache root against its own sidecars.
+//
+// The store is its own authority (CACHE.md: "no authoritative index
+// anywhere"), so the only thing that can vouch for it is the store itself:
+// re-hash every body, re-derive every path, and look for the shapes a crash,
+// a bit-flip, or a stray write leaves behind. This is the verify-on-read
+// tool the design debate deferred ("a store without a verify command rots
+// silently" — the CACHE.md Verification dissent).
+//
+// LIBRARY-FIRST (thin-CLI rule): all logic lives here; bin/fsck.js is an
+// arg-parsing wrapper. The layout knowledge is a deliberate LOCAL copy of
+// cache.js's derivation (walk meta/, hash = basename minus .json, aa =
+// hash[0:2], body at cap/<aa>/<hash>) so a later rebase onto shared
+// capturePath/metaPath helpers is a cheap swap, not a rewrite.
+//
+// WHAT IT CHECKS (report-only by default; see CATEGORIES for severities):
+//   - malformed     sidecar that will not parse (disk rot, NOT absence —
+//                   the rename published a whole fsync'd file or nothing)
+//   - hashMismatch  status 'body' whose contentHash != the SRI of the cap/
+//                   bytes — the one thing fsync cannot catch (it persists
+//                   what was written, not that the right bytes were written)
+//   - keyMismatch   sidecar filed under a hash != sha256hex(sidecar.key)
+//                   (misfiled / tampered — readSidecar's authenticity check)
+//   - missingBody   status 'body' with no cap/ file (incomplete entry: the
+//                   body rename was lost, or a body was deleted out from
+//                   under a complete sidecar)
+//   - schemaVersion sidecar whose v differs from the current schema
+//   - foreignRoot   an entry in the root that is not cap/ meta/ tmp/ — the
+//                   root contract is cap/ + meta/ + tmp/ ONLY (operational
+//                   artifacts belong OUTSIDE the store; this is the check
+//                   that flags a stray .runs/)
+//   - orphanCap     cap/ file with no sidecar (crash between the body and
+//                   sidecar renames: ingest garbage, never served)
+//   - staleTmp      leftover tmp/ scratch (an interrupted write's .part file)
+//
+// --fix reaps ONLY the two safe-to-delete classes — orphanCap + staleTmp
+// (neither is reachable by any reader: an orphan has no completion token, a
+// tmp file was never renamed into place). It NEVER touches a valid entry and
+// REFUSES to "fix" a hashMismatch/keyMismatch/missingBody/malformed finding:
+// those are corruption to investigate, not garbage to sweep.
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { SIDECAR_VERSION } from './cache.js';
+import { captureHash } from './key.js';
+
+/**
+ * Finding categories, in report order. `severity` drives both the printed
+ * grouping and --fix: only `reapable` classes are ever deleted.
+ * @type {ReadonlyArray<{ key: string, label: string, severity: 'corruption'|'advisory'|'reapable' }>}
+ */
+export const CATEGORIES = [
+  { key: 'malformed', label: 'malformed sidecar (will not parse)', severity: 'corruption' },
+  { key: 'hashMismatch', label: 'contentHash != stored body bytes', severity: 'corruption' },
+  { key: 'keyMismatch', label: 'sidecar filed under the wrong hash', severity: 'corruption' },
+  { key: 'missingBody', label: "status 'body' with no cap/ file (incomplete)", severity: 'corruption' },
+  { key: 'schemaVersion', label: 'sidecar schema version differs from current', severity: 'advisory' },
+  { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/', severity: 'advisory' },
+  { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage)', severity: 'reapable' },
+  { key: 'staleTmp', label: 'leftover tmp/ scratch file', severity: 'reapable' }
+];
+
+const REAPABLE = new Set(CATEGORIES.filter(c => c.severity === 'reapable').map(c => c.key));
+
+/** readdir that treats a missing directory as empty (a fresh root has no cap/ yet). */
+async function readdirSafe(dir) {
+  try {
+    return await fsp.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+/**
+ * SRI sha256 of a file, streamed (constant memory over a 12k-entry corpus).
+ * Same form cache.js writes: `sha256-<base64>`.
+ * @param {string} file
+ * @returns {Promise<string>}
+ */
+async function fileSRI(file) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+  return `sha256-${hash.digest('base64')}`;
+}
+
+/**
+ * Walk a `cap/` or `meta/` shard tree: <sub>/<aa>/<name>. Returns the leaf
+ * files (aa dir + filename), tolerating a shard dir that holds a stray file.
+ * @param {string} root
+ * @param {'cap'|'meta'} sub
+ * @returns {Promise<Array<{ aa: string, name: string, path: string }>>}
+ */
+async function walkShards(root, sub) {
+  const base = path.join(root, sub);
+  const out = [];
+  for (const aaEnt of await readdirSafe(base)) {
+    if (!aaEnt.isDirectory()) continue;
+    const aaDir = path.join(base, aaEnt.name);
+    for (const ent of await readdirSafe(aaDir)) {
+      if (ent.isFile()) out.push({ aa: aaEnt.name, name: ent.name, path: path.join(aaDir, ent.name) });
+    }
+  }
+  return out;
+}
+
+/**
+ * fsck a cache root — report by default, reap orphan cap/ + stale tmp/ with
+ * `--fix`. Pure read unless `fix` is set; never throws on a bad entry (that
+ * entry becomes a finding), only on an unreadable root.
+ *
+ * @param {string} root - store root (contains cap/, meta/, tmp/)
+ * @param {Object} [options]
+ * @param {boolean} [options.fix=false] - reap orphan cap/ + stale tmp/
+ * @returns {Promise<{
+ *   root: string,
+ *   schemaVersion: number,
+ *   counts: { sidecars: number, bodies: number, capFiles: number, tmpFiles: number },
+ *   findings: Record<string, Array<object>>,
+ *   reaped: { orphanCap: string[], staleTmp: string[] } | null
+ * }>}
+ */
+export async function fsck(root, options = {}) {
+  const { fix = false } = options;
+  const findings = Object.fromEntries(CATEGORIES.map(c => [c.key, []]));
+
+  // ---- foreign root entries -------------------------------------------------
+  // The root contract (CACHE.md Layout) is cap/ + meta/ + tmp/ and nothing
+  // else — anything else is an operational artifact living where a rebuildable
+  // projection should be pure store.
+  const allowed = new Set(['cap', 'meta', 'tmp']);
+  for (const ent of await readdirSafe(root)) {
+    if (!allowed.has(ent.name)) {
+      findings.foreignRoot.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, ent.name) });
+    }
+  }
+
+  // ---- inventory: cap/ bodies + tmp/ scratch --------------------------------
+  const capFiles = await walkShards(root, 'cap');
+  const capHashes = new Set(capFiles.map(f => f.name));
+
+  for (const ent of await readdirSafe(path.join(root, 'tmp'))) {
+    findings.staleTmp.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, 'tmp', ent.name) });
+  }
+
+  // ---- sidecar sweep (the authority) ---------------------------------------
+  const metaFiles = (await walkShards(root, 'meta')).filter(f => f.name.endsWith('.json'));
+  const sidecarHashes = new Set();
+  let bodies = 0;
+
+  for (const { aa, name, path: metaPath } of metaFiles) {
+    const hash = name.slice(0, -'.json'.length);
+    sidecarHashes.add(hash);
+
+    let sidecar;
+    try {
+      sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+    } catch (error) {
+      findings.malformed.push({ hash, aa, path: metaPath, error: error.message });
+      continue;
+    }
+
+    if (sidecar.v !== SIDECAR_VERSION) {
+      findings.schemaVersion.push({ hash, aa, key: sidecar.key ?? null, v: sidecar.v ?? null });
+    }
+
+    // Filed under the wrong hash? sha256hex(key) IS the on-disk name; a
+    // divergence is a misfiled or tampered sidecar (readSidecar's check).
+    if (typeof sidecar.key === 'string') {
+      const derived = await captureHash(sidecar.key);
+      if (derived !== hash) findings.keyMismatch.push({ hash, aa, key: sidecar.key, derived });
+    }
+
+    if (sidecar.status === 'body') {
+      bodies++;
+      const capPath = path.join(root, 'cap', aa, hash);
+      if (!capHashes.has(hash)) {
+        findings.missingBody.push({ hash, aa, key: sidecar.key ?? null });
+      } else {
+        const actual = await fileSRI(capPath);
+        if (actual !== sidecar.contentHash) {
+          findings.hashMismatch.push({ hash, aa, key: sidecar.key ?? null, expected: sidecar.contentHash ?? null, actual });
+        }
+      }
+    }
+  }
+
+  // ---- orphan cap/ files (body present, no completion token) ----------------
+  for (const f of capFiles) {
+    if (!sidecarHashes.has(f.name)) findings.orphanCap.push({ hash: f.name, aa: f.aa, path: f.path });
+  }
+
+  // ---- --fix: reap ONLY the safe classes ------------------------------------
+  let reaped = null;
+  if (fix) {
+    reaped = { orphanCap: [], staleTmp: [] };
+    for (const category of REAPABLE) {
+      for (const f of findings[category]) {
+        try {
+          await fsp.rm(f.path, { recursive: true, force: true });
+          reaped[category].push(f.path);
+        } catch (error) {
+          // A reap that fails (permissions, race) stays a finding — surface it.
+          f.reapError = error.message;
+        }
+      }
+    }
+  }
+
+  return {
+    root,
+    schemaVersion: SIDECAR_VERSION,
+    counts: { sidecars: metaFiles.length, bodies, capFiles: capFiles.length, tmpFiles: findings.staleTmp.length },
+    findings,
+    reaped
+  };
+}
+
+/**
+ * Total findings across every category (what a report-only run flags).
+ * @param {{ findings: Record<string, Array<object>> }} report
+ * @returns {number}
+ */
+export function totalFindings(report) {
+  return CATEGORIES.reduce((n, c) => n + report.findings[c.key].length, 0);
+}
+
+/**
+ * Findings still standing after any reap — corruption/advisory always count,
+ * reaped classes drop by however many were successfully removed. This is the
+ * exit-status signal: 0 iff the store is clean (or made clean by --fix).
+ * @param {{ findings: Record<string, Array<object>>, reaped: object | null }} report
+ * @returns {number}
+ */
+export function unresolvedFindings(report) {
+  const reaped = report.reaped ? report.reaped.orphanCap.length + report.reaped.staleTmp.length : 0;
+  return totalFindings(report) - reaped;
+}

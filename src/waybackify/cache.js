@@ -82,7 +82,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { WaybackMachine } from './index.js';
 import { parseWaybackUrl } from './audit.js';
-import { captureHash, captureKey, captureMetadata } from './key.js';
+import { captureHash, captureKey, capturePath, captureMetadata, metaPath } from './key.js';
 import { extractRequisites } from './requisites.js';
 
 export const SIDECAR_VERSION = 1;
@@ -103,11 +103,16 @@ const isHtmlish = ct => !ct || /html|xhtml/i.test(ct);
 export async function entryPaths(root, key) {
   const hash = await captureHash(key);
   const aa = hash.slice(0, 2);
+  // key.js#capturePath/#metaPath own the `<aa>`-shard layout (the bucket
+  // object-key contract); we resolve those rootless keys under our root.
+  // Their `/`-joined keys pass cleanly through path.join, which re-segments
+  // on `/` and re-joins with the OS separator — the object-key form never
+  // leaks OS separators back out (it stays only in these local paths).
   return {
     hash,
     aa,
-    body: path.join(root, 'cap', aa, hash),
-    meta: path.join(root, 'meta', aa, `${hash}.json`)
+    body: path.join(root, await capturePath(key)),
+    meta: path.join(root, await metaPath(key))
   };
 }
 

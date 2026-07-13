@@ -26,6 +26,7 @@ full throughout this document. Implementation:
 - [The requisite DAG](#the-requisite-dag)
 - [Failure policy](#failure-policy)
 - [Integrity and dedupe stance](#integrity-and-dedupe-stance)
+- [Bucket projection](#bucket-projection)
 - [Recorded dissents (design notes, not implemented)](#recorded-dissents-design-notes-not-implemented)
 - [Worked example](#worked-example)
 - [Sources](#sources)
@@ -80,6 +81,14 @@ extracted from `render/wayback/src/key.ts` (now a re-export shim), so
 the writer (this CLI) and the server derive **byte-identical** names. The
 pinned digest `sha256('20140403040000/http://example.com/') = 77c4b856…` is
 tested on both sides as the cross-package tripwire.
+
+The `<aa>`-sharded layout itself is derived by the same module:
+`capturePath(key) → cap/<aa>/<hash>` and `metaPath(key) → meta/<aa>/<hash>.json`
+return **rootless, `/`-joined object keys** — the one source of truth the
+cache writer (`cache.js#entryPaths`, which `path.join`s them under the root),
+the mirror server's `FsStore`, and the [bucket sync](#bucket-projection) all
+share. These object keys ARE the bucket keys, verbatim; `path.join`'s OS
+separators live only in the local paths, never in a returned key.
 
 Identity-hashing is *forced*, not chosen — three independent constraints
 converge on it:
@@ -254,6 +263,64 @@ semantics; recorded here as the contract):
   stored independently (EC-3). `contentHash` makes a future GC pass —
   group sidecars by hash, hardlink the identity-named bodies — cheap and
   safe, but GC is **explicitly out of scope**: see the GC-leases dissent.
+
+## Bucket projection
+
+The cache root is the archive of record; every remote bucket (Cloudflare R2,
+Fastly Object Storage) is a **rebuildable projection** of it. The projection
+is deliberately trivial — the bucket object keys ARE the local layout,
+verbatim:
+
+```
+cap/<aa>/<hash>          body object (the local cap/ file, byte-for-byte)
+meta/<aa>/<hash>.json    sidecar object (the local meta/ file, byte-for-byte)
+
+hash = sha256hex(captureKey)          (capturePath/metaPath in key.js)
+aa   = hash[0:2]
+```
+
+No key rewriting on the way up: `capturePath()`/`metaPath()` already return
+rootless `/`-joined object keys, so an object key is just the local relative
+path. Every corpus key is POSIX-impossible raw (`# ; ? ^ |`, 2000+ bytes,
+mixed unicode normalization), but the hashed layout is legal everywhere — R2
+and S3-compatible object keys cap at 1,024 bytes, which a fixed `<hash>` never
+approaches.
+
+**Hybrid metadata carriage.** Content-type and status ride the object *twice*,
+on purpose:
+
+- `cap/` objects carry the sidecar's essentials as **native object metadata** —
+  `Content-Type` from `sidecar.contentType`, plus `x-amz-meta-status` (the
+  S3 user-metadata convention) from `sidecar.status` — so the mirror server
+  serves a bodied entry in a **single GET**, no sidecar round-trip.
+- `meta/` sidecars upload **verbatim as their own objects**, the canonical
+  JSON unchanged. This is deliberate redundancy: the sidecar object is the
+  authoritative, self-describing record the DAG walk and a future GC pass read
+  (requisite edges, `contentHash`, provenance) — durable independently of any
+  one `cap/` object's metadata, which a re-`PUT` could clobber.
+
+**Copy-only sync.** The projection is add/overwrite, never delete-to-match:
+
+- `cap/` — a batch emitter lists `meta/` (never `cap/`, so orphans are
+  excluded by construction) and hands the body-object set to
+  [`s5cmd`](https://github.com/peak/s5cmd) for parallel copy.
+- `meta/` — `rclone copy`, **never `rclone sync`**: `sync` deletes remote
+  objects absent from the source, which would let a partial local root reap
+  live bucket entries. The cache root is the archive of record, not a mirror
+  to converge the bucket toward; deletion is a separate, audited GC concern
+  (see the GC-leases dissent).
+
+**Bodiless entries** (`status != "body"` — redirects, errors, empty 200s)
+become **zero-byte `cap/` objects** carrying the same `x-amz-meta-status`
+(and `Content-Type` when present). A known-bad capture is thus distinguishable
+from a miss at the object level — a `head` on the object returns status
+metadata, the server answers per the [status discriminators](./SERVE.md#status-discriminators),
+and a true miss (no object) stays a 302-to-archive.org.
+
+The existing [R2 sync mapping](./SERVE.md#r2-sync-mapping) and
+[Fastly KV sync mapping](./SERVE.md#fastly-kv-sync-mapping) in SERVE.md
+document the KV-era projection; they retire with the KV code when Fastly
+migrates to Object Storage.
 
 ## Recorded dissents (design notes, not implemented)
 

@@ -45,7 +45,11 @@
  *                 meta/<aa>/<hash>.json, where <hash> is the SAME sha256 hex
  *                 (captureHash() below) and aa = hash.slice(0, 2). The local
  *                 filename is byte-identical to the Fastly item name minus
- *                 its `cap:` prefix — sync is a rename-free loop.
+ *                 its `cap:` prefix — sync is a rename-free loop. These two
+ *                 rootless object keys are derived by capturePath()/metaPath()
+ *                 below — the ONE source of truth for the `<aa>`-shard, shared
+ *                 by cache.js, the FsStore, and the bucket sync (they ARE the
+ *                 R2 / Object Storage object keys, verbatim).
  */
 
 /**
@@ -70,6 +74,36 @@ export function captureKey(timestamp, originalUrl) {
 export async function captureHash(key) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Derive the ROOTLESS body object key for a capture key: `cap/<aa>/<hash>`,
+ * where <hash> is captureHash(key) and aa = hash.slice(0, 2). Always
+ * `/`-joined — these are OBJECT KEYS (R2 / Object Storage / the local layout
+ * verbatim), never OS paths. A local consumer joins this under its root with
+ * `path.join`; `path.join` semantics (OS separators, `..` collapsing) must
+ * never leak back into the returned key. The single source of truth for the
+ * `<aa>`-sharded layout — cache.js#entryPaths and fsstore.ts#paths both
+ * derive through here.
+ * @param {string} key - verbatim captureKey (NEVER used as a path component)
+ * @returns {Promise<string>} `cap/<aa>/<hash>`
+ */
+export async function capturePath(key) {
+  const hash = await captureHash(key);
+  return `cap/${hash.slice(0, 2)}/${hash}`;
+}
+
+/**
+ * Derive the ROOTLESS sidecar object key for a capture key:
+ * `meta/<aa>/<hash>.json`. Same layout + join rules as capturePath() — see
+ * its doc; the shared derivation the cache writer, the FsStore, and the
+ * bucket sync all project their storage from.
+ * @param {string} key - verbatim captureKey (NEVER used as a path component)
+ * @returns {Promise<string>} `meta/<aa>/<hash>.json`
+ */
+export async function metaPath(key) {
+  const hash = await captureHash(key);
+  return `meta/${hash.slice(0, 2)}/${hash}.json`;
 }
 
 /**

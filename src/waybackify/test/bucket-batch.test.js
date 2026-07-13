@@ -163,22 +163,32 @@ describe('emitBucketBatch', () => {
 
 describe('emitBucketBatch over the committed fixture', () => {
   let lines;
+  // The fixture carries bodiless sidecars (empty/redirect/error — added with the
+  // store-conformance suite in #285), so the emitter needs a scratch empty file.
+  const emptyFile = path.join(os.tmpdir(), 'bucket-batch-fixture-empty');
   before(async () => {
-    ({ lines } = await emitBucketBatch(FIXTURE_ROOT, { bucket: 'wayback' }));
+    ({ lines } = await emitBucketBatch(FIXTURE_ROOT, { bucket: 'wayback', emptyFile }));
   });
 
-  it('emits one bodied cp line per real entry, hash-sorted', async () => {
-    // The four fixture entries (see the fixture README), sorted by cap object key:
+  it('emits one cp line per real entry, hash-sorted (bodied from cap/, bodiless from the empty file)', async () => {
+    // Every fixture entry (see the fixture README), sorted by cap object key: four
+    // bodied (source = the local cap/ file) plus the three synthetic bodiless
+    // entries (source = the shared empty file; '' content-type omits the flag).
     const cases = [
-      { key: '19981202230410/http://www.google.com/alpha.jpg', ct: 'text/html' },
-      { key: '19981202230410/http://www.google.com/google.jpg', ct: 'image/jpeg' },
-      { key: '19981202230410/http://www.google.com/', ct: 'text/html' },
-      { key: '20140403040000/http://example.com/', ct: 'text/html' }
+      { key: '19981202230410/http://www.google.com/alpha.jpg', status: 'body', ct: 'text/html' },
+      { key: '19981202230410/http://www.google.com/google.jpg', status: 'body', ct: 'image/jpeg' },
+      { key: '19981202230410/http://www.google.com/', status: 'body', ct: 'text/html' },
+      { key: '20140403040000/http://example.com/empty', status: 'empty', ct: '' },
+      { key: '20140403040000/http://example.com/', status: 'body', ct: 'text/html' },
+      { key: '20140403040000/http://example.com/redirect', status: 'redirect', ct: 'text/html; charset=utf-8' },
+      { key: '20140403040000/http://example.com/missing.gif', status: 'error', ct: '' }
     ];
     const expected = [];
     for (const c of cases) {
       const objectKey = await capturePath(c.key);
-      expected.push({ objectKey, line: `cp --content-type ${c.ct} --metadata status=body ${path.join(FIXTURE_ROOT, objectKey)} s3://wayback/${objectKey}` });
+      const source = c.status === 'body' ? path.join(FIXTURE_ROOT, objectKey) : emptyFile;
+      const ctFlag = c.ct === '' ? '' : `--content-type ${shellQuote(c.ct)} `;
+      expected.push({ objectKey, line: `cp ${ctFlag}--metadata status=${c.status} ${source} s3://wayback/${objectKey}` });
     }
     expected.sort((a, b) => (a.objectKey < b.objectKey ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));

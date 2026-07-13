@@ -13,9 +13,9 @@
 //   hash = sha256hex(captureKey), captureKey = `${timestamp}/${originalUrl}`
 //   aa   = hash.slice(0, 2)
 //
-// <hash> is byte-identical to the Fastly KV item name minus `cap:` (both
-// derive from key.js's captureHash), and sidecar.key is the verbatim R2
-// object key — the root IS the deploy artifact.
+// <hash> is byte-identical to the bucket object key's <hash> (both derive
+// from key.js's captureHash), and sidecar.key is the verbatim capture key —
+// the root IS the deploy artifact.
 //
 // WRITE PROTOCOL (normative; per entry):
 //   1. stream body → tmp/<hash>.<pid>-<rand>.part, hashing as bytes flow
@@ -82,7 +82,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { WaybackMachine } from './index.js';
 import { parseWaybackUrl } from './audit.js';
-import { captureHash, captureKey, capturePath, captureMetadata, metaPath } from './key.js';
+import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } from './key.js';
 import { extractRequisites } from './requisites.js';
 
 export const SIDECAR_VERSION = 1;
@@ -292,8 +292,8 @@ export async function commitEntry(root, entry, hooks = {}) {
   let { status, body = null } = entry;
   // Enforce the sync targets' metadata constraints at write time (key.js:
   // no CR/LF, ≤ 1000 encoded bytes) so no sidecar ever holds a contentType
-  // the R2/Fastly sync or the Fastly-Metadata header would reject.
-  captureMetadata({ contentType });
+  // the Object Storage sync or an `x-amz-meta-*` header would reject.
+  assertMetadataSafe(contentType);
 
   const paths = await entryPaths(root, key);
   await fsp.mkdir(path.join(root, 'tmp'), { recursive: true });

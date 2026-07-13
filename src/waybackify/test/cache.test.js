@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cacheCapture, canonicalJSON, commitEntry, entryPaths, readSidecar } from '../cache.js';
-import { captureHash, fastlyKVKey } from '../key.js';
+import { captureHash } from '../key.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, 'fixtures');
@@ -319,10 +319,9 @@ describe('EC-2: hostile-key round-trip + cross-target token identity', () => {
     assert.ok(side.key.includes('café'), 'NFD sequence preserved');
     assert.notEqual(side.key.normalize('NFC'), side.key, 'key is NOT silently normalized');
 
-    // (c) identical token to Fastly's: filename === fastlyKVKey minus `cap:`
-    // === independent node:crypto digest.
+    // (c) the filename IS the shared identity hash: captureHash === the
+    // bucket object key's <hash> === an independent node:crypto digest.
     const { hash, body, meta } = await entryPaths(root, key);
-    assert.equal(`cap:${hash}`, await fastlyKVKey(key));
     assert.equal(hash, crypto.createHash('sha256').update(key, 'utf8').digest('hex'));
     assert.equal(path.basename(body), hash);
     assert.equal(path.basename(meta), `${hash}.json`);

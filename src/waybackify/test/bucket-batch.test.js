@@ -163,11 +163,12 @@ describe('emitBucketBatch', () => {
 
 describe('emitBucketBatch over the committed fixture', () => {
   let lines;
+  let summary;
   // The fixture carries bodiless sidecars (empty/redirect/error — added with the
   // store-conformance suite in #285), so the emitter needs a scratch empty file.
   const emptyFile = path.join(os.tmpdir(), 'bucket-batch-fixture-empty');
   before(async () => {
-    ({ lines } = await emitBucketBatch(FIXTURE_ROOT, { bucket: 'wayback', emptyFile }));
+    ({ lines, summary } = await emitBucketBatch(FIXTURE_ROOT, { bucket: 'wayback', emptyFile }));
   });
 
   it('emits one cp line per real entry, hash-sorted (bodied from cap/, bodiless from the empty file)', async () => {
@@ -192,6 +193,7 @@ describe('emitBucketBatch over the committed fixture', () => {
     }
     expected.sort((a, b) => (a.objectKey < b.objectKey ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));
+    assert.deepEqual(summary, { total: 7, bodied: 4, bodiless: 3 });
   });
 
   it('pins the cross-package tripwire hash in the example.com line', () => {

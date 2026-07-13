@@ -11,9 +11,9 @@
  *
  * This is a cross-package contract, not an implementation detail: the
  * `waybackify cache` CLI populates the mirror by writing a local
- * bucket image (cache.js) that gets synced to R2 / Fastly KV, so the writer
- * and the wayback.charlie.dev server MUST derive identical keys and metadata
- * from (timestamp, originalUrl, contentType).
+ * bucket image (cache.js) that gets synced to R2 / Fastly Object Storage, so
+ * the writer and the wayback.charlie.dev server MUST derive identical keys and
+ * metadata from (timestamp, originalUrl, contentType).
  *
  * The layout:
  *
@@ -24,32 +24,25 @@
  *                 parser's liberal repair — see render/wayback/src/path.ts)
  *                 so keys read like the serving path.
  *
- *   R2            object key = the capture key, verbatim (R2 allows any
- *                 UTF-8 key ≤ 1KiB). Content-type lives in the object's
- *                 native httpMetadata.contentType.
- *
- *   Fastly KV     KV item name = `cap:` + SHA-256 hex of the capture key.
- *                 Hashing is REQUIRED, twice over: KV key names hard-ban
- *                 characters real archived originals contain (`#`, `;`, `?`,
- *                 `^`, `|` — docs.fastly.com/products/compute-resource-limits,
- *                 KV Store section), and key names cap at 1024 UTF-8 bytes,
- *                 which a long original URL + timestamp can exceed. The hash
- *                 maps any capture key to a legal, fixed-length, collision-
- *                 safe name. Content-type rides the KV item's own metadata
- *                 field (put(key, value, { metadata }), read back via the
- *                 entry's metadataText()) as the JSON produced by
- *                 captureMetadata() below — same object shape as R2's
- *                 httpMetadata, so both backends share one metadata story.
+ *   bucket        object body key = `cap/<aa>/<hash>`, sidecar key =
+ *                 `meta/<aa>/<hash>.json`, where <hash> is SHA-256 hex of the
+ *                 capture key (captureHash() below) and aa = hash.slice(0, 2).
+ *                 Hashing is REQUIRED: real archived originals contain
+ *                 characters that are POSIX-impossible and S3/R2-hostile, and
+ *                 keys run past the universal 1,024-byte object-key cap. The
+ *                 hash maps any capture key to a legal, fixed-length,
+ *                 collision-safe key. Content-type rides the object's native
+ *                 `Content-Type` header; status rides `x-amz-meta-status`. One
+ *                 layout serves every backend — Cloudflare R2, Fastly Object
+ *                 Storage, AWS S3 — since all are S3-shaped.
  *
  *   local disk    (cache.js) body at cap/<aa>/<hash>, sidecar at
- *                 meta/<aa>/<hash>.json, where <hash> is the SAME sha256 hex
- *                 (captureHash() below) and aa = hash.slice(0, 2). The local
- *                 filename is byte-identical to the Fastly item name minus
- *                 its `cap:` prefix — sync is a rename-free loop. These two
- *                 rootless object keys are derived by capturePath()/metaPath()
- *                 below — the ONE source of truth for the `<aa>`-shard, shared
- *                 by cache.js, the FsStore, and the bucket sync (they ARE the
- *                 R2 / Object Storage object keys, verbatim).
+ *                 meta/<aa>/<hash>.json — byte-identical to the bucket object
+ *                 keys, so sync is a rename-free copy. These two rootless
+ *                 object keys are derived by capturePath()/metaPath() below —
+ *                 the ONE source of truth for the `<aa>`-shard, shared by
+ *                 cache.js, the FsStore, and the bucket sync (they ARE the
+ *                 Object Storage object keys, verbatim).
  */
 
 /**
@@ -107,57 +100,17 @@ export async function metaPath(key) {
 }
 
 /**
- * Derive the Fastly KV item name for a capture key.
- * @param {string} key
- * @returns {Promise<string>}
- */
-export async function fastlyKVKey(key) {
-  return `cap:${await captureHash(key)}`;
-}
-
-/**
- * Encode capture metadata for a Fastly KV put({ metadata }) — a JSON string
- * in the SAME shape as the R2 store's httpMetadata object ({ contentType }),
- * so population tooling derives one object and hands it to either backend.
- *
- * Enforces Fastly's metadata constraints at WRITE time so the serving side
- * never meets an illegal value:
- *   - UTF-8, no CR/LF — the metadata rides the Fastly-Metadata HTTP header,
- *     so a raw newline would be header injection. JSON.stringify escapes
- *     control characters, but a CR/LF-bearing content-type is garbage in,
- *     so it's rejected rather than laundered.
- *   - ≤ 1000 bytes — js-compute documents 1000 for put() while the
- *     management API says 2000; design to the smaller so images written
- *     locally by the population CLI stay uploadable through either door.
- * @param {{ contentType: string }} meta
- * @returns {string}
- */
-export function captureMetadata(meta) {
-  if (/[\r\n]/.test(meta.contentType)) {
-    throw new Error(`capture metadata: contentType must not contain CR/LF: ${JSON.stringify(meta.contentType)}`);
-  }
-  const encoded = JSON.stringify({ contentType: meta.contentType });
-  const bytes = new TextEncoder().encode(encoded).length;
-  if (bytes > 1000) {
-    throw new Error(`capture metadata: encoded JSON is ${bytes} bytes; Fastly KV metadata caps at 1000`);
-  }
-  return encoded;
-}
-
-/**
  * Assert a contentType is safe to carry as sync-time object metadata, throwing
- * if not. The SAME two constraints captureMetadata() enforces, extracted as a
- * standalone validator so the bucket-sync emitter (bucket-batch.js) can refuse
- * to emit an unsafe line WITHOUT re-encoding to a Fastly-KV JSON string it does
- * not use:
+ * if not. The commit-time + sync-time guard shared by cache.js#commitEntry and
+ * the bucket-sync emitter (bucket-batch.js): two constraints that outlive any
+ * one backend (Fastly Object Storage caps object metadata at 1,000 bytes;
+ * content-type still rides HTTP headers everywhere):
  *   - no CR/LF — the value rides an HTTP header (R2/Fastly-OS `Content-Type`,
- *     the s5cmd/aws run-line, the Fastly-Metadata header), so a raw newline is
- *     header/command injection. Rejected, never laundered.
- *   - ≤ 1000 bytes once JSON-encoded — the smaller of Fastly KV's put()/mgmt
- *     limits (see captureMetadata), designed to so a locally-written value
- *     stays uploadable through every door.
- * Additive and non-breaking: captureMetadata() is unchanged and still owns the
- * write path; #288 rewires cache.js onto this validator.
+ *     the s5cmd/aws run-line, the `x-amz-meta-*` metadata header), so a raw
+ *     newline is header/command injection. Rejected, never laundered.
+ *   - ≤ 1000 bytes once JSON-encoded — the sync targets' metadata cap;
+ *     designed to so a locally-written value stays uploadable through every
+ *     door.
  * @param {string} contentType
  * @returns {string} the same contentType, once validated
  */

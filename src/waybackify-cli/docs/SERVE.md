@@ -1,8 +1,9 @@
 # Reading the cache root — the consumer contract
 
 How anything that CONSUMES a `waybackify cache` root reads it: the mirror
-server's FsStore (Hono on Node), the R2 sync loop, and the Fastly KV sync
-loop (syncing IS deployment). Written so the FsStore's implementer needs
+server's FsStore (Hono on Node) and the bucket sync loop that projects it to
+S3-shaped Object Storage (Cloudflare R2, Fastly Object Storage — syncing IS
+deployment). Written so the FsStore's implementer needs
 nothing else; the producer-side story (write protocol, resume, schema
 rationale) is [CACHE.md](./CACHE.md).
 
@@ -18,8 +19,7 @@ to rebuild.
 - [Status discriminators](#status-discriminators)
 - [The orphan-body rule](#the-orphan-body-rule)
 - [Serving a document with its requisites](#serving-a-document-with-its-requisites)
-- [R2 sync mapping](#r2-sync-mapping)
-- [Fastly KV sync mapping](#fastly-kv-sync-mapping)
+- [Bucket sync](#bucket-sync)
 - [Integrity verification](#integrity-verification)
 - [Reading a root that is being written](#reading-a-root-that-is-being-written)
 - [Sources](#sources)
@@ -42,7 +42,7 @@ const body = `${root}/${await capturePath(key)}`; // <root>/cap/<aa>/<hash>
 the `<aa>`-sharded layout, and the bucket object keys verbatim (see
 [CACHE.md §Bucket projection](./CACHE.md#bucket-projection)). A local consumer
 joins them under its root itself. Always derive through `key.js`
-(`capturePath`/`metaPath`/`captureHash`/`fastlyKVKey`) — never hand-roll the
+(`capturePath`/`metaPath`/`captureHash`) — never hand-roll the
 digest or the shard. The pinned test digest
 `sha256('20140403040000/http://example.com/') = 77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac`
 exists in BOTH packages' suites precisely to catch a consumer deriving its
@@ -137,58 +137,21 @@ capture keys. Requisite closure is a **derived query, not a serving precondition
 - Reverse edges ("which documents need this asset?") are derived by scanning
   `meta/` — never stored.
 
-## R2 sync mapping
+## Bucket sync
 
-> The operational population runbook is [SYNC.md](./SYNC.md); the sections
-> below are the KV-era mapping, retiring with the KV code.
+The bucket object keys ARE this local layout, verbatim (`cap/<aa>/<hash>`,
+`meta/<aa>/<hash>.json`), so sync is a copy, not a mapping. Content-type rides
+each `cap/` object's native `Content-Type` and status rides `x-amz-meta-status`
+(one hybrid-metadata projection for every S3-shaped backend — Cloudflare R2,
+Fastly Object Storage, AWS S3). The full projection + the operational runbook
+(both passes, both targets, creds, cost) live in
+[CACHE.md §Bucket projection](./CACHE.md#bucket-projection) and
+[SYNC.md](./SYNC.md).
 
-For each `meta/<aa>/<hash>.json` in the root (never iterate `cap/`):
-
-```
-PUT object:
-  key                      = sidecar.key                  ← VERBATIM bytes, no encoding
-  httpMetadata.contentType = sidecar.contentType
-  body                     = cap/<aa>/<hash>              (omit for bodiless statuses*)
-```
-
-- The R2 object key is the raw capture key: R2 accepts any UTF-8 key up to
-  **1,024 bytes** ([R2 limits: "Object key length — 1,024 bytes"](https://developers.cloudflare.com/r2/reference/limits/)).
-  Keys longer than that cannot exist as R2 objects — skip + report them
-  (the local root and Fastly, both hash-named, hold them fine; the serving
-  path for R2 then misses and falls back to its redirect-to-archive.org
-  miss behavior).
-- `sidecar.key` round-trips byte-exact by construction (EC-2): the R2Store
-  in `render/wayback/src/store.ts` does `bucket.get(key)` with the parsed
-  request key — those bytes must be THESE bytes.
-- \* Bodiless entries: today's `R2Store.get()` expects a body for any
-  present key, so the pragmatic v1 sync is to sync `status == "body"`
-  entries only and let bodiless keys miss (the mirror's miss path
-  redirects to archive.org, which is also the correct UX for archived
-  redirects/errors). If/when the store learns statuses, sync the sidecar as
-  R2 `customMetadata` — the decision belongs to the FsStore's implementer,
-  recorded here so it's made consciously.
-
-## Fastly KV sync mapping
-
-For each `meta/<aa>/<hash>.json` — a rename-free loop, because the filename
-already IS the token:
-
-```
-PUT item:
-  name     = "cap:" + <hash>                    (= "cap:" + the filename, byte-identical)
-  metadata = captureMetadata({ contentType })   (key.js — the JSON the server's
-                                                 metadataText() parse expects)
-  body     = cap/<aa>/<hash>                    (same bodiless caveat as R2)
-```
-
-- The `cap:` prefix + hashing exists because KV item names hard-ban `#` `;`
-  `?` `^` `|` and cap at 1024 UTF-8 bytes
-  ([Fastly Compute resource limits](https://docs.fastly.com/products/compute-resource-limits))
-  — see key.js's header for the full derivation.
-- Metadata constraints (no CR/LF, ≤ 1000 encoded bytes) are already
-  enforced at cache-write time by `commitEntry` → a sidecar can never hold a
-  contentType the KV `put()` would reject. Still derive the metadata JSON
-  through `captureMetadata()`, not by hand.
+> Historical note: Fastly originally served from a KV Store (per-hash item
+> names, content-type in the item's metadata field). That path was deleted
+> outright when Fastly serving moved to Object Storage (#288); the KV-era sync
+> mapping lives only in git history.
 
 ## Integrity verification
 
@@ -223,5 +186,5 @@ Safe by construction — this is the debate's composability constraint:
 ## Sources
 
 - [CACHE.md](./CACHE.md) — producer-side data structure (layout, schema, write protocol, dissents).
-- Contracts in code: `render/wayback/src/store.ts` (Store/R2Store/FastlyKVStore shapes) · `render/wayback/src/path.ts` (request → capture key) · `spv/waybackify/key.js` (key/hash/metadata derivation).
+- Contracts in code: `render/wayback/src/store.ts` (Store/R2Store shapes) · `render/wayback/src/s3store.ts` (the S3 remote read path) · `render/wayback/src/path.ts` (request → capture key) · `spv/waybackify/key.js` (key/hash derivation).
 - External: [Cloudflare R2 limits](https://developers.cloudflare.com/r2/reference/limits/) · [Fastly Compute resource limits](https://docs.fastly.com/products/compute-resource-limits) · [W3C SRI](https://www.w3.org/TR/sri-1/#integrity-metadata-description) · [POSIX rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html).

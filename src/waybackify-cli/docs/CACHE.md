@@ -3,8 +3,8 @@
 Living documentation for the directory `waybackify cache <wayback-url> -o <root>`
 writes. This root is not a scratch cache: it is the **local mirror image
 that IS the deploy artifact** for wayback.charlie.dev — syncing it to
-Cloudflare R2 / Fastly KV is deployment, and the mirror server reads it
-directly.
+S3-shaped Object Storage (Cloudflare R2, Fastly Object Storage) is deployment,
+and the mirror server reads it directly.
 
 The layout is the outcome of a five-voice design debate — **position E**:
 identity-keyed body + authoritative sidecar recording a content hash
@@ -94,10 +94,10 @@ separators live only in the local paths, never in a returned key.
 Identity-hashing is *forced*, not chosen — three independent constraints
 converge on it:
 
-1. `cap:` + hash is **exactly the Fastly KV item name** — KV key names
-   hard-ban `#` `;` `?` `^` `|` and cap at 1024 UTF-8 bytes
-   ([Fastly Compute resource limits, KV Store section](https://docs.fastly.com/products/compute-resource-limits)),
-   both violated by real archived originals.
+1. The hash **is the bucket object key's `<hash>`** — every S3-shaped
+   backend (Cloudflare R2, Fastly Object Storage, AWS S3) caps object keys at
+   1,024 bytes and real archived originals run well past that, so a raw key
+   is not a legal object key. The fixed-length hash is.
 2. It is the only filesystem-safe encoding of the key space: components cap
    at 255 bytes (`NAME_MAX`), keys run past 2000 chars, and APFS is
    case- and unicode-normalization-insensitive by default — raw keys as
@@ -115,8 +115,8 @@ authoritative and mandatory.
 | field | type | presence | rationale |
 |---|---|---|---|
 | `v` | int | always | Schema version. Bump on any incompatible change, coordinated across every consumer (mirror server, sync tooling, this CLI). |
-| `key` | string | always | **Verbatim** captureKey, UTF-8. The R2 object key and the sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
-| `contentType` | string | always (`''` when the archive sent none) | Feeds R2 `httpMetadata.contentType` AND Fastly KV item metadata. Write-time enforced (key.js `captureMetadata`): no CR/LF (the value rides the `Fastly-Metadata` HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes ([js-compute `put()` limit](https://docs.fastly.com/products/compute-resource-limits); the management API allows 2000 — designed to the smaller). |
+| `key` | string | always | **Verbatim** captureKey, UTF-8. The sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
+| `contentType` | string | always (`''` when the archive sent none) | Rides each bucket object's native `Content-Type` header. Write-time enforced (key.js `assertMetadataSafe`): no CR/LF (the value rides an HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes (the sync targets' object-metadata cap). |
 | `status` | `body \| redirect \| error \| empty` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
 | `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (a non-negotiable from the design debate). **Integrity, not addressing**: the filename stays the identity hash. |
 | `contentLength` | int | iff `status == "body"` | Byte count, counted during the same streaming write. |
@@ -321,10 +321,12 @@ and a true miss (no object) stays a 302-to-archive.org.
 The step-by-step population runbook (both passes, both targets, creds,
 verification, cost) is [SYNC.md](./SYNC.md).
 
-The existing [R2 sync mapping](./SERVE.md#r2-sync-mapping) and
-[Fastly KV sync mapping](./SERVE.md#fastly-kv-sync-mapping) in SERVE.md
-document the KV-era projection; they retire with the KV code when Fastly
-migrates to Object Storage.
+The consumer-side read contract is [SERVE.md §Bucket sync](./SERVE.md#bucket-sync).
+
+> Historical note: Fastly originally served from a KV Store (hashed item
+> names, content-type in the item metadata field). That path was deleted
+> outright when Fastly serving moved to Object Storage (#288); the KV-era
+> projection lives only in git history.
 
 ## The root contract and `fsck`
 
@@ -466,5 +468,5 @@ The document's sidecar (one line on disk; wrapped here for reading):
 - Node.js: [`fsPromises.rename`](https://nodejs.org/api/fs.html#fspromisesrenameoldpath-newpath) · [`filehandle.sync`](https://nodejs.org/api/fs.html#filehandlesync) · [`crypto.createHash`](https://nodejs.org/api/crypto.html#cryptocreatehashalgorithm-options) · [`hash.update`](https://nodejs.org/api/crypto.html#hashupdatedata-inputencoding) · [global WebCrypto](https://nodejs.org/api/globals.html#crypto).
 - POSIX: [rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html) · [fsync(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fsync.html).
 - W3C/MDN: [Subresource Integrity §integrity metadata](https://www.w3.org/TR/sri-1/#integrity-metadata-description) · [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) · [MDN `Object.keys` ordering](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/keys#description).
-- Fastly: [Compute resource limits (KV Store key/metadata constraints)](https://docs.fastly.com/products/compute-resource-limits).
+- Fastly: [Object Storage](https://docs.fastly.com/products/object-storage) · [Compute resource limits](https://docs.fastly.com/products/compute-resource-limits).
 - Cloudflare: [R2 limits (object key ≤ 1,024 bytes)](https://developers.cloudflare.com/r2/reference/limits/).

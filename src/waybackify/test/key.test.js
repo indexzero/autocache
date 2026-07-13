@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
-import { assertMetadataSafe, captureHash, captureKey, captureMetadata, capturePath, fastlyKVKey, metaPath } from '../key.js';
+import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } from '../key.js';
 
 describe('captureKey', () => {
   it('is `${timestamp}/${originalUrl}`, verbatim — no encoding, no normalization', () => {
@@ -21,15 +21,11 @@ describe('captureKey', () => {
   });
 });
 
-describe('captureHash / fastlyKVKey', () => {
+describe('captureHash', () => {
   it('reproduces the cross-package pinned digest (the cross-package tripwire)', async () => {
     // Identical to the pin in render/wayback/test/key.test.ts. Recompute
     // only on a DELIBERATE layout change, coordinated across the mirror
     // server and the population CLI.
-    assert.equal(
-      await fastlyKVKey('20140403040000/http://example.com/'),
-      'cap:77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac'
-    );
     assert.equal(
       await captureHash('20140403040000/http://example.com/'),
       '77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac'
@@ -43,16 +39,16 @@ describe('captureHash / fastlyKVKey', () => {
     assert.equal(await captureHash(key), crypto.createHash('sha256').update(key, 'utf8').digest('hex'));
   });
 
-  it('produces legal names for keys the filesystem and KV would both reject raw', async () => {
+  it('produces legal names for keys the filesystem and S3 would both reject raw', async () => {
     const monster = `20140403040000/http://example.com/${'a'.repeat(2000)}`;
-    assert.match(await fastlyKVKey(monster), /^cap:[0-9a-f]{64}$/);
+    assert.match(await captureHash(monster), /^[0-9a-f]{64}$/);
     assert.match(await captureHash('2014/http://x.com/a?b=c#d;e^f|g'), /^[0-9a-f]{64}$/);
   });
 });
 
 describe('capturePath / metaPath', () => {
   it('project the pinned digest into rootless `/`-joined object keys (the bucket-key contract)', async () => {
-    // Same 77c4b856… digest the fastlyKVKey/captureHash pins assert — the
+    // Same 77c4b856… digest the captureHash pin asserts — the
     // shard is <hash>[0:2], the keys are `/`-joined object keys, NEVER OS
     // paths and NEVER root-prefixed. Recompute only on a DELIBERATE layout
     // change, coordinated across the mirror server and the population CLI.
@@ -74,29 +70,15 @@ describe('capturePath / metaPath', () => {
   });
 });
 
-describe('captureMetadata', () => {
-  it('encodes the R2-httpMetadata-shaped object as JSON', () => {
-    assert.equal(captureMetadata({ contentType: 'text/html; charset=utf-8' }), '{"contentType":"text/html; charset=utf-8"}');
-  });
-
-  it('rejects CR/LF and the 1000-byte overflow at write time', () => {
-    assert.throws(() => captureMetadata({ contentType: 'text/html\r\nX-Evil: 1' }), /CR\/LF/);
-    const atLimit = `x/${'y'.repeat(980)}`;
-    assert.equal(new TextEncoder().encode(captureMetadata({ contentType: atLimit })).length, 1000);
-    assert.throws(() => captureMetadata({ contentType: `${atLimit}z` }), /1000/);
-  });
-});
-
 describe('assertMetadataSafe', () => {
   it('returns a safe contentType unchanged (spaces/semicolons are fine)', () => {
     assert.equal(assertMetadataSafe('text/html; charset=utf-8'), 'text/html; charset=utf-8');
     assert.equal(assertMetadataSafe(''), '');
   });
 
-  it('enforces the SAME CR/LF + ≤1000-byte bounds as captureMetadata (the #288 rewire target)', () => {
-    // Same rejections captureMetadata makes — assertMetadataSafe is the
-    // extracted validator cache.js is slated to delegate to, so the boundary
-    // must match byte-for-byte.
+  it('enforces the commit-time + sync-time CR/LF + ≤1000-byte bounds', () => {
+    // The shared validator cache.js#commitEntry and the bucket-sync emitter
+    // both delegate to; the boundary is the object-metadata cap.
     assert.throws(() => assertMetadataSafe('text/html\r\nX-Evil: 1'), /CR\/LF/);
     const atLimit = `x/${'y'.repeat(980)}`;
     assert.equal(assertMetadataSafe(atLimit), atLimit); // exactly 1000 encoded bytes passes

@@ -59,6 +59,10 @@ node spv/waybackify/bin/emit-bucket-batch.js \
   them from your secret manager for the shell session and let them expire with
   it. rclone remotes below are shown with `env_auth = true` so no key is ever
   written to `rclone.conf`.
+- **`export AWS_REGION`** (`us-east-1` for Fastly, `auto` for R2). SigV4 puts
+  the region in the credential scope; s5cmd does **not** infer it from
+  `--endpoint-url`, so omitting it is an `InvalidRequest` 400 on Fastly. It must
+  equal the region token in the Fastly endpoint host (below).
 - **The empty-file for bodiless entries** — a single zero-byte scratch file
   created **outside the cache root** (the root contract is: only the writer
   puts files under it). `emit-bucket-batch` emits `cp <empty-file> …` lines for
@@ -80,10 +84,16 @@ Each emitted line is a complete s5cmd `cp` command (the run-file format —
 cp --content-type 'text/html; charset=utf-8' --metadata 'status=body' <root>/cap/<aa>/<hash> s3://<bucket>/cap/<aa>/<hash>
 ```
 
-- `--content-type` is the sidecar's `contentType` **verbatim**. When the
-  sidecar's `contentType` is `''` the flag is **omitted** — the target defaults
-  the object's Content-Type to `application/octet-stream` (the settled
-  normalization rule).
+- `--content-type` is the sidecar's `contentType` **verbatim** — and is
+  **always** present. When the sidecar's `contentType` is `''` (or absent) the
+  emitter fills in an explicit `application/octet-stream` (the settled
+  normalization rule). The flag is **never omitted**: an omitted
+  `--content-type` does **not** fall through to a target default — s5cmd sniffs
+  the local file client-side (Go's `http.DetectContentType`) and sends whatever
+  it guesses, which for a zero-byte body is `text/plain; charset=utf-8`. The
+  target only ever stores what it is told, so omitting the flag lands the wrong
+  native Content-Type (verified identically on Cloudflare R2 and Fastly Object
+  Storage) and fails the bkfsck parity gate.
 - `--metadata 'status=<status>'` sets `x-amz-meta-status` on the object
   (s5cmd's repeatable `key=value` metadata flag → S3 user metadata).
 - Values containing spaces or semicolons (`text/html; charset=utf-8`) are
@@ -123,6 +133,7 @@ adds/overwrites, never deletes. Remote deletion is exclusively GC's job.
 ```sh
 export AWS_ACCESS_KEY_ID=…       # from the secret store, not a file
 export AWS_SECRET_ACCESS_KEY=…
+export AWS_REGION=auto           # R2 ignores the value but SigV4 still needs one
 R2=https://<account-id>.r2.cloudflarestorage.com
 
 # pass 1
@@ -148,10 +159,12 @@ endpoint = https://<account-id>.r2.cloudflarestorage.com
 
 - **Endpoint:** regional, `https://<region>.object.fastlystorage.app`.
 - **Region:** the Object Storage region token (NOT an AWS region name) — it
-  must match the SigV4 credential scope, or requests fail `InvalidRequest`.
-  **Confirm the exact region token/endpoint host against your Fastly Object
-  Storage console before running** — Fastly's docs and rclone's provider list
-  disagree on the exact spelling (`us-east` vs `us-east-1`).
+  must match the SigV4 credential scope **and** the endpoint host, or requests
+  fail `InvalidRequest`. The nine tokens are `us-east-1`, `us-central-1`,
+  `us-west-1`, `uk-east-1`, `eu-west-1`, `eu-central`, `eu-south-1`,
+  `jp-central-1`, `au-east-1` — all suffixed `-1` **except `eu-central`** (the
+  lone exception that caused the earlier `us-east` vs `us-east-1` confusion).
+  The examples below pin `us-east-1`.
 - **Addressing:** **path-style REQUIRED** — Object Storage does not support the
   bucket name in the hostname. s5cmd derives path-style from a non-AWS
   endpoint; for rclone set `force_path_style = true`.
@@ -163,7 +176,8 @@ endpoint = https://<account-id>.r2.cloudflarestorage.com
 ```sh
 export AWS_ACCESS_KEY_ID=…
 export AWS_SECRET_ACCESS_KEY=…
-FASTLY=https://<region>.object.fastlystorage.app
+export AWS_REGION=us-east-1       # MUST match the region token in the endpoint host
+FASTLY=https://us-east-1.object.fastlystorage.app
 
 # pass 1 — cap Fastly's ~100 req/s per-bucket rate with --numworkers if needed
 node spv/waybackify/bin/emit-bucket-batch.js \
@@ -179,8 +193,8 @@ rclone copy <cache-root>/meta fastly:<bucket>/meta
 type = s3
 provider = Fastly
 env_auth = true
-region = <object-storage-region>
-endpoint = https://<region>.object.fastlystorage.app
+region = us-east-1
+endpoint = https://us-east-1.object.fastlystorage.app
 force_path_style = true
 ```
 

@@ -44,9 +44,14 @@ describe('shellQuote', () => {
 });
 
 describe('emitLine', () => {
-  it('omits --content-type when contentType is ""', () => {
+  it('emits explicit application/octet-stream when contentType is "" (never omitted — s5cmd would sniff)', () => {
     const line = emitLine({ contentType: '', status: 'body' }, '/r/cap/aa/h', 's3://b/cap/aa/h');
-    assert.equal(line, 'cp --metadata status=body /r/cap/aa/h s3://b/cap/aa/h');
+    assert.equal(line, 'cp --content-type application/octet-stream --metadata status=body /r/cap/aa/h s3://b/cap/aa/h');
+  });
+
+  it('emits explicit application/octet-stream for a bodiless "" entry too', () => {
+    const line = emitLine({ contentType: '', status: 'error' }, '/tmp/empty', 's3://b/cap/aa/h');
+    assert.equal(line, 'cp --content-type application/octet-stream --metadata status=error /tmp/empty s3://b/cap/aa/h');
   });
 
   it('quotes a content-type with spaces/semicolons', () => {
@@ -96,13 +101,12 @@ describe('emitBucketBatch', () => {
     assert.deepEqual(lines, expected.map(e => e.line));
   });
 
-  it('omits --content-type for a bodied entry whose contentType is ""', async () => {
+  it('emits explicit --content-type application/octet-stream for a bodied entry whose contentType is ""', async () => {
     const root = await mkRoot();
     await commitEntry(root, { key: '1/octet', status: 'body', contentType: '', body: new TextEncoder().encode('\x00\x01') });
     const { lines } = await emitBucketBatch(root, { bucket: 'b' });
     assert.equal(lines.length, 1);
-    assert.doesNotMatch(lines[0], /--content-type/);
-    assert.match(lines[0], /^cp --metadata status=body /);
+    assert.match(lines[0], /^cp --content-type application\/octet-stream --metadata status=body /);
   });
 
   it('emits empty-file cp lines for bodiless entries (status/Content-Type still carried)', async () => {
@@ -117,8 +121,9 @@ describe('emitBucketBatch', () => {
 
     // Every line uploads the SAME empty file to a cap/ object; no local cap/ file exists.
     for (const line of lines) assert.ok(line.includes(` ${emptyFile} s3://b/cap/`), line);
+    // The '' content-type error entry carries an explicit octet-stream flag (never omitted).
     const errKey = await capturePath('1/gone');
-    assert.ok(lines.includes(`cp --metadata status=error ${emptyFile} s3://b/${errKey}`));
+    assert.ok(lines.includes(`cp --content-type application/octet-stream --metadata status=error ${emptyFile} s3://b/${errKey}`));
     const redirKey = await capturePath('1/moved');
     assert.ok(lines.includes(`cp --content-type text/html --metadata status=redirect ${emptyFile} s3://b/${redirKey}`));
   });
@@ -174,7 +179,8 @@ describe('emitBucketBatch over the committed fixture', () => {
   it('emits one cp line per real entry, hash-sorted (bodied from cap/, bodiless from the empty file)', async () => {
     // Every fixture entry (see the fixture README), sorted by cap object key: four
     // bodied (source = the local cap/ file) plus the three synthetic bodiless
-    // entries (source = the shared empty file; '' content-type omits the flag).
+    // entries (source = the shared empty file; '' content-type → explicit
+    // application/octet-stream, never omitted).
     const cases = [
       { key: '19981202230410/http://www.google.com/alpha.jpg', status: 'body', ct: 'text/html' },
       { key: '19981202230410/http://www.google.com/google.jpg', status: 'body', ct: 'image/jpeg' },
@@ -188,8 +194,8 @@ describe('emitBucketBatch over the committed fixture', () => {
     for (const c of cases) {
       const objectKey = await capturePath(c.key);
       const source = c.status === 'body' ? path.join(FIXTURE_ROOT, objectKey) : emptyFile;
-      const ctFlag = c.ct === '' ? '' : `--content-type ${shellQuote(c.ct)} `;
-      expected.push({ objectKey, line: `cp ${ctFlag}--metadata status=${c.status} ${source} s3://wayback/${objectKey}` });
+      const ct = c.ct || 'application/octet-stream';
+      expected.push({ objectKey, line: `cp --content-type ${shellQuote(ct)} --metadata status=${c.status} ${source} s3://wayback/${objectKey}` });
     }
     expected.sort((a, b) => (a.objectKey < b.objectKey ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));

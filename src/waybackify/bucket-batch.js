@@ -9,9 +9,14 @@
 //
 //   cp --content-type '<ct>' --metadata 'status=<status>' <src> s3://<bucket>/cap/<aa>/<hash>
 //
-//   - <ct>       = sidecar.contentType, VERBATIM. When it is '' the flag is
-//                  OMITTED — the target defaults Content-Type to
-//                  application/octet-stream (the settled normalization rule).
+//   - <ct>       = sidecar.contentType, VERBATIM — EXCEPT when it is '' (or
+//                  absent), which emits an explicit `application/octet-stream`
+//                  (the settled normalization rule). The flag is NEVER omitted:
+//                  s5cmd fills a missing --content-type client-side by sniffing
+//                  the file (Go http.DetectContentType), which returns
+//                  `text/plain; charset=utf-8` for an empty file — so the target
+//                  never gets to apply its own default. Proven identically on
+//                  Cloudflare R2 and Fastly Object Storage.
 //   - status     = sidecar.status, as x-amz-meta-status (s5cmd `--metadata`
 //                  key=value → the object's user metadata; README pin in
 //                  SYNC.md). The known-bad ≠ miss discriminator.
@@ -81,10 +86,13 @@ export function emitLine(sidecar, source, dest) {
     throw new Error(`emit-bucket-batch: unknown sidecar status ${JSON.stringify(sidecar.status)}`);
   }
   const parts = ['cp'];
-  // '' content-type → omit the flag; the target defaults application/octet-stream.
-  if (sidecar.contentType !== '') {
-    parts.push('--content-type', shellQuote(assertMetadataSafe(sidecar.contentType)));
-  }
+  // ALWAYS emit --content-type. A '' (or absent) contentType normalizes to
+  // application/octet-stream per the Store read-contract — NEVER omitted: an
+  // omitted flag lets s5cmd sniff the file client-side (Go http.DetectContentType
+  // returns text/plain; charset=utf-8 for an empty body), so the target never
+  // applies its own default (proven on R2 and Fastly).
+  const contentType = sidecar.contentType || 'application/octet-stream';
+  parts.push('--content-type', shellQuote(assertMetadataSafe(contentType)));
   parts.push('--metadata', shellQuote(`status=${sidecar.status}`));
   parts.push(shellQuote(source), shellQuote(dest));
   return parts.join(' ');

@@ -9,7 +9,8 @@
     "test": "node --test ./test/*.test.js",
     "test:live": "WAYBACK_LIVE=1 node --test ./test/*.test.js",
     "audit": "node --no-warnings ./bin/audit-corpus.js",
-    "fsck": "node ./bin/fsck.js"
+    "fsck": "node ./bin/fsck.js",
+    "remaster": "node ./bin/remaster.js"
   },
   "keywords": [
     "wayback",

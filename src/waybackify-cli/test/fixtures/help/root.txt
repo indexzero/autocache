@@ -7,7 +7,7 @@ hand-check a capture, re-pick a better one, enumerate a file's wayback
 refs, or populate the wayback.charlie.dev mirror.
 
 Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·
-2 usage error · 70 not implemented (temporary, scaffold).
+2 usage error · 3 suspect verdict (check only).
 
 Flags:
   --help|-h   Show help

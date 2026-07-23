@@ -1,10 +1,10 @@
 // waybackify CLI surface.
 //
 // This module pins the ENTIRE command/option contract — names, args, flags,
-// help text, exit codes — with ZERO implementation. Every default handler
-// throws Not implemented (exit 70). The per-command implementations
-// (cache, check, search, manifest) each replace one handler without ever
-// touching argv parsing again.
+// help text, exit codes — with ZERO implementation. All four command
+// handlers (cache, check, search, manifest) are injected by the bin; a
+// missing handler throws Not implemented (exit 70) as a defensive path.
+// Implementations never touch argv parsing.
 //
 // Thin-CLI rule (hard constraint): this package is argv parsing
 // (paparam), output formatting, and exit codes. All plumbing lands in
@@ -68,9 +68,10 @@
 //   0   success (and --help)
 //   1   domain failure (bad verdict, not found, fetch failure)
 //   2   usage error (unknown flag/arg, missing required arg/flag)
-//   70  not implemented — TEMPORARY, removed as handlers land per command.
-//       70 is BSD sysexits EX_SOFTWARE ("internal software error", the
-//       closest sysexits fit for "this code path does not exist yet") — see
+//   3   check only: suspect verdict (nonzero on purpose, distinct from 1)
+//   70  a command handler is missing from the bin wiring — DEFENSIVE ONLY
+//       now that all four handlers are wired; should never be observable.
+//       70 is BSD sysexits EX_SOFTWARE ("internal software error") — see
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
 
 import { arg, bail, command, description, flag, footer, sloppy, summary, validate } from 'paparam';
@@ -87,7 +88,7 @@ export const EXIT = {
   NOT_IMPLEMENTED: 70
 };
 
-/** The error every scaffold handler throws until its implementation lands. */
+/** Thrown when a command handler is missing from the injected set (defensive). */
 export class NotImplementedError extends Error {
   code = 'ERR_NOT_IMPLEMENTED';
   constructor(commandName) {
@@ -218,7 +219,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'refs, or populate the wayback.charlie.dev mirror.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
-        '2 usage error · 70 not implemented (temporary, scaffold).'
+        '2 usage error · 3 suspect verdict (check only).'
     ),
     footer('part of the wayback.charlie.dev mirror tooling'),
     check,

@@ -39,7 +39,7 @@ find words -name index.md | xargs waybackify manifest | jq -r .waybackUrl | xarg
 | `1` | domain failure — bad verdict (`check`: **wayback404**), not found, fetch failure |
 | `2` | usage error — unknown flag/command, missing required arg/flag (paparam strict mode) |
 | `3` | `check`: **suspect** verdict — uncertain; nonzero **on purpose** (conservative composition — `manifest \| xargs check` must not silently pass junk) |
-| `70` | not implemented — **temporary**, removed as handlers land (BSD sysexits `EX_SOFTWARE`) |
+| `70` | internal — a command handler is missing from the bin wiring (defensive only; all four are wired; BSD sysexits `EX_SOFTWARE`) |
 
 ## Architecture (hard rule)
 
@@ -47,8 +47,9 @@ This package stays a **thin CLI wrapper**: argv parsing
 ([paparam](https://github.com/holepunchto/paparam), v1.10.x — see the
 source-driven notes at the top of [`src/cli.js`](./src/cli.js)), output
 formatting, exit codes. Nothing else. All verification plumbing, fetch/CDX
-logic, and the cache key scheme live in `spv/waybackify`; this scaffold
-imports nothing from it (test-enforced).
+logic, and the cache key scheme live in `spv/waybackify`; the parsing layer
+(`src/cli.js`) imports nothing from it (test-enforced), and each command
+handler lazily imports exactly its one library entry point.
 
 ## Development
 

@@ -7,9 +7,9 @@
 //   2. Strict-flag / usage rejection — unknown flags and missing required
 //      args/flags exit 2 (paparam is strict by default; pinned here so a
 //      paparam upgrade that loosens parsing fails loudly).
-//   3. Not-implemented contract — every command parses its full flag surface,
-//      hands the parsed payload to its handler, and the scaffold handlers
-//      exit 70.
+//   3. Wiring + exit-code contract — every command parses its full flag
+//      surface, hands the parsed payload to its handler, and the defensive
+//      missing-handler path still exits 70.
 //
 // Layer 2/3 exit codes go through the REAL bin (child_process.spawnSync on
 // bin/waybackify.js) so the test observes what a shell observes.

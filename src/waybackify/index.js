@@ -271,23 +271,27 @@ export async function waybackifyBatch(urls, options = {}) {
 //   1. inline link / image embed   (!?)[text](url)   — group 1 bang, 2 text, 3 url
 //   2. reference definition         [label]: url      — group 4 label, 5 url  (line-anchored)
 //   3. HTML anchor                  <a href="url">t</a> — group 6 url, 7 text
-//   4. bare URL in prose            http(s)://…        — whole match; lookbehind keeps it
+//   4. CommonMark autolink          <url>              — group 8 url; a real link
+//      form (the corpus uses it), previously invisible to every consumer
+//      because the bare-URL lookbehind rejects a preceding `<`.
+//   5. bare URL in prose            http(s)://…        — whole match; lookbehind keeps it
 //      from re-matching a URL already captured by a link form above.
 const LINK_PATTERN =
-  /(!?)\[([^\]]+)\]\(([^)\s]+)\)|^[ \t]*\[([^\]]+)\]:[ \t]*(\S+)|<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>|(?<![("/<\]])https?:\/\/[^\s)<>"'\]]+/gm;
+  /(!?)\[([^\]]+)\]\(([^)\s]+)\)|^[ \t]*\[([^\]]+)\]:[ \t]*(\S+)|<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>|<(https?:\/\/[^>\s]+)>|(?<![("/<\]])https?:\/\/[^\s)<>"'\]]+/gm;
 
 /** Classify a regex match into {url, form, text} or null if it carries no URL. */
 function classifyMatch(m) {
   if (m[3] !== undefined) return { url: m[3], form: m[1] === '!' ? 'image' : 'inline', text: m[2] };
   if (m[5] !== undefined) return { url: m[5], form: 'reference', text: m[4] };
   if (m[6] !== undefined) return { url: m[6], form: 'html', text: m[7] };
+  if (m[8] !== undefined) return { url: m[8], form: 'autolink', text: m[8] };
   return { url: m[0], form: 'bare', text: m[0] };
 }
 
 /**
  * Extract the unique external http(s) URLs from markdown that
- * waybackifyMarkdown would archive — inline / reference / HTML links and bare
- * prose URLs, in document order. PURE (no network): this is the detection half
+ * waybackifyMarkdown would archive — inline / reference / HTML links,
+ * CommonMark `<url>` autolinks, and bare prose URLs, in document order. PURE (no network): this is the detection half
  * of waybackifyMarkdown, for callers that resolve + cache separately (e.g. an
  * incremental manifest builder). Image embeds, internal/relative links,
  * non-http(s) schemes, already-archived URLs, and anything in `skip` are
@@ -318,8 +322,8 @@ export function extractLinks(markdown, options = {}) {
 
 /**
  * Transform markdown content by replacing dead links with wayback URLs.
- * Handles inline links, reference definitions, HTML anchors, and bare prose
- * URLs. Image embeds (`![alt](url)`) are left untouched — they're assets, not
+ * Handles inline links, reference definitions, HTML anchors, `<url>`
+ * autolinks, and bare prose URLs. Image embeds (`![alt](url)`) are left untouched — they're assets, not
  * links. Internal/relative/anchor links and non-http(s) schemes are ignored.
  * @param {string} markdown - Markdown content
  * @param {Object} [options] - Wayback options

@@ -23,6 +23,7 @@ describe('extractLinks (pure detection for manifest generation)', () => {
       '<a href="http://c.com/3">c</a>',
       'bare http://a.com/1 again (dup)',
       'prose http://d.com/4',
+      'autolink <http://f.com/5>',
       'image ![i](http://img.com/x.png)',
       'internal [h](/whoami) and [m](mailto:x@y.z)',
       'archived [z](https://web.archive.org/web/20200101000000/http://e.com)'
@@ -31,7 +32,8 @@ describe('extractLinks (pure detection for manifest generation)', () => {
       'http://a.com/1',
       'https://b.com/2',
       'http://c.com/3',
-      'http://d.com/4'
+      'http://d.com/4',
+      'http://f.com/5'
     ]);
   });
 
@@ -62,6 +64,11 @@ describe('waybackifyMarkdown — link forms', () => {
   it('archives a bare prose URL', async () => {
     const { content } = await waybackifyMarkdown('go to http://a.com/y now', { wayback });
     assert.equal(content, `go to ${archived('http://a.com/y')} now`);
+  });
+
+  it('archives a CommonMark autolink, preserving the angle brackets', async () => {
+    const { content } = await waybackifyMarkdown('code at <http://a.com/repo>', { wayback });
+    assert.equal(content, `code at <${archived('http://a.com/repo')}>`);
   });
 });
 

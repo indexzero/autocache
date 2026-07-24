@@ -9,7 +9,7 @@
 // {timestamp, statuscode, mimetype, waybackUrl, …} per capture — exactly the
 // four fields the JSONL contract wants. getSnapshot collapses the history to
 // the single near-anchored best pick (the date-anchoring cleverness search
-// deliberately does NOT do — that lives in series/waybackify-words);
+// deliberately does NOT do — that lives in the project-side drivers);
 // getCapture is an exact single-timestamp lookup.
 //
 // Semantics (decided upstream, not extended here): --near forwards verbatim

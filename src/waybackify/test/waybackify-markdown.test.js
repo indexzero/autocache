@@ -37,6 +37,20 @@ describe('extractLinks (pure detection for manifest generation)', () => {
     ]);
   });
 
+  it('consumes one level of balanced parens in inline destinations and bare URLs', () => {
+    const md = [
+      'inline [d](http://msdn.example.com/library/dd129517(VS.85).aspx)',
+      'bare http://msdn.example.com/library/bb429476(VS.80).aspx in prose',
+      'unbalanced [u](http://a.com/x) and trailing http://b.com/y).'
+    ].join('\n');
+    assert.deepEqual(extractLinks(md), [
+      'http://msdn.example.com/library/dd129517(VS.85).aspx',
+      'http://msdn.example.com/library/bb429476(VS.80).aspx',
+      'http://a.com/x',
+      'http://b.com/y'
+    ]);
+  });
+
   it('honors the skip (liveUrls) list', () => {
     const md = '[a](http://live.com/keep) [b](http://dead.com/x)';
     assert.deepEqual(extractLinks(md, { skip: ['http://live.com'] }), ['http://dead.com/x']);

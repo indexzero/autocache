@@ -276,8 +276,15 @@ export async function waybackifyBatch(urls, options = {}) {
 //      because the bare-URL lookbehind rejects a preceding `<`.
 //   5. bare URL in prose            http(s)://…        — whole match; lookbehind keeps it
 //      from re-matching a URL already captured by a link form above.
+//
+// Inline destinations and bare URLs consume one level of BALANCED parens —
+// CommonMark allows them and real corpora use them (the msdn.microsoft.com
+// /…/dd129517(VS.85).aspx style); an unbalanced `(` or a bare `)` still
+// terminates the URL. Same rule manifest.js#extractArchiveUrls applies when
+// scanning already-archived sources, so the two scanners agree on where a
+// URL ends.
 const LINK_PATTERN =
-  /(!?)\[([^\]]+)\]\(([^)\s]+)\)|^[ \t]*\[([^\]]+)\]:[ \t]*(\S+)|<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>|<(https?:\/\/[^>\s]+)>|(?<![("/<\]])https?:\/\/[^\s)<>"'\]]+/gm;
+  /(!?)\[([^\]]+)\]\(((?:\([^()\s]*\)|[^()\s])+)\)|^[ \t]*\[([^\]]+)\]:[ \t]*(\S+)|<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>|<(https?:\/\/[^>\s]+)>|(?<![("/<\]])https?:\/\/(?:\([^()\s<>"'\]]*\)|[^\s()<>"'\]])+/gm;
 
 /** Classify a regex match into {url, form, text} or null if it carries no URL. */
 function classifyMatch(m) {

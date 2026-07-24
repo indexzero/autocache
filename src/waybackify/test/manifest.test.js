@@ -267,6 +267,16 @@ describe('apply', () => {
     assert.deepEqual(warnings, ['http://unknown.example.com/']);
   });
 
+  it('matches a balanced-paren url whole (the msdn style), like the scanners', () => {
+    const url = 'http://msdn.example.com/library/dd129517(VS.85).aspx';
+    const wb = `https://web.archive.org/web/20100101000000/${url}`;
+    const m = emptyManifest();
+    m.entries[url] = { wayback: wb, timestamp: '20100101000000' };
+    const { content, warnings } = apply(`See [d](${url}).`, m);
+    assert.equal(content, `See [d](${wb}).`);
+    assert.deepEqual(warnings, []);
+  });
+
   it('matches scheme/slash/port-insensitively (the importer-proven key)', () => {
     const m = emptyManifest();
     // The archive's canonical spelling: https + :443-free root; the author

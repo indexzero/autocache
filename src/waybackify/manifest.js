@@ -412,8 +412,10 @@ export async function generate(source, universe, seen, options = {}) {
  * The scan is the importer-proven one, generalized: one delimiter-bounded
  * pass over prose (fenced code blocks are never touched — a URL in a code
  * sample is literal text), every http(s) URL matched whole (greedy to the
- * next delimiter, so a prefix URL can't shadow a longer one) and looked up
- * by a scheme/slash/port-insensitive key. Only link TARGETS rewrite — a URL
+ * next delimiter, so a prefix URL can't shadow a longer one; one level of
+ * BALANCED parens is part of the URL — the msdn `…(VS.85).aspx` style —
+ * matching extractLinks/extractArchiveUrls) and looked up by a
+ * scheme/slash/port-insensitive key. Only link TARGETS rewrite — a URL
  * immediately followed by `]` is the visible text of `[http://x](…)` and
  * stays as-is. Already-archived URLs pass through untouched (and unwarned).
  *
@@ -431,7 +433,7 @@ export function apply(source, manifest) {
 
   const warned = new Set();
   const content = mapOutsideFences(source, prose =>
-    prose.replace(/https?:\/\/[^\s"'<>)\]]+/g, (url, offset, str) => {
+    prose.replace(/https?:\/\/(?:\([^()\s"'<>\]]*\)|[^\s"'<>()\]])+/g, (url, offset, str) => {
       if (str[offset + url.length] === ']') return url; // link text, not a target
       if (url.includes('web.archive.org/web/')) return url; // already applied
       const key = matchKey(url);

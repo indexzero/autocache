@@ -24,7 +24,13 @@
 //   - missingBody   status 'body' with no cap/ file (incomplete entry: the
 //                   body rename was lost, or a body was deleted out from
 //                   under a complete sidecar)
-//   - schemaVersion sidecar whose v differs from the current schema
+//   - interstitialAsBody  a status 'body' entry whose stored bytes are a
+//                   wayback interstitial (#363: a wrapper stub, a redirect
+//                   interstitial, or a .pdf/.txt served as text/html) — a
+//                   pre-schema capture that predates cache-time refusal. REPORT
+//                   ONLY: the corpus-wide re-commit is the #364 remediation
+//                   sweep, not fsck's to perform.
+//   - schemaVersion sidecar whose v is outside the supported set
 //   - foreignRoot   an entry in the root that is not cap/ meta/ tmp/ — the
 //                   root contract is cap/ + meta/ + tmp/ ONLY (operational
 //                   artifacts belong OUTSIDE the store; this is the check
@@ -43,8 +49,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { SIDECAR_VERSION } from './cache.js';
+import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS } from './cache.js';
 import { captureHash } from './key.js';
+import { detectInterstitial } from './interstitial.js';
 
 /**
  * Finding categories, in report order. `severity` drives both the printed
@@ -56,7 +63,8 @@ export const CATEGORIES = [
   { key: 'hashMismatch', label: 'contentHash != stored body bytes', severity: 'corruption' },
   { key: 'keyMismatch', label: 'sidecar filed under the wrong hash', severity: 'corruption' },
   { key: 'missingBody', label: "status 'body' with no cap/ file (incomplete)", severity: 'corruption' },
-  { key: 'schemaVersion', label: 'sidecar schema version differs from current', severity: 'advisory' },
+  { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial (#363)", severity: 'advisory' },
+  { key: 'schemaVersion', label: 'sidecar schema version outside the supported set', severity: 'advisory' },
   { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/', severity: 'advisory' },
   { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage)', severity: 'reapable' },
   { key: 'staleTmp', label: 'leftover tmp/ scratch file', severity: 'reapable' }
@@ -162,7 +170,7 @@ export async function fsck(root, options = {}) {
       continue;
     }
 
-    if (sidecar.v !== SIDECAR_VERSION) {
+    if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
       findings.schemaVersion.push({ hash, aa, key: sidecar.key ?? null, v: sidecar.v ?? null });
     }
 
@@ -182,6 +190,22 @@ export async function fsck(root, options = {}) {
         const actual = await fileSRI(capPath);
         if (actual !== sidecar.contentHash) {
           findings.hashMismatch.push({ hash, aa, key: sidecar.key ?? null, expected: sidecar.contentHash ?? null, actual });
+        }
+        // interstitial-as-body (#363): a pre-schema `status:body` capture whose
+        // bytes are a wayback interstitial. Read the body only for html-ish
+        // entries (the sole ones a body-shape signature can match); the
+        // extension signature needs no body. Offline — no CDX injected here.
+        const htmlish = !sidecar.contentType || /html|xhtml/i.test(sidecar.contentType);
+        const body = htmlish ? await fsp.readFile(capPath) : null;
+        const detection = detectInterstitial({ key: sidecar.key, contentType: sidecar.contentType, body });
+        if (detection) {
+          findings.interstitialAsBody.push({
+            hash,
+            aa,
+            key: sidecar.key ?? null,
+            signature: detection.signature,
+            ...(detection.target ? { target: detection.target } : {})
+          });
         }
       }
     }

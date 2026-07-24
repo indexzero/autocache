@@ -85,7 +85,7 @@ describe('cacheCapture — requisites by default', () => {
     assert.deepEqual(summary.failures, []);
 
     const doc = await readSidecar(root, DOC_KEY);
-    assert.equal(doc.v, 1);
+    assert.equal(doc.v, 2);
     assert.equal(doc.key, DOC_KEY);
     assert.equal(doc.status, 'body');
     assert.equal(doc.contentType, 'text/html; charset=utf-8');
@@ -393,5 +393,84 @@ describe('commitEntry — write-time contract enforcement', () => {
 
     await fsp.writeFile(meta, JSON.stringify({ ...good, v: 99 }));
     await assert.rejects(() => readSidecar(root, key), /unsupported sidecar version/);
+  });
+
+  it('reads a legacy v1 sidecar unchanged (v2 is a backward-compatible superset)', async () => {
+    const root = await mkroot();
+    const key = '2014/http://legacy.example/';
+    await commitEntry(root, { key, status: 'body', contentType: 'text/plain', body: new Uint8Array([1]) });
+    const { meta } = await entryPaths(root, key);
+    const v2 = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...v2, v: 1 })); // pretend it was written by the v1 writer
+    const side = await readSidecar(root, key);
+    assert.equal(side.v, 1, 'a v1 root — the whole existing corpus — still reads');
+    assert.equal(side.status, 'body');
+  });
+});
+
+describe('commitEntry — interstitial refusal (#363)', () => {
+  const FIX = path.join(FIXTURES, 'interstitial');
+  const WRAPPER = fs.readFileSync(path.join(FIX, 'wrapper-stub.html'), 'utf8');
+  const REDIRECT = fs.readFileSync(path.join(FIX, 'redirect-interstitial.html'), 'utf8');
+  const bytes = s => new TextEncoder().encode(s);
+
+  it('refuses a wrapper-stub body — commits `interstitial`, bodiless, signature recorded', async () => {
+    const root = await mkroot();
+    const key = '20140403040000/http://example.com/report.pdf';
+    const side = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytes(WRAPPER) });
+
+    assert.equal(side.status, 'interstitial');
+    assert.equal(side.signature, 'wrapper-stub');
+    assert.equal(side.contentHash, undefined, 'bodiless: no contentHash');
+    assert.equal(side.contentLength, undefined, 'bodiless: no contentLength');
+    assert.equal(side.target, undefined, 'wrapper stubs carry no target');
+    assert.ok(!fs.existsSync((await entryPaths(root, key)).body), 'interstitial owns no cap/ file');
+    assert.equal((await readSidecar(root, key)).status, 'interstitial', 're-reads as interstitial');
+  });
+
+  it('refuses a redirect interstitial — records the decoded target URL + timestamp', async () => {
+    const root = await mkroot();
+    const key = '20140403040000/http://example.com/old';
+    const side = await commitEntry(root, { key, status: 'body', contentType: 'text/html; charset=utf-8', body: bytes(REDIRECT) });
+
+    assert.equal(side.status, 'interstitial');
+    assert.equal(side.signature, 'redirect-interstitial');
+    assert.deepEqual(side.target, { url: 'http://example.com/moved-here', timestamp: '20140403040000' });
+    assert.ok(!fs.existsSync((await entryPaths(root, key)).body));
+  });
+
+  it('refuses a .pdf/.txt stored as text/html even without body markers (extension mismatch)', async () => {
+    const root = await mkroot();
+    const key = '20140403040000/http://example.com/notes.txt';
+    const side = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytes('<html><body>not the raw .txt</body></html>') });
+    assert.equal(side.status, 'interstitial');
+    assert.equal(side.signature, 'extension-mismatch');
+  });
+
+  it('refuses a capture whose injected CDX statuscode is an archived 4xx', async () => {
+    const root = await mkroot();
+    const key = '20140403040000/http://example.com/gone';
+    const side = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytes('<html><body>looks fine but archived as 404</body></html>'), cdxStatus: '404' });
+    assert.equal(side.status, 'interstitial');
+    assert.equal(side.signature, 'archived-error');
+  });
+
+  it('the interstitial sidecar is still canonical JSON (sorted keys, one line)', async () => {
+    const root = await mkroot();
+    const key = '20140403040000/http://example.com/report.pdf';
+    await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytes(WRAPPER) });
+    const raw = await fsp.readFile((await entryPaths(root, key)).meta, 'utf8');
+    assert.doesNotMatch(raw, /[\r\n]/);
+    assert.equal(raw, canonicalJSON(JSON.parse(raw)));
+    assert.equal(JSON.parse(raw).v, 2);
+  });
+
+  it('a legitimate real page is untouched — no false refusal', async () => {
+    const root = await mkroot();
+    const key = '2011/http://example.com/post';
+    const real = '<!DOCTYPE html><html><head><title>Real Post</title></head><body><h1>Content</h1></body></html>';
+    const side = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytes(real) });
+    assert.equal(side.status, 'body');
+    assert.ok(fs.existsSync((await entryPaths(root, key)).body));
   });
 });

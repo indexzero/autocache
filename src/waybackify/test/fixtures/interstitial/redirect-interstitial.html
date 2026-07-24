@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Wayback Machine</title>
+  <script type="text/javascript">
+    /* Synthetic (#363): a faithful minimal reconstruction of archive.org's
+       "impatient redirect" interstitial — archive navbar chrome plus a
+       setTimeout(go, 5000) stub that bounces the tab to the live archive. NOT
+       copied from any operator sweep artifact; hand built from the two
+       signature markers (webComponentLoaderConfig chrome + the timed go()
+       bounce). The only content it carries is the decoded destination. */
+    window.webComponentLoaderConfig = { "prefix": "https://web.archive.org/_static/" };
+  </script>
+</head>
+<body>
+  <p>Got an HTTP 302 response at crawl time.</p>
+  <p>Redirecting to...
+    <a href="/web/20140403040000/http://example.com/moved-here">http://example.com/moved-here</a>
+  </p>
+  <script type="text/javascript">
+    function go() {
+      document.location.href = "/web/20140403040000/http://example.com/moved-here";
+    }
+    setTimeout(go, 5000);
+  </script>
+</body>
+</html>

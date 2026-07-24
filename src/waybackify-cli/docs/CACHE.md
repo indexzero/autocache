@@ -110,19 +110,46 @@ authoritative and mandatory.
 
 ## The sidecar, field by field
 
-`meta/<aa>/<hash>.json`, schema version `v: 1`:
+`meta/<aa>/<hash>.json`, schema version `v: 2`:
+
+> **Schema versions.** New writes stamp `v: 2` (the `interstitial` status,
+> below). A v2 sidecar is a backward-compatible **superset** of v1 — every v1
+> field keeps its meaning; v2 only ADDS the `interstitial` status and its
+> `signature`/`target` fields. Every consumer (mirror server `FsStore`, sync
+> emitter, `fsck`, this CLI) therefore accepts **either** version: the whole
+> existing v1 corpus still reads. A version outside `{1, 2}` is genuinely
+> unknown and fails loud, never treated as complete-current. (#363)
 
 | field | type | presence | rationale |
 |---|---|---|---|
-| `v` | int | always | Schema version. Bump on any incompatible change, coordinated across every consumer (mirror server, sync tooling, this CLI). |
+| `v` | int | always | Schema version (`2`). Bump on any incompatible change — an added enum value IS incompatible for an old reader — coordinated across every consumer (mirror server, sync tooling, this CLI). Readers accept the supported set `{1, 2}`. |
 | `key` | string | always | **Verbatim** captureKey, UTF-8. The sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
 | `contentType` | string | always (`''` when the archive sent none) | Rides each bucket object's native `Content-Type` header. Write-time enforced (key.js `assertMetadataSafe`): no CR/LF (the value rides an HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes (the sync targets' object-metadata cap). |
-| `status` | `body \| redirect \| error \| empty` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
+| `status` | `body \| redirect \| error \| empty \| interstitial` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus — and `interstitial`) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
 | `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (a non-negotiable from the design debate). **Integrity, not addressing**: the filename stays the identity hash. |
 | `contentLength` | int | iff `status == "body"` | Byte count, counted during the same streaming write. |
+| `signature` | string | iff `status == "interstitial"` | Which interstitial signature fired: `wrapper-stub`, `redirect-interstitial`, `extension-mismatch`, or `archived-error` (#363). The audit trail for why the capture was refused, and the key the #364 remediation sweep dispatches on. |
+| `target` | `{ url, timestamp }` | iff `signature == "redirect-interstitial"` (when decodable) | The decoded destination of a redirect interstitial — the only content that page carried. Absent when the stub had no parseable `/web/…` reference. |
 | `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern. Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
 | `flag` | `im_ \| cs_ \| js_ \| oe_ \| null` | always | Requisite-type tag when this entry is itself a requisite (image / stylesheet / script / object-embed replay flags); `null` for operator-named documents. |
 | `fetchedAt` | string | always | ISO-8601 fetch time. Provenance only — identity is entirely in `key`. |
+
+### Interstitial captures (#363)
+
+Some captures are not content — they are the Wayback Machine talking ABOUT
+content: a **wrapper stub** (a `<title>Wayback Machine</title>` shell with an
+`id="playback"` iframe, stored where a PDF/.txt should be and served as
+text/html), a **redirect interstitial** (archive navbar chrome plus a
+`setTimeout(go, 5000)` bounce), a raw asset (`.pdf`/`.txt`) stored as
+`text/html`, or a capture the CDX index records as an archived 4xx/5xx while the
+replay lies with a 200. `commitEntry` **refuses** to store any of these as a
+body: the signature fires, and the entry commits `interstitial` — bodiless,
+recording `signature` (and a redirect's `target`). The detection lives in
+[`spv/waybackify/interstitial.js`](../../waybackify/interstitial.js); the
+`archived-error` signature is network-derived and arrives INJECTED (`cdxStatus`),
+so detection itself never touches the wire. Wrapper-stub remediation refetches
+the raw bytes with wayback's `id_` flag (`refetchRaw`); the corpus-wide run is
+issue #364.
 
 ## Canonical JSON form
 
@@ -155,7 +182,10 @@ Per entry — this is normative; `commitEntry()` in
 
 Bodiless entries (`status != "body"`) skip steps 1–3; the sidecar rename is
 still the completion act. A zero-byte 200 body is demoted to `status:
-"empty"` and its temp file discarded — empty entries own no `cap/` file.
+"empty"` and its temp file discarded — empty entries own no `cap/` file. A body
+whose bytes trip an [interstitial signature](#interstitial-captures-363) is
+likewise refused before step 1 — the entry commits `interstitial` (bodiless),
+never the junk page.
 
 Citations for each primitive:
 
@@ -311,8 +341,8 @@ on purpose:
   to converge the bucket toward; deletion is a separate, audited GC concern
   (see the GC-leases dissent).
 
-**Bodiless entries** (`status != "body"` — redirects, errors, empty 200s)
-become **zero-byte `cap/` objects** carrying the same `x-amz-meta-status`
+**Bodiless entries** (`status != "body"` — redirects, errors, empty 200s,
+interstitials) become **zero-byte `cap/` objects** carrying the same `x-amz-meta-status`
 (and `Content-Type` when present). A known-bad capture is thus distinguishable
 from a miss at the object level — a `head` on the object returns status
 metadata, the server answers per the [status discriminators](./SERVE.md#status-discriminators),
@@ -362,7 +392,8 @@ discrepancy:
 | `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
 | `missingBody` | corruption | `status: "body"` with no `cap/` file — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing). |
-| `schemaVersion` | advisory | a sidecar whose `v` differs from the current schema — a migration flag. |
+| `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
+| `schemaVersion` | advisory | a sidecar whose `v` is outside the supported set `{1, 2}` — a migration flag. (A legacy `v: 1` sidecar is supported and does NOT trip this.) |
 | `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` — the check that catches a contract violation like a stray `.runs/`. |
 | `orphanCap` | reapable | a `cap/` file with no sidecar — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). |
 | `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. |

@@ -21,8 +21,9 @@
 //                  key=value → the object's user metadata; README pin in
 //                  SYNC.md). The known-bad ≠ miss discriminator.
 //   - <src>      = the local cap/<aa>/<hash> file for a bodied entry; for a
-//                  bodiless entry (status empty/redirect/error — no local cap/
-//                  file exists) it is the caller's --empty-file: one zero-byte
+//                  bodiless entry (status empty/redirect/error/interstitial —
+//                  no local cap/ file exists) it is the caller's --empty-file:
+//                  one zero-byte
 //                  scratch file the runbook mktemp's OUTSIDE the root, emitted
 //                  as a zero-byte object that still carries the status metadata.
 //
@@ -45,8 +46,10 @@ import { readSidecar } from './cache.js';
 
 /** Statuses whose entry OWNS a local cap/<aa>/<hash> body file. */
 const BODIED = new Set(['body']);
-/** Every legal sidecar.status (the serving discriminator — SERVE.md). */
-const STATUSES = new Set(['body', 'empty', 'redirect', 'error']);
+/** Every legal sidecar.status (the serving discriminator — SERVE.md).
+ *  `interstitial` (#363) is bodiless like empty/redirect/error — it ships as a
+ *  zero-byte object carrying only its `x-amz-meta-status`. */
+const STATUSES = new Set(['body', 'empty', 'redirect', 'error', 'interstitial']);
 
 /**
  * Characters that never need shell-quoting inside an s5cmd run-file token

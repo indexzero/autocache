@@ -68,6 +68,11 @@ describe('emitLine', () => {
     assert.throws(() => emitLine({ contentType: huge, status: 'body' }, '/s', 's3://b/k'), /1000/);
   });
 
+  it('emits a bodiless interstitial (#363) as a zero-byte object carrying its status', () => {
+    const line = emitLine({ contentType: 'text/html', status: 'interstitial' }, '/tmp/empty', 's3://b/cap/aa/h');
+    assert.equal(line, 'cp --content-type text/html --metadata status=interstitial /tmp/empty s3://b/cap/aa/h');
+  });
+
   it('refuses an unknown status', () => {
     assert.throws(() => emitLine({ contentType: '', status: 'weird' }, '/s', 's3://b/k'), /unknown sidecar status/);
   });
@@ -136,12 +141,12 @@ describe('emitBucketBatch', () => {
 
   it('refuses an unknown sidecar schema version (reusing readSidecar\'s guard)', async () => {
     const root = await mkRoot();
-    await commitEntry(root, { key: '1/v2', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('x') });
-    const rel = await metaPath('1/v2');
+    await commitEntry(root, { key: '1/v99', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('x') });
+    const rel = await metaPath('1/v99');
     const bad = JSON.parse(await fsp.readFile(path.join(root, rel), 'utf8'));
-    bad.v = 2;
+    bad.v = 99;
     await fsp.writeFile(path.join(root, rel), JSON.stringify(bad));
-    await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), /unsupported sidecar version 2/);
+    await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), /unsupported sidecar version 99/);
   });
 
   it('refuses an oversized content-type sidecar (the metadata-size guard)', async () => {

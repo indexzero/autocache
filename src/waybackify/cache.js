@@ -84,8 +84,23 @@ import { WaybackMachine } from './index.js';
 import { parseWaybackUrl } from './audit.js';
 import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } from './key.js';
 import { extractRequisites } from './requisites.js';
+import { detectInterstitial } from './interstitial.js';
 
-export const SIDECAR_VERSION = 1;
+// The version new writes stamp. Bumped to 2 for the `interstitial` status
+// (#363): a v2 sidecar may carry `status: "interstitial"` (+ `signature`, and a
+// redirect's decoded `target`), an enum value a strictly-v1 reader would not
+// understand — hence the coordinated bump the schema discipline requires
+// (CACHE.md §sidecar).
+export const SIDECAR_VERSION = 2;
+
+// Readers accept a v2 sidecar OR a legacy v1 one: v2 is a backward-compatible
+// SUPERSET (every v1 field keeps its meaning; v2 only ADDS the interstitial
+// status + its fields), so a v1 root — the whole existing corpus — still reads.
+// A version outside this set is genuinely unknown and must fail loud, never be
+// treated as complete-current. Old v1 `status:body` entries that HIDE an
+// interstitial are surfaced by `fsck`'s interstitial-as-body category, not by
+// rejecting them here.
+export const SUPPORTED_SIDECAR_VERSIONS = Object.freeze(new Set([1, 2]));
 
 /** Content types the requisite extractor runs over (documents). */
 const isHtmlish = ct => !ct || /html|xhtml/i.test(ct);
@@ -173,7 +188,7 @@ export async function readSidecar(root, key) {
   // mismatch is tampering/rot, not absence) and a known schema version (a
   // future v2 must be met by a reader that understands it, not silently
   // treated as complete-v1).
-  if (sidecar.v !== SIDECAR_VERSION) {
+  if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
     throw new Error(`readSidecar: unsupported sidecar version ${sidecar.v} at ${meta}`);
   }
   if (sidecar.key !== key) {
@@ -276,12 +291,17 @@ async function syncDir(dir) {
  * @param {string} root - cache root (created on demand)
  * @param {Object} entry
  * @param {string} entry.key - verbatim captureKey
- * @param {'body'|'redirect'|'error'|'empty'} entry.status
+ * @param {'body'|'redirect'|'error'|'empty'|'interstitial'} entry.status
  * @param {string} entry.contentType - as returned by archive.org ('' if none)
  * @param {'im_'|'cs_'|'js_'|'oe_'|null} [entry.flag] - requisite-type tag
  * @param {string[]} [entry.requisites] - verbatim child captureKeys
  * @param {Uint8Array|AsyncIterable<Uint8Array>|null} [entry.body] - required
- *   iff a bodied write is intended; a zero-byte body demotes status to 'empty'
+ *   iff a bodied write is intended; a zero-byte body demotes status to 'empty'.
+ *   A body whose bytes trip an interstitial signature (#363) is REFUSED — the
+ *   entry commits `interstitial` (bodiless), never the junk page.
+ * @param {string|number|null} [entry.cdxStatus] - the exact capture's archived
+ *   CDX statuscode, INJECTED (network-derived); a 4xx/5xx here trips the
+ *   archived-error interstitial signature. Offline callers omit it.
  * @param {string} [entry.fetchedAt] - ISO-8601 (defaults to now)
  * @param {Object} [hooks] - test seams; `afterBodyCommit()` runs between the
  *   body rename and the sidecar rename (the crash-atomicity window)
@@ -308,6 +328,29 @@ export async function commitEntry(root, entry, hooks = {}) {
     status,
     v: SIDECAR_VERSION
   };
+
+  // Interstitial refusal (#363): before a body is committed, check whether it
+  // is the Wayback Machine talking ABOUT content rather than content. A fired
+  // signature flips the entry to `interstitial` — bodiless, recording which
+  // signature fired (and a redirect's decoded target) — so a wrapper stub /
+  // redirect interstitial / raw-asset-as-html / archived-error capture is never
+  // stored as a servable page. Body-shape signatures need materialized bytes;
+  // a streamed body is left to the CDX/extension signatures (real callers pass
+  // a Uint8Array — see cacheCapture's responseBytes).
+  if (status === 'body') {
+    const detection = detectInterstitial({
+      key,
+      contentType,
+      body: body instanceof Uint8Array ? body : null,
+      cdxStatus: entry.cdxStatus ?? null
+    });
+    if (detection) {
+      status = sidecar.status = 'interstitial';
+      sidecar.signature = detection.signature;
+      if (detection.target) sidecar.target = detection.target;
+      body = null; // bodiless: no cap/ file, no contentHash/contentLength
+    }
+  }
 
   if (status === 'body') {
     if (body === null) throw new TypeError(`commitEntry: status 'body' requires body bytes (key: ${key})`);

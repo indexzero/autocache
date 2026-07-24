@@ -103,6 +103,7 @@ and `contentLength` exist **iff** `status == "body"`:
 | `empty` | no | the capture replayed 200 with zero bytes: serve 200, empty body |
 | `redirect` | no | the capture is an archived redirect (only recorded when the populating fetch didn't follow it); a server may 404 or proxy-redirect to the archive — its call, but it MUST NOT treat the entry as missing (that would trigger endless re-fetch attempts upstream) |
 | `error` | no | the archive permanently lacks this asset (replay 404/410 at population time): serve 404. Its existence is the signal "don't try to populate this again" |
+| `interstitial` | no | a wayback fluff page refused at cache time (#363: a wrapper stub, a redirect interstitial, a raw asset served as text/html, or an archived-error capture). We hold no servable content — the mirror server 302s to the archive replay (graceful degradation, like a miss), never serving the junk. The sidecar's `signature`/`target` are for the #364 remediation sweep, not for serving. It is NOT a miss (never re-fetched). |
 
 ## The orphan-body rule
 

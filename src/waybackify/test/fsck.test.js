@@ -17,6 +17,7 @@ import { fsck, totalFindings, unresolvedFindings, CATEGORIES } from '../fsck.js'
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, '..', 'bin', 'fsck.js');
 const FIXTURE_ROOT = path.resolve(HERE, '../../../render/wayback/test/fixtures/cache-root');
+const WRAPPER = fs.readFileSync(path.join(HERE, 'fixtures/interstitial/wrapper-stub.html'), 'utf8');
 
 const mkroot = () => fsp.mkdtemp(path.join(os.tmpdir(), 'waybackify-fsck-'));
 const bytesOf = s => new TextEncoder().encode(s);
@@ -100,7 +101,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     only(await fsck(root), 'missingBody');
   });
 
-  it('flags a sidecar whose schema version differs from current', async () => {
+  it('flags a sidecar whose schema version is outside the supported set', async () => {
     const { meta } = await commitBody(root, '2011/http://x.example/');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
     await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v: 99 }));
@@ -108,6 +109,13 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     const report = await fsck(root);
     only(report, 'schemaVersion');
     assert.equal(report.findings.schemaVersion[0].v, 99);
+  });
+
+  it('a legacy v1 sidecar is SUPPORTED — no schemaVersion finding', async () => {
+    const { meta } = await commitBody(root, '2011/http://legacy.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v: 1 })); // as the v1 writer left it
+    only(await fsck(root)); // clean: v1 is still readable, not a migration flag
   });
 
   it('reports an unparseable sidecar as malformed, without throwing', async () => {
@@ -176,6 +184,42 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
 
     // idempotent: a second pass finds nothing
     assert.equal(totalFindings(await fsck(root)), 0);
+  });
+});
+
+describe('fsck — interstitial-as-body (#363, report-only)', () => {
+  // A PRE-SCHEMA entry: written before cache-time refusal existed, so a wayback
+  // interstitial sits on disk as `status:body`. Build it by committing a benign
+  // body (commitEntry would refuse the interstitial today), then swapping the
+  // cap/ bytes in and re-pinning contentHash so the ONLY finding is the new
+  // category — never a hashMismatch.
+  async function plantInterstitial(root, key, body) {
+    const { body: capPath, meta } = await commitBody(root, key, '<html><body>benign at commit time</body></html>');
+    await fsp.writeFile(capPath, body);
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    sidecar.contentHash = `sha256-${crypto.createHash('sha256').update(body).digest('base64')}`;
+    sidecar.contentLength = Buffer.byteLength(body);
+    await fsp.writeFile(meta, JSON.stringify(sidecar));
+    return { capPath, meta };
+  }
+
+  it('reports a status:body wrapper stub, with its signature, and never reaps it', async () => {
+    const root = await mkroot();
+    await plantInterstitial(root, '2011/http://x.example/', WRAPPER);
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'interstitialAsBody');
+    assert.equal(report.findings.interstitialAsBody[0].signature, 'wrapper-stub');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'remediation is #364, not fsck');
+    assert.equal(unresolvedFindings(report), 1);
+    assert.ok(fs.existsSync((await entryPaths(root, '2011/http://x.example/')).body), 'the body is left in place');
+  });
+
+  it('a clean corpus of real bodies stays clean (no false interstitial findings)', async () => {
+    const root = await mkroot();
+    await commitBody(root, '2011/http://a.example/', '<html><head><title>Real</title></head><body>content</body></html>');
+    await commitBody(root, '2012/http://b.example/', 'plain body, not html at all');
+    only(await fsck(root));
   });
 });
 

@@ -15,7 +15,7 @@
 //   --root <dir>          cache root (the archive of record) — REQUIRED
 //   --bucket <name>       target bucket ('name' or 's3://name[/prefix]') — REQUIRED
 //   --empty-file <path>   zero-byte scratch file for bodiless entries (status
-//                         empty/redirect/error). REQUIRED iff the root has any.
+//                         empty/redirect/error/interstitial). REQUIRED iff any.
 //                         Create it OUTSIDE the root: EMPTY="$(mktemp)".
 //   --dry-run             emit NOTHING to stdout; write the batch + a summary to
 //                         stderr for spot-checking (an accidental `| s5cmd run`

@@ -143,10 +143,12 @@ async function buildSyntheticRoot() {
   // A binary body with a high byte — must be copied byte-identical.
   await writeEntry(root, { key: IMG_KEY, status: 'body', contentType: 'image/png', flag: 'im_', body: '\x89PNG\r\n\x1a\n binary \xff\xfe bytes' });
   await writeEntry(root, { key: FONT_KEY, status: 'body', contentType: 'font/woff2', flag: 'cs_', body: 'wOF2 fake' });
-  // The three bodiless statuses.
+  // The four bodiless statuses (interstitial is #363: a refused wayback fluff
+  // page — bodiless like the rest, so remaster must carry it through untouched).
   await writeEntry(root, { key: `${TS}/http://example.com/empty`, status: 'empty', contentType: '' });
   await writeEntry(root, { key: `${TS}/http://example.com/redirect`, status: 'redirect', contentType: 'text/html' });
   await writeEntry(root, { key: `${TS}/http://example.com/missing.gif`, status: 'error', contentType: '' });
+  await writeEntry(root, { key: `${TS}/http://example.com/interstitial`, status: 'interstitial', contentType: 'text/html' });
   return root;
 }
 
@@ -162,7 +164,7 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
   });
 
   it('reports every sidecar and counts bodies + rewrites', () => {
-    assert.equal(report.sidecars, 8);
+    assert.equal(report.sidecars, 9);
     assert.equal(report.bodies, 5);
     // doc (html), css (@font-face) and js literal get rewritten; png + woff2 copy verbatim.
     assert.equal(report.rewritten, 3);
@@ -204,7 +206,7 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
   });
 
   it('bodiless entries carry through with no body and an unchanged sidecar', async () => {
-    for (const key of [`${TS}/http://example.com/empty`, `${TS}/http://example.com/redirect`, `${TS}/http://example.com/missing.gif`]) {
+    for (const key of [`${TS}/http://example.com/empty`, `${TS}/http://example.com/redirect`, `${TS}/http://example.com/missing.gif`, `${TS}/http://example.com/interstitial`]) {
       const hash = await captureHash(key);
       const aa = hash.slice(0, 2);
       const { body, metaRaw } = await readOut(out, key);
@@ -219,7 +221,7 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
     assert.equal(manifest.v, 1);
     assert.equal(manifest.ruleVersion, RULE_VERSION);
     assert.equal(manifest.engineVersion, ENGINE_VERSION);
-    assert.equal(manifest.entries.length, 8);
+    assert.equal(manifest.entries.length, 9);
     // entries sorted by key
     const keys = manifest.entries.map(e => e.key);
     assert.deepEqual(keys, [...keys].sort());

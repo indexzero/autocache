@@ -4,7 +4,7 @@
 //   1. a SYNTHETIC hermetic root, hand-built so each entry names the mechanism
 //      it exercises (B1 attr / CSS url() / JS literal, B2 host-relative,
 //      srcset, @font-face, an unsatisfiable ref, a binary body, and the three
-//      bodiless statuses) — asserts the rewrite + carry-over + manifest.
+//      bodiless statuses) — asserts the rewrite + carry-over + build record.
 //   2. the COMMITTED 7-entry cache-root fixture (render/wayback/test/fixtures)
 //      — asserts determinism (run twice, byte-identical), FsStore-servable
 //      integrity, orphan-cap drop, and a bin smoke.
@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureHash } from '../key.js';
 import { RULE_VERSION } from '../rewrite.js';
-import { MANIFEST_NAME, ENGINE_VERSION, remaster } from '../remaster.js';
+import { BUILD_NAME, ENGINE_VERSION, remaster } from '../remaster.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, '..', 'bin', 'remaster.js');
@@ -216,27 +216,27 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
     }
   });
 
-  it('writes a build manifest at the root, outside cap/ and meta/', async () => {
-    const manifest = JSON.parse(await fsp.readFile(path.join(out, MANIFEST_NAME), 'utf8'));
-    assert.equal(manifest.v, 1);
-    assert.equal(manifest.ruleVersion, RULE_VERSION);
-    assert.equal(manifest.engineVersion, ENGINE_VERSION);
-    assert.equal(manifest.entries.length, 9);
+  it('writes a build record at the root, outside cap/ and meta/', async () => {
+    const build = JSON.parse(await fsp.readFile(path.join(out, BUILD_NAME), 'utf8'));
+    assert.equal(build.v, 1);
+    assert.equal(build.ruleVersion, RULE_VERSION);
+    assert.equal(build.engineVersion, ENGINE_VERSION);
+    assert.equal(build.entries.length, 9);
     // entries sorted by key
-    const keys = manifest.entries.map(e => e.key);
+    const keys = build.entries.map(e => e.key);
     assert.deepEqual(keys, [...keys].sort());
     // a rewritten entry records differing input/output hashes; a bodiless one has nulls.
-    const doc = manifest.entries.find(e => e.key === DOC_KEY);
+    const doc = build.entries.find(e => e.key === DOC_KEY);
     assert.equal(doc.rewritten, true);
     assert.notEqual(doc.inputHash, doc.outputHash);
-    const empty = manifest.entries.find(e => e.key.endsWith('/empty'));
+    const empty = build.entries.find(e => e.key.endsWith('/empty'));
     assert.equal(empty.inputHash, null);
     assert.equal(empty.outputHash, null);
   });
 });
 
 describe('remaster — determinism (hard requirement)', () => {
-  it('same hermetic tree → byte-identical remastered tree + manifest, twice', async () => {
+  it('same hermetic tree → byte-identical remastered tree + build record, twice', async () => {
     const a = await mkroot('rm-det-a-');
     const b = await mkroot('rm-det-b-');
     await remaster(FIXTURE_ROOT, a);
@@ -289,11 +289,11 @@ describe('remaster — committed 7-entry fixture', () => {
     assert.ok(html.includes('/web/19981202230410im_/http://www.google.com/google.jpg')); // requisite in corpus
   });
 
-  it('bin smoke: `remaster <hermetic> <out>` exits 0 and writes a manifest', async () => {
+  it('bin smoke: `remaster <hermetic> <out>` exits 0 and writes a build record', async () => {
     const binOut = await mkroot('rm-bin-');
     const res = spawnSync('node', [BIN, FIXTURE_ROOT, binOut], { encoding: 'utf8' });
     assert.equal(res.status, 0, res.stderr);
-    assert.ok(fs.existsSync(path.join(binOut, MANIFEST_NAME)));
+    assert.ok(fs.existsSync(path.join(binOut, BUILD_NAME)));
     assert.match(res.stdout, /7 sidecars/);
   });
 });

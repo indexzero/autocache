@@ -92,9 +92,9 @@ references are rewritten.
 - **Orphan `cap/` body** (no sidecar) — dropped. The authority is `meta/`; an
   orphan is ingest garbage that is never served.
 
-## The build manifest
+## The build record
 
-Written at `<remastered-root>/remaster.manifest.json` — **outside** `cap/` and
+Written at `<remastered-root>/remaster.build.json` — **outside** `cap/` and
 `meta/`. An FsStore only ever reads `cap/<aa>/<hash>` and
 `meta/<aa>/<hash>.json`, so a root-level file is invisible to serving and never
 collides with the capture namespace. It is a build artifact:
@@ -112,17 +112,20 @@ collides with the capture namespace. It is a build artifact:
 ```
 
 Entries are sorted by key; body hashes are `null` for bodiless entries; no
-absolute paths ever enter the manifest (the tree is portable). `ruleVersion`
+absolute paths ever enter the record (the tree is portable). `ruleVersion`
 tracks the reference-rewriting behavior; `engineVersion` tracks the build's
-output contract. rmfsck reads this manifest to prove a remastered tree is a
-current, faithful derivation of its hermetic source.
+output contract. rmfsck reads this record to prove a remastered tree is a
+current, faithful derivation of its hermetic source. (It is deliberately not
+called a "manifest": in waybackify a
+[Manifest](../../waybackify/README.md#manifest--universe--ledger) is a
+`wayback.json` rewrite program — this file is a build artifact.)
 
 ## Determinism
 
 A hard requirement: the same hermetic tree yields a **byte-identical**
-remastered tree *and* manifest. Every step is a pure function of the input
+remastered tree *and* build record. Every step is a pure function of the input
 bytes plus the corpus — sidecars re-emit through canonical JSON, bodies through
-the deterministic rewrite engine, the manifest sorts its entries. Proven in
+the deterministic rewrite engine, the build record sorts its entries. Proven in
 `test/remaster.test.js` by running twice and comparing tree hashes.
 
 ## Not done here (recorded, not oversights)

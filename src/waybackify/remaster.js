@@ -18,10 +18,10 @@
 // production serves pre-rewritten bytes.
 //
 // DETERMINISM is a hard requirement: the same hermetic tree yields a
-// byte-identical remastered tree AND a byte-identical build manifest. Every
+// byte-identical remastered tree AND a byte-identical build record. Every
 // step is a pure function of the input bytes + the corpus: sidecars re-emit
 // through canonicalJSON, bodies through the deterministic rewrite engine, the
-// manifest sorts its entries by key. remaster.test.js proves it by running
+// build record sorts its entries by key. remaster.test.js proves it by running
 // twice and hashing both trees.
 //
 // THE AUTHORITY IS meta/. We walk sidecars, never cap/: a sidecar's presence
@@ -35,16 +35,18 @@ import path from 'node:path';
 import { RULE_VERSION, classifyContentType, rewrite } from './rewrite.js';
 
 /** Remaster tool version. Bump on a change to the build's OUTPUT contract
- *  (manifest shape, sidecar carry-over rules, tree layout) — distinct from
+ *  (build-record shape, sidecar carry-over rules, tree layout) — distinct from
  *  rewrite.js's RULE_VERSION (the reference-rewriting behavior). */
 export const ENGINE_VERSION = 1;
 
 /** The v1 sidecar schema this build understands (mirrors cache.js). */
 const SIDECAR_VERSION = 1;
 
-/** Build-manifest schema version + filename. */
-export const MANIFEST_VERSION = 1;
-export const MANIFEST_NAME = 'remaster.manifest.json';
+/** Build-record schema version + filename. NOT a "manifest": in waybackify a
+ *  Manifest is a wayback.json rewrite program (manifest.js) — this file is
+ *  the remaster build's content-addressed output record. */
+export const BUILD_VERSION = 1;
+export const BUILD_NAME = 'remaster.build.json';
 
 /* ------------------------------------------------------------------------ *
  * Small local copies (kept out of cache.js's dependency graph on purpose:
@@ -118,12 +120,12 @@ async function walkMeta(root) {
  *
  * @param {string} hermeticRoot - sealed cache root (contains cap/ + meta/)
  * @param {string} remasteredRoot - output root (created; caller supplies a
- *   fresh dir — remaster writes cap/, meta/, and the manifest into it)
+ *   fresh dir — remaster writes cap/, meta/, and the build record into it)
  * @param {Object} [options]
  * @param {number} [options.engineVersion=ENGINE_VERSION]
  * @returns {Promise<{ hermeticRoot: string, remasteredRoot: string,
  *   sidecars: number, bodies: number, rewritten: number,
- *   manifestPath: string, manifest: object }>}
+ *   buildPath: string, build: object }>}
  */
 export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const engineVersion = options.engineVersion ?? ENGINE_VERSION;
@@ -150,8 +152,8 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
     sidecars.push({ ...entry, sidecar });
   }
 
-  // ---- pass 2: rewrite bodies, carry sidecars, record the manifest ---------
-  const manifestEntries = [];
+  // ---- pass 2: rewrite bodies, carry sidecars, record the build ------------
+  const buildEntries = [];
   let bodies = 0;
   let rewritten = 0;
 
@@ -199,7 +201,7 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
 
     await writeFileMkdir(path.join(remasteredRoot, 'meta', aa, `${hash}.json`), canonicalJSON(outSidecar));
 
-    manifestEntries.push({
+    buildEntries.push({
       contentType: sidecar.contentType,
       inputHash,
       key: sidecar.key,
@@ -209,24 +211,24 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
     });
   }
 
-  // ---- the content-addressed build manifest --------------------------------
+  // ---- the content-addressed build record ----------------------------------
   // Placed at the remastered root, OUTSIDE cap/ and meta/: FsStore only ever
   // reads cap/<aa>/<hash> and meta/<aa>/<hash>.json, so a root-level file is
   // invisible to serving — it never collides with the capture namespace. It
   // is a build artifact (rule + engine version, per-entry input/output body
   // hashes) that rmfsck reads to prove a remastered tree is a current,
   // faithful derivation of its hermetic source.
-  // No absolute paths ever enter the manifest — the remastered tree is
+  // No absolute paths ever enter the build record — the remastered tree is
   // portable, and a machine-specific root would break the determinism check.
-  manifestEntries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  const manifest = {
+  buildEntries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const build = {
     engineVersion,
-    entries: manifestEntries,
+    entries: buildEntries,
     ruleVersion: RULE_VERSION,
-    v: MANIFEST_VERSION
+    v: BUILD_VERSION
   };
-  const manifestPath = path.join(remasteredRoot, MANIFEST_NAME);
-  await writeFileMkdir(manifestPath, canonicalJSON(manifest));
+  const buildPath = path.join(remasteredRoot, BUILD_NAME);
+  await writeFileMkdir(buildPath, canonicalJSON(build));
 
   return {
     hermeticRoot,
@@ -234,8 +236,8 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
     sidecars: sidecars.length,
     bodies,
     rewritten,
-    manifestPath,
-    manifest
+    buildPath,
+    build
   };
 }
 

@@ -1,11 +1,11 @@
 # @charlie.dev/waybackify-cli
 
 `waybackify` — the human-operable, `xargs`-composable front door over the
-[`spv/waybackify`](../waybackify) library.
+[`waybackify`](../waybackify) library.
 
 **Status: surface v2 pinned; all six commands implemented.**
 The full command/option surface below is fixed (names, args, flags, help
-text, exit codes — snapshot-tested). Surface v2 (#386) speaks the settled
+text, exit codes — snapshot-tested). Surface v2 speaks the settled
 vocabulary: a `wayback.json` is a **Manifest** (one source file's standalone
 rewrite program), the **Universe** is compile-time policy, and the **Ledger**
 is the collection of manifests under a tree. The v1 per-file
@@ -62,7 +62,7 @@ This package stays a **thin CLI wrapper**: argv parsing
 source-driven notes at the top of [`src/cli.js`](./src/cli.js)), output
 formatting, exit codes. Nothing else. Generation, application, the ledger
 operations, verification plumbing, fetch/CDX logic, and the cache key scheme
-live in `spv/waybackify` (`manifest.js#generate`, `manifest.js#apply`,
+live in the [`waybackify`](../waybackify) library (`manifest.js#generate`, `manifest.js#apply`,
 `ledger.js`, `universe.js`); the parsing layer (`src/cli.js`) imports nothing
 from it (test-enforced), and each command handler lazily imports exactly its
 library entry points. (`src/commands/rewrite.js` is the CLI command; the

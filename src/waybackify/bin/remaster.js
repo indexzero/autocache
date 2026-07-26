@@ -2,7 +2,7 @@
 // Remaster front door — a thin wrapper over ../remaster.js (thin-CLI rule:
 // no logic here, just arg parsing + a summary printer). Reads a hermetic
 // cache root and writes a standalone remastered root: chrome stripped,
-// wayback references localized, sidecars carried over, a build manifest at
+// wayback references localized, sidecars carried over, a build record at
 // the root.
 //
 // Shipped as a bin (not a `waybackify remaster` subcommand) on purpose: the
@@ -26,7 +26,7 @@ const USAGE = `Usage: node bin/remaster.js <hermetic-root> <remastered-root> [--
 
 Remaster a hermetic cache root into a standalone remastered root — chrome
 stripped, wayback references localized to /web/<ts><flag>/<orig>, sidecars
-carried over, a content-addressed build manifest written at the root.`;
+carried over, a content-addressed build record written at the root.`;
 
 function parseArgs(argv) {
   const args = { positionals: [], json: false, help: false };
@@ -61,8 +61,8 @@ async function main() {
     console.log(`remaster ${hermeticRoot} → ${remasteredRoot}`);
     console.log(
       `  ${report.sidecars} sidecars (${report.bodies} bodied) · ` +
-        `${report.rewritten} body(ies) rewritten · manifest ${path.basename(report.manifestPath)}` +
-        ` (rule v${report.manifest.ruleVersion} · engine v${report.manifest.engineVersion})`
+        `${report.rewritten} body(ies) rewritten · build ${path.basename(report.buildPath)}` +
+        ` (rule v${report.build.ruleVersion} · engine v${report.build.engineVersion})`
     );
   }
   return 0;

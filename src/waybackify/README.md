@@ -293,7 +293,9 @@ enumeration surface wraps.
 ## Implementation Details
 
 - Uses the Internet Archive Wayback Machine API directly
-- Implements custom `undici` Agent with extended timeouts for reliable requests
+- HTTP goes through [`impit`](https://github.com/apify/impit) (browser
+  impersonation) with extended timeouts — the archive throttles naive bulk
+  clients
 - Handles both inline `[text](url)` and reference-style `[text]: url` markdown links
 - Preserves existing wayback URLs to avoid double-processing
 - Gracefully handles API failures and missing archives

@@ -15,7 +15,8 @@ fs.mkdirSync(dir, { recursive: true });
 
 const root = createCLI();
 fs.writeFileSync(path.join(dir, 'root.txt'), root.help());
-for (const name of ['manifest', 'rewrite', 'ledger', 'check', 'search', 'cache']) {
+const commands = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'cache', 'backfill'];
+for (const name of commands) {
   fs.writeFileSync(path.join(dir, `${name}.txt`), root.help(name));
 }
-console.log(`wrote 7 fixtures to ${dir}`);
+console.log(`wrote ${commands.length + 1} fixtures to ${dir}`);

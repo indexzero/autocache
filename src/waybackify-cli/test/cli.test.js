@@ -38,13 +38,13 @@ function cli(...argv) {
 }
 
 const WB = 'https://web.archive.org/web/20140403040000/http://example.com/';
-const COMMANDS = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'cache'];
+const COMMANDS = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'cache', 'backfill'];
 
 // ---------------------------------------------------------------------------
 // 1. Help snapshots
 // ---------------------------------------------------------------------------
 
-test('root --help lists all six commands with one-line descriptions (snapshot)', () => {
+test('root --help lists all seven commands with one-line descriptions (snapshot)', () => {
   const { status, stdout, stderr } = cli('--help');
   assert.equal(status, EXIT.OK);
   assert.equal(stderr, '');
@@ -57,7 +57,8 @@ test('root --help lists all six commands with one-line descriptions (snapshot)',
     /ledger\s+Survey the manifests under a tree/,
     /check\s+Full wayback-404 verdict for the exact capture/,
     /search\s+CDX capture query — re-pick a better capture/,
-    /cache\s+Fetch the capture into a local bucket image/
+    /cache\s+Fetch the capture into a local bucket image/,
+    /backfill\s+Fetch every capture a ledger references into a cache root/
   ]) {
     assert.match(stdout, line);
   }
@@ -116,7 +117,8 @@ test('missing required flags exit 2 with the validator message', () => {
     [['manifest', 'index.md', '-u', 'universe.json'], '--output\\|-o <file>'],
     [['rewrite', 'index.md'], '--manifest\\|-m <file>'],
     [['rewrite', 'index.md', '-m', 'wayback.json'], '--output\\|-o <file>'],
-    [['cache', WB], '--output\\|-o <root>']
+    [['cache', WB], '--root\\|-r <root>'],
+    [['backfill', '.'], '--root\\|-r <root>']
   ]) {
     const { status, stderr } = cli(...argv);
     assert.equal(status, EXIT.USAGE, `argv: ${argv.join(' ')}`);
@@ -124,10 +126,18 @@ test('missing required flags exit 2 with the validator message', () => {
   }
 });
 
-test('ledger --flatten and --against are mutually exclusive (exit 2)', () => {
+test('ledger --flatten and --root are mutually exclusive (exit 2)', () => {
+  const { status, stderr } = cli('ledger', '.', '--flatten', '--root', '/tmp/root');
+  assert.equal(status, EXIT.USAGE);
+  assert.match(stderr, /--flatten and --root are mutually exclusive/);
+});
+
+test('the deprecated --against alias still selects the cache root (back-compat)', () => {
+  // --against maps to the same worklist join as --root; here it collides with
+  // --flatten exactly like --root does, proving the alias reaches the validator.
   const { status, stderr } = cli('ledger', '.', '--flatten', '--against', '/tmp/root');
   assert.equal(status, EXIT.USAGE);
-  assert.match(stderr, /--flatten and --against are mutually exclusive/);
+  assert.match(stderr, /--flatten and --root are mutually exclusive/);
 });
 
 test('a value-required flag with no value exits 2 (INVALID_FLAG)', () => {

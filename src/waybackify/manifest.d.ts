@@ -50,6 +50,9 @@ export function validateManifest(raw: unknown, context?: string): Manifest;
 /** Read + validate a manifest file (versions {1, 2} accepted). */
 export function readManifest(file: string): Manifest;
 
+/** Normalize a manifest into its canonical schema-v2 JSON shape. */
+export function canonicalize(manifest: Manifest, context?: string): Manifest;
+
 /** Write a manifest as canonical schema v2. */
 export function writeManifest(file: string, manifest: Manifest): void;
 

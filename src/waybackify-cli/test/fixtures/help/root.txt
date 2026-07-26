@@ -1,10 +1,12 @@
 waybackify [flags] [command]
 
-check / search / manifest / cache over the spv/waybackify library
+manifest / rewrite / ledger / check / search / cache over the spv/waybackify library
 
 Human-operable, xargs-composable front door over spv/waybackify:
-hand-check a capture, re-pick a better one, enumerate a file's wayback
-refs, or populate the wayback.charlie.dev mirror.
+generate a manifest for a source file, rewrite it to its published
+form, survey the ledger of manifests under a tree, hand-check a
+capture, re-pick a better one, or populate the wayback.charlie.dev
+mirror.
 
 Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·
 2 usage error · 3 suspect verdict (check only).
@@ -13,9 +15,11 @@ Flags:
   --help|-h   Show help
 
 Commands:
+  manifest    Generate the manifest for one markdown source
+  rewrite     Apply a manifest to a markdown source
+  ledger      Survey the manifests under a tree
   check       Full wayback-404 verdict for the exact capture
   search      CDX capture query — re-pick a better capture
-  manifest    Per-file enumeration of wayback refs
   cache       Fetch the capture into a local bucket image
 
 part of the wayback.charlie.dev mirror tooling

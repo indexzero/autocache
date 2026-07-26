@@ -1,20 +1,25 @@
-waybackify manifest [flags] <file.md>
+waybackify manifest [flags] <source.md>
 
-Per-file enumeration of wayback refs
+Generate the manifest for one markdown source
 
-Per-file enumeration of wayback refs. Inline links only by default;
---ledger folds in the sibling wayback.json entries. Corpus scope is
-deliberately NOT built in — that is
-`find words -name index.md | xargs waybackify manifest`.
+Generate the manifest (wayback.json) for one markdown source: extract
+its live links, bake the Universe subset (compile-time policy), copy
+verdicts from the seen union file, and resolve only never-seen urls
+against the archive. Idempotent: a rerun with the same seen file
+makes zero network calls and writes byte-identical output.
 
-Output: JSONL, {post, source: inline|ledger, timestamp, originalUrl,
-waybackUrl}.
+Output: canonical manifest at -o; the seen file (read-write)
+extended with this run's verdicts; one JSON stats line on stdout.
+Unresolved urls defer — exit 1, rerun to resume.
 
 Arguments:
-  <file.md>   markdown file to enumerate
+  <source.md>            markdown source file (pristine, live-link form)
 
 Flags:
-  --ledger    also fold in the sibling wayback.json ledger entries
-  --help|-h   Show help
+  --universe|-u <file>   Universe file (rewrites + excludes policy) — required
+  --seen|-s <file>       Manifest-shaped resolution union, read-write (bootstrap: ledger --flatten)
+  --output|-o <file>     manifest destination (wayback.json) — required
+  --offline              fail on urls the universe and seen file cannot answer (zero network)
+  --help|-h              Show help
 
 part of the wayback.charlie.dev mirror tooling

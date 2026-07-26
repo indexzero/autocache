@@ -10,6 +10,7 @@ import path from 'node:path';
 import {
   MANIFEST_VERSION,
   apply,
+  canonicalize,
   emptyManifest,
   extractArchiveUrls,
   generate,
@@ -108,6 +109,18 @@ describe('readManifest / writeManifest', () => {
     const m = readManifest(file);
     assert.deepEqual(m.exclude, ['http://gone.example.com/']);
     assert.deepEqual(Object.keys(m.entries), ['http://a.example.com/']);
+  });
+
+  it('canonicalize returns EXACTLY the object writeManifest serializes (one canonical form)', () => {
+    const file = path.join(tmpdir(), 'wayback.json');
+    const m = emptyManifest();
+    m.rewrites['http://moved.example.com/'] = 'https://mirror.example.net/';
+    m.entries['http://a.example.com/'] = { wayback: WB_A, timestamp: '20100101000000' };
+    m.exclude.push('https://live.example.com/', 'https://live.example.com/'); // deduped on the way out
+    writeManifest(file, m);
+    assert.equal(fs.readFileSync(file, 'utf8'), `${JSON.stringify(canonicalize(m), null, 2)}\n`);
+    assert.deepEqual(Object.keys(canonicalize(m)), ['version', 'rewrites', 'entries', 'exclude']);
+    assert.deepEqual(canonicalize(m).exclude, ['https://live.example.com/']);
   });
 });
 

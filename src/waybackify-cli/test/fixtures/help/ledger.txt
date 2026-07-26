@@ -1,0 +1,20 @@
+waybackify ledger [flags] <dir>
+
+Survey the manifests under a tree
+
+Survey the ledger — every wayback.json manifest under <dir>, file
+paths as identity. Default: one JSONL row per manifest with section
+counts. --flatten: union the ledger into ONE canonical manifest on
+stdout (the seen-file bootstrap for manifest). --against: join the
+ledger against a cache root, one JSONL row per referenced capture,
+classified unfetched | cached | interstitial | error.
+
+Arguments:
+  <dir>              root to discover wayback.json manifests under
+
+Flags:
+  --flatten          print the union manifest (canonical JSON) instead of rows
+  --against <root>   classify referenced captures against this cache root
+  --help|-h          Show help
+
+part of the wayback.charlie.dev mirror tooling

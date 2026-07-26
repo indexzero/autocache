@@ -1,66 +1,101 @@
-// `waybackify manifest` handler — thin wiring over the library, per the CLI's
-// hard thin-wrapper rule: the load-bearing enumeration (the balanced-paren
-// scanner, manifest schema, dedupe, deterministic order) is
-// spv/waybackify/manifest.js#sourceRefs; this file translates the parsed argv
-// payload into sourceRefs() calls and prints one JSONL row per reference.
+// `waybackify manifest` handler — GENERATION (surface v2, #386): thin wiring
+// over the library's manifest.js#generate, per the CLI's hard thin-wrapper
+// rule. The load-bearing pipeline (link extraction, universe subset baking,
+// seen-union lookup, archive resolution, canonical serialization) is
+// spv/waybackify — this file translates the parsed argv payload into file
+// reads, one generate() call, and file writes.
 //
-// VOCABULARY SHIM (#385 → #386): the library now speaks the settled
-// vocabulary — a wayback.json is a MANIFEST, its refs carry
-// source: 'manifest', and file paths are identity (no id derivation from
-// directory layout anywhere in these packages). This command's OUTPUT,
-// however, is the pinned
-// v1 surface ({post, source: inline|ledger, ...} rows, a `--ledger` flag),
-// so the handler maps the library's terms back onto the pinned field names
-// below. #386 replaces this command wholesale (manifest = generation,
-// ledger = collection discovery) and deletes the shim with it.
-//
-// Per-file by design (corpus/tree awareness is NOT built in — that's
-// `find <dir> -name '*.md' | xargs waybackify manifest`). Accepts one or
-// more markdown files so the xargs walk works verbatim; each file is
-// enumerated in argv order, its refs deduped within the file. Inline links
-// only by default; --ledger folds in each file's sibling wayback.json.
+// Contract (pinned by --help and the command tests):
+//   - reads <source.md> (the pristine, live-link form), -u/--universe
+//     (required), and -s/--seen when given AND present on disk (a missing
+//     seen file is an empty union — the bootstrap case);
+//   - writes the canonical manifest to -o/--output and, when -s was given,
+//     writes the extended seen union BACK to the same path (read-write);
+//   - prints ONE JSON stats line on stdout
+//     ({output, urls, fromUniverse, fromSeen, resolved, deferred});
+//   - idempotent: a rerun with the same seen file answers every url from the
+//     universe/seen (zero network) and rewrites byte-identical files;
+//   - --offline swaps the resolver for one that always throws, so every url
+//     the universe and seen file cannot answer lands in `deferred` — and any
+//     deferral (offline or a real resolver failure) exits 1 AFTER writing
+//     the partial manifest + seen: verdicts already obtained are kept, and a
+//     rerun resumes instead of restarting.
 //
 // The library is imported by workspace-relative specifier (both packages are
-// private and in-repo; see render/wayback/src/key.ts for the same-shaped note)
-// and lazily, inside the factory, so merely loading the CLI surface never pays
-// for the library import.
+// private and in-repo) and lazily, inside the runner, so merely loading the
+// CLI surface never pays for the library import.
+
+import fs from 'node:fs';
 
 /**
  * Build the manifest handler. Dependency-injectable for tests; the bin wires
- * the default.
+ * the defaults.
  *
  * @param {Object} [deps]
- * @param {Function} [deps.sourceRefs] - the library entry point
- * @param {Function} [deps.log] - stdout line sink (one JSONL row per ref)
- * @returns {Function} paparam runner: ({ args, flags, positionals }) => Promise<void>
+ * @param {Function} [deps.generate] - the library entry point (manifest.js#generate)
+ * @param {Function} [deps.readManifest] - seen-file reader
+ * @param {Function} [deps.writeManifest] - canonical writer (manifest + seen)
+ * @param {Function} [deps.readUniverse] - universe-file reader
+ * @param {Function} [deps.resolve] - archive resolver override (offline tests)
+ * @param {Function} [deps.log] - stdout line sink (the stats JSON)
+ * @param {Function} [deps.error] - stderr line sink (deferred urls)
+ * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
  */
 export function manifestHandler(deps = {}) {
-  return async ({ args, flags, positionals }) => {
-    const { log = console.log } = deps;
-    const sourceRefs = deps.sourceRefs ?? (await import('waybackify/manifest.js')).sourceRefs;
+  return async ({ args, flags }) => {
+    const { log = console.log, error = console.error } = deps;
+    const generate = deps.generate ?? (await import('waybackify/manifest.js')).generate;
+    const readManifest = deps.readManifest ?? (await import('waybackify/manifest.js')).readManifest;
+    const writeManifest = deps.writeManifest ?? (await import('waybackify/manifest.js')).writeManifest;
+    const readUniverse = deps.readUniverse ?? (await import('waybackify/universe.js')).readUniverse;
 
-    // `positionals` is every file the invocation named — one from a plain call,
-    // many from an xargs batch (src/cli.js makes the manifest command loose on
-    // args). validate() guarantees at least args.file; fall back to it so the
-    // handler works under direct injection too.
-    const files = positionals?.length ? positionals : [args.file];
+    const source = fs.readFileSync(args.source, 'utf8');
+    const universe = readUniverse(flags.universe);
+    // -s names the read-write union; absent-on-disk reads as the empty union
+    // (generate() treats null as empty) so the very first run bootstraps it.
+    const seen = flags.seen && fs.existsSync(flags.seen) ? readManifest(flags.seen) : null;
 
-    for (const file of files) {
-      for (const ref of sourceRefs(file, { manifest: Boolean(flags.ledger) })) {
-        // The pinned CLI contract: JSONL, one {post, source, timestamp,
-        // originalUrl, waybackUrl} object per line (jq/xargs-friendly).
-        // `post` is the file path (paths are identity now) and a manifest
-        // ref is spelled `ledger` — the v1 surface vocabulary (see header).
-        log(
-          JSON.stringify({
-            post: ref.path,
-            source: ref.source === 'manifest' ? 'ledger' : ref.source,
-            timestamp: ref.timestamp,
-            originalUrl: ref.originalUrl,
-            waybackUrl: ref.waybackUrl
-          })
-        );
-      }
+    const options = {};
+    if (flags.offline) {
+      // Offline resolution: the resolver never runs the network — it throws,
+      // generate() records the url in `deferred`, and the exit-1 path below
+      // fails the run with every unresolved url surfaced.
+      options.resolve = url => {
+        throw new Error('offline: not answered by the universe or seen file');
+      };
+    } else if (deps.resolve) {
+      options.resolve = deps.resolve;
+    }
+
+    const result = await generate(source, universe, seen, options);
+
+    // Write order: manifest first (the artifact -o names), then the seen
+    // union — the RETURNED seen (a normalized, extended copy), per the
+    // library's read-write contract.
+    writeManifest(flags.output, result.manifest);
+    if (flags.seen) writeManifest(flags.seen, result.seen);
+
+    // ONE JSON stats line on stdout (jq/xargs-friendly, like cache's summary).
+    log(
+      JSON.stringify({
+        output: flags.output,
+        urls: result.stats.urls,
+        fromUniverse: result.stats.fromUniverse,
+        fromSeen: result.stats.fromSeen,
+        resolved: result.stats.resolved,
+        deferred: result.deferred.length
+      })
+    );
+
+    if (result.deferred.length > 0) {
+      for (const d of result.deferred) error(`unresolved: ${d.url}: ${d.error}`);
+      // Thrown runner errors route through the root bail handler → exit 1
+      // (domain failure — the manifest is incomplete; the partial output +
+      // extended seen file make the rerun cheap).
+      throw new Error(
+        `manifest incomplete: ${result.deferred.length} url(s) unresolved — ` +
+          (flags.offline ? 'rerun without --offline to resolve' : 'rerun to resume')
+      );
     }
   };
 }

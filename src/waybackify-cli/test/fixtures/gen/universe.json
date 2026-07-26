@@ -1,0 +1,8 @@
+{
+  "rewrites": {
+    "http://feeds.example.com/blog": "https://blog.example.net/feed"
+  },
+  "exclude": [
+    "https://tracker.example.com/"
+  ]
+}

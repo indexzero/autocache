@@ -128,22 +128,36 @@ export function readManifest(file) {
 }
 
 /**
- * Write a manifest as canonical schema v2: `version` first, then (only when
- * non-empty) `rewrites`, then `entries`, then (only when non-empty)
- * `exclude`; url keys sorted; 2-space indent + trailing newline (the same
- * on-disk convention the corpus always used).
+ * Normalize a manifest into its canonical schema-v2 JSON shape: `version`
+ * first, then (only when non-empty) `rewrites`, then `entries`, then (only
+ * when non-empty) `exclude`; url keys sorted, `exclude` deduped. This is THE
+ * serialization order — writeManifest stringifies exactly this object, and
+ * anything else that prints a manifest (e.g. `ledger --flatten` on stdout)
+ * goes through it too, so there is one canonical form, not two.
  *
- * @param {string} file
- * @param {object} manifest - in-memory shape (validated before writing)
+ * @param {object} manifest - in-memory shape (validated on entry)
+ * @param {string} [context] - label for validation errors
+ * @returns {object} a plain object ready for JSON.stringify
  */
-export function writeManifest(file, manifest) {
-  const m = validateManifest(manifest, file);
+export function canonicalize(manifest, context = 'manifest') {
+  const m = validateManifest(manifest, context);
   const sortKeys = obj => Object.fromEntries(Object.keys(obj).sort().map(k => [k, obj[k]]));
   const out = { version: MANIFEST_VERSION };
   if (Object.keys(m.rewrites).length > 0) out.rewrites = sortKeys(m.rewrites);
   out.entries = sortKeys(m.entries);
   if (m.exclude.length > 0) out.exclude = [...new Set(m.exclude)].sort();
-  fs.writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
+  return out;
+}
+
+/**
+ * Write a manifest as canonical schema v2 (see canonicalize); 2-space indent
+ * + trailing newline (the same on-disk convention the corpus always used).
+ *
+ * @param {string} file
+ * @param {object} manifest - in-memory shape (validated before writing)
+ */
+export function writeManifest(file, manifest) {
+  fs.writeFileSync(file, `${JSON.stringify(canonicalize(manifest, file), null, 2)}\n`);
 }
 
 /* ------------------------------------------------------------------------ *

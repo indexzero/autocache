@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "rewrites": {
+    "http://feeds.example.com/blog": "https://blog.example.net/feed"
+  },
+  "entries": {
+    "http://sudomakethought.com/post/123": {
+      "wayback": "https://web.archive.org/web/20140403040000/http://sudomakethought.com/post/123",
+      "timestamp": "20140403040000",
+      "checkedAt": "2026-06-22T06:51:59.917Z"
+    }
+  },
+  "exclude": [
+    "https://tracker.example.com/pixel.gif"
+  ]
+}

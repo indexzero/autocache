@@ -1,10 +1,19 @@
 // waybackify CLI surface.
 //
 // This module pins the ENTIRE command/option contract — names, args, flags,
-// help text, exit codes — with ZERO implementation. All four command
-// handlers (cache, check, search, manifest) are injected by the bin; a
-// missing handler throws Not implemented (exit 70) as a defensive path.
-// Implementations never touch argv parsing.
+// help text, exit codes — with ZERO implementation. All six command
+// handlers (manifest, rewrite, ledger, check, search, cache) are injected by
+// the bin; a missing handler throws Not implemented (exit 70) as a defensive
+// path. Implementations never touch argv parsing.
+//
+// SURFACE v2 (#386): `manifest` means GENERATION (source + universe [+ seen]
+// → wayback.json), `rewrite` means APPLICATION (source + manifest → the
+// published form), `ledger` means the COLLECTION (discovery / --flatten /
+// --against worklists). The v1 per-file markdown-extraction `manifest`
+// command and its `--ledger` flag are deleted — their meanings were exactly
+// inverted from the settled vocabulary (a wayback.json IS a manifest; the
+// ledger is the collection); this surface is the deliberate, snapshot-pinned
+// break that kills the confusion.
 //
 // Thin-CLI rule (hard constraint): this package is argv parsing
 // (paparam), output formatting, and exit codes. All plumbing lands in
@@ -70,11 +79,11 @@
 //   2   usage error (unknown flag/arg, missing required arg/flag)
 //   3   check only: suspect verdict (nonzero on purpose, distinct from 1)
 //   70  a command handler is missing from the bin wiring — DEFENSIVE ONLY
-//       now that all four handlers are wired; should never be observable.
+//       now that all six handlers are wired; should never be observable.
 //       70 is BSD sysexits EX_SOFTWARE ("internal software error") — see
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
 
-import { arg, bail, command, description, flag, footer, sloppy, summary, validate } from 'paparam';
+import { arg, bail, command, description, flag, footer, summary, validate } from 'paparam';
 
 export const EXIT = {
   OK: 0,
@@ -156,34 +165,76 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     handlers.search ?? notImplemented('search')
   );
 
+  // paparam derives the parsed-arg name from the FIRST [a-zA-Z0-9-]+ run in
+  // the spec (snakeToCamel, index.js:772-778 @1.10.1), so `<source.md>` lands
+  // on args.source — the `.md` is help-text only.
   const manifest = command(
     'manifest',
-    summary('Per-file enumeration of wayback refs'),
+    summary('Generate the manifest for one markdown source'),
     description(
-      'Per-file enumeration of wayback refs. Inline links only by default;\n' +
-        '--ledger folds in the sibling wayback.json entries. Corpus scope is\n' +
-        'deliberately NOT built in — that is\n' +
-        '`find words -name index.md | xargs waybackify manifest`.\n' +
+      'Generate the manifest (wayback.json) for one markdown source: extract\n' +
+        'its live links, bake the Universe subset (compile-time policy), copy\n' +
+        'verdicts from the seen union file, and resolve only never-seen urls\n' +
+        'against the archive. Idempotent: a rerun with the same seen file\n' +
+        'makes zero network calls and writes byte-identical output.\n' +
         '\n' +
-        'Output: JSONL, {post, source: inline|ledger, timestamp, originalUrl,\n' +
-        'waybackUrl}.'
+        'Output: canonical manifest at -o; the seen file (read-write)\n' +
+        'extended with this run\'s verdicts; one JSON stats line on stdout.\n' +
+        'Unresolved urls defer — exit 1, rerun to resume.'
     ),
-    // paparam derives the parsed-arg name from the FIRST [a-zA-Z0-9-]+ run in
-    // the spec (snakeToCamel, index.js:772-778 @1.10.1), so `<file.md>` lands
-    // on args.file — the `.md` is help-text only.
-    arg('<file.md>', 'markdown file to enumerate'),
-    // Loose ARGS (but still-strict FLAGS) so an `xargs` batch works verbatim:
-    // `find words -name index.md | xargs waybackify manifest` hands ONE
-    // invocation many files, which strict args would reject (UNKNOWN_ARG —
-    // note 1). sloppy({ args: true }) collects every positional into the
-    // runner's `positionals`; sloppy({ flags: false }) keeps flags strict, so
-    // an unknown flag still exits 2 AND --ledger still parses in any position
-    // (unlike a `rest`, which would greedily swallow a trailing flag). The
-    // required <file.md> is still enforced by the validate() below.
-    sloppy({ flags: false, args: true }),
-    flag('--ledger', 'also fold in the sibling wayback.json ledger entries'),
-    validate(({ args }) => Boolean(args.file), 'missing required argument: <file.md>'),
+    arg('<source.md>', 'markdown source file (pristine, live-link form)'),
+    flag('--universe|-u <file>', 'Universe file (rewrites + excludes policy) — required'),
+    flag('--seen|-s <file>', 'Manifest-shaped resolution union, read-write (bootstrap: ledger --flatten)'),
+    flag('--output|-o <file>', 'manifest destination (wayback.json) — required'),
+    flag('--offline', 'fail on urls the universe and seen file cannot answer (zero network)'),
+    validate(({ args }) => Boolean(args.source), 'missing required argument: <source.md>'),
+    validate(({ flags }) => Boolean(flags.universe), 'missing required flag: --universe|-u <file>'),
+    validate(({ flags }) => Boolean(flags.output), 'missing required flag: --output|-o <file>'),
     handlers.manifest ?? notImplemented('manifest')
+  );
+
+  const rewrite = command(
+    'rewrite',
+    summary('Apply a manifest to a markdown source'),
+    description(
+      'Apply a manifest to a markdown source: rewrite each live link per\n' +
+        'the manifest, precedence exclude → rewrites → entries → untouched +\n' +
+        'warn. Fenced code and link text are never touched; already-archived\n' +
+        'links pass through.\n' +
+        '\n' +
+        'Output: the published form written to -o. A url the manifest holds\n' +
+        'no verdict for warns on stderr and exits 1 — surfaced, never\n' +
+        'guessed at.'
+    ),
+    arg('<source.md>', 'markdown source file (pristine, live-link form)'),
+    flag('--manifest|-m <file>', 'manifest to apply (wayback.json) — required'),
+    flag('--output|-o <file>', 'destination for the rewritten markdown — required'),
+    validate(({ args }) => Boolean(args.source), 'missing required argument: <source.md>'),
+    validate(({ flags }) => Boolean(flags.manifest), 'missing required flag: --manifest|-m <file>'),
+    validate(({ flags }) => Boolean(flags.output), 'missing required flag: --output|-o <file>'),
+    handlers.rewrite ?? notImplemented('rewrite')
+  );
+
+  const ledger = command(
+    'ledger',
+    summary('Survey the manifests under a tree'),
+    description(
+      'Survey the ledger — every wayback.json manifest under <dir>, file\n' +
+        'paths as identity. Default: one JSONL row per manifest with section\n' +
+        'counts. --flatten: union the ledger into ONE canonical manifest on\n' +
+        'stdout (the seen-file bootstrap for manifest). --against: join the\n' +
+        'ledger against a cache root, one JSONL row per referenced capture,\n' +
+        'classified unfetched | cached | interstitial | error.'
+    ),
+    arg('<dir>', 'root to discover wayback.json manifests under'),
+    flag('--flatten', 'print the union manifest (canonical JSON) instead of rows'),
+    flag('--against <root>', 'classify referenced captures against this cache root'),
+    validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
+    validate(
+      ({ flags }) => !(flags.flatten && flags.against),
+      '--flatten and --against are mutually exclusive'
+    ),
+    handlers.ledger ?? notImplemented('ledger')
   );
 
   const cache = command(
@@ -212,19 +263,23 @@ export function createCLI({ handlers = {}, onBail } = {}) {
 
   const root = command(
     'waybackify',
-    summary('check / search / manifest / cache over the spv/waybackify library'),
+    summary('manifest / rewrite / ledger / check / search / cache over the spv/waybackify library'),
     description(
       'Human-operable, xargs-composable front door over spv/waybackify:\n' +
-        'hand-check a capture, re-pick a better one, enumerate a file\'s wayback\n' +
-        'refs, or populate the wayback.charlie.dev mirror.\n' +
+        'generate a manifest for a source file, rewrite it to its published\n' +
+        'form, survey the ledger of manifests under a tree, hand-check a\n' +
+        'capture, re-pick a better one, or populate the wayback.charlie.dev\n' +
+        'mirror.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
         '2 usage error · 3 suspect verdict (check only).'
     ),
     footer('part of the wayback.charlie.dev mirror tooling'),
+    manifest,
+    rewrite,
+    ledger,
     check,
     search,
-    manifest,
     cache
   );
 

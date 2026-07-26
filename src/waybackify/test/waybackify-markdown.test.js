@@ -14,7 +14,7 @@ function fakeWayback(dead = []) {
 }
 const archived = url => `https://web.archive.org/web/20140101000000/${url}`;
 
-describe('extractLinks (pure detection for the ledger)', () => {
+describe('extractLinks (pure detection for manifest generation)', () => {
   it('returns unique archivable URLs in document order; excludes the rest', () => {
     const md = [
       'inline [a](http://a.com/1)',

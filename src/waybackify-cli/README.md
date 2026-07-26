@@ -22,13 +22,13 @@ waybackify cache <wayback-url> -o <root> [--no-requisites]
 |---|---|---|
 | `check` | Full **wayback-404 verdict** for the exact capture: CDX `statuscode` + soft-404 content heuristics on the replay body — the corpus audit primitive | JSON verdict on stdout (`{verdict: good\|wayback404\|suspect, statuscode, reason, snippet}`); exit 0 = verified good, nonzero = bad/suspect |
 | `search` | CDX capture query (the library's `getSnapshot`/`getSnapshots` face) — for re-picking a better capture when `check` flags one bad. No date-anchoring cleverness: `--near` passes through, default is CDX's own ordering | JSONL: `{timestamp, statuscode, mimetype, waybackUrl}` per capture |
-| `manifest` | Per-file enumeration of wayback refs. **Inline links only by default**; `--ledger` folds in the sibling `wayback.json` entries. Corpus scope is deliberately NOT built in — that's `find words -name index.md \| xargs waybackify manifest` | JSONL: `{post, source: inline\|ledger, timestamp, originalUrl, waybackUrl}` |
+| `manifest` | Per-file enumeration of wayback refs (`post` = the file path; paths are identity). **Inline links only by default**; `--ledger` folds in the sibling `wayback.json` manifest entries. Tree scope is deliberately NOT built in — that's `find . -name '*.md' \| xargs waybackify manifest`. NOTE: this surface predates the settled Manifest/Ledger vocabulary (a `wayback.json` is a *manifest*; the *ledger* is the collection) — the v2 surface replaces it | JSONL: `{post, source: inline\|ledger, timestamp, originalUrl, waybackUrl}` |
 | `cache` | Fetch the capture into a **local bucket image** at `<root>` — the wayback.charlie.dev mirror's population path. Syncing that dir to R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment | files written under the shared key scheme; summary line on stdout |
 
 Composability is the design goal:
 
 ```sh
-find words -name index.md | xargs waybackify manifest | jq -r .waybackUrl | xargs -n1 waybackify check
+find . -name '*.md' | xargs waybackify manifest | jq -r .waybackUrl | xargs -n1 waybackify check
 ```
 
 ## Exit codes

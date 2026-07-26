@@ -45,12 +45,14 @@ alone, without the root mounted. Ship `meta/` as data, and GC has its edges.
 Standard tri-color reachability over the capture DAG.
 
 - **Roots — the corpus ledger, enumerated from git.** The inline
-  `web.archive.org/web/…` references in `words/**/index.md` plus the non-null
-  `wayback.json` ledger entries — all committed — are the set of captures the
-  site actually points at ([`enumerate.js`](../../waybackify/enumerate.js);
-  the canonical enumerator in [#255](https://github.com/indexzero/charlie.dev/issues/255)
-  is its successor). Each root reference is a `(timestamp, originalUrl)` pair
-  → a `captureKey` → `hash = sha256hex(captureKey)`
+  `web.archive.org/web/…` references in the content tree's published sources
+  plus the `wayback.json` manifest entries — all committed — are the set of
+  captures the site actually points at
+  ([`ledger.js`](../../waybackify/ledger.js) discovery ∪ the project's own
+  inline enumeration; [#255](https://github.com/indexzero/charlie.dev/issues/255) /
+  [#385](https://github.com/indexzero/charlie.dev/issues/385)). Each root
+  reference is a `(timestamp, originalUrl)` pair → a `captureKey` →
+  `hash = sha256hex(captureKey)`
   ([`key.js`](../../waybackify/key.js)). The root set is a set of hashes.
 - **Edges — sidecar `requisites[]`.** For a marked hash, read
   `meta/<aa>/<hash>.json`; each entry of its `requisites[]` is a child's
@@ -186,9 +188,10 @@ carry:*
   corpus-ledger generation or the bucket generation has moved since the
   manifest was computed; honors the min-age grace window; deletes `cap/`+`meta/`
   as an atomic pair per hash.
-- Roots from the canonical corpus enumerator
-  ([#255](https://github.com/indexzero/charlie.dev/issues/255)) once merged; the
-  audit enumerator until then.
+- Roots from ledger discovery ([`ledger.js`](../../waybackify/ledger.js))
+  joined with the project's inline-reference enumeration
+  ([#255](https://github.com/indexzero/charlie.dev/issues/255) /
+  [#385](https://github.com/indexzero/charlie.dev/issues/385)).
 - Reachability defined **solely** by roots + sidecar `requisites[]`. A test
   pins that an extraction-rule change does **not** orphan a still-referenced
   requisite (the false-orphan fence).
@@ -204,7 +207,7 @@ carry:*
   GC-safety dissent) · [SERVE.md](./SERVE.md) (orphans, copy-only sync loops).
 - Code: [`cache.js`](../../waybackify/cache.js) (`commitEntry`, `requisites[]`)
   · [`key.js`](../../waybackify/key.js) (`captureKey` → `hash`) ·
-  [`enumerate.js`](../../waybackify/enumerate.js) (corpus ledger roots) ·
+  [`ledger.js`](../../waybackify/ledger.js) (corpus ledger roots) ·
   [`requisites.js`](../../waybackify/requisites.js) (extraction rules).
 - Bucket-sync milestone: shared layout contract
   [#284](https://github.com/indexzero/charlie.dev/issues/284) · sync emitter +

@@ -33,7 +33,8 @@ class WaybackMachine {
     this.impit = options.impit || new Impit({ browser: 'chrome', timeout: options.timeout ?? 20000 });
     // Optional observer, called with the LITERAL request just before each
     // fetch: ({ method, url, attempt, maxAttempts }). Lets a caller log exactly
-    // what is hitting the wire (e.g. the ledger CLI surfaces it via pino).
+    // what is hitting the wire (e.g. the manifest-writing CLI surfaces it via
+    // pino).
     this.onRequest = options.onRequest;
     // Optional observer of each response: ({ url, status, ms, attempt }).
     this.onResponse = options.onResponse;
@@ -238,7 +239,7 @@ export async function waybackify(url, options = {}) {
 
   // A transient lookup failure throws; here we treat it the same as "not
   // archived" — leave the link unchanged. Callers that need to retry later
-  // (the ledger builder) call getSnapshot directly and handle the throw.
+  // (the manifest builder) call getSnapshot directly and handle the throw.
   let snapshot;
   try {
     snapshot = await wayback.getSnapshot(url);
@@ -288,7 +289,7 @@ function classifyMatch(m) {
  * waybackifyMarkdown would archive — inline / reference / HTML links and bare
  * prose URLs, in document order. PURE (no network): this is the detection half
  * of waybackifyMarkdown, for callers that resolve + cache separately (e.g. an
- * incremental ledger builder). Image embeds, internal/relative links,
+ * incremental manifest builder). Image embeds, internal/relative links,
  * non-http(s) schemes, already-archived URLs, and anything in `skip` are
  * excluded.
  * @param {string} markdown

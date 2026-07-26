@@ -132,7 +132,7 @@ test('check output pipes through `jq -r .verdict`', { skip: jqSkip }, async () =
 
 const liveSkip = !process.env.WAYBACK_LIVE && 'live network — set WAYBACK_LIVE=1 to run';
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'waybackify.js');
-// A capture the corpus actually references (words/0/004 ledger).
+// A real archived capture (also exercised by the library's live audit tests).
 const LIVE_WB =
   'https://web.archive.org/web/20081221144742/http://blogs.msdn.com:80/mharsh/archive/2008/03/05/slides-and-demos-from-my-mix-08-talk.aspx';
 

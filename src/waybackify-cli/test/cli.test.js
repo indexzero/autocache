@@ -154,13 +154,26 @@ test('cache is WIRED in the bin: a non-replay URL is a domain failure (1), not a
 
 test('manifest is WIRED in the bin: a real fixture file enumerates to JSONL (0)', () => {
   // Proves bin/waybackify.js hands `manifest` the real handler over the real
-  // library. Offline — enumerateFile just reads the committed fixture.
-  const file = path.join(PKG, '..', 'waybackify', 'test', 'fixtures', 'words', '1', '001', 'index.md');
+  // library. Offline — sourceRefs just reads the committed fixture. `post`
+  // carries the file path: paths are identity (no id conventions anywhere
+  // in these packages).
+  const file = path.join(PKG, 'test', 'fixtures', 'sample', 'index.md');
   const { status, stdout } = cli('manifest', file);
   assert.equal(status, EXIT.OK);
   const rows = stdout.trim().split('\n').map(l => JSON.parse(l));
-  assert.equal(rows.length, 5, 'five inline refs, deduped, no ledger by default');
-  assert.ok(rows.every(r => r.source === 'inline' && r.post === '1/001'));
+  assert.equal(rows.length, 2, 'two inline refs, deduped, no wayback.json rows by default');
+  assert.ok(rows.every(r => r.source === 'inline' && r.post === file));
+});
+
+test('manifest --ledger folds in the sibling wayback.json through the real library', () => {
+  const file = path.join(PKG, 'test', 'fixtures', 'sample', 'index.md');
+  const { status, stdout } = cli('manifest', '--ledger', file);
+  assert.equal(status, EXIT.OK);
+  const rows = stdout.trim().split('\n').map(l => JSON.parse(l));
+  // Two inline + one wayback.json entry; the `wayback: null` entry (legacy
+  // not-archived, a v2 exclude on read) references nothing and is absent.
+  assert.deepEqual(rows.map(r => r.source), ['inline', 'inline', 'ledger']);
+  assert.ok(!rows.some(r => r.originalUrl.includes('never-captured')));
 });
 
 test('handlers receive the fully parsed surface (args + flags)', async () => {

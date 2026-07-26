@@ -90,12 +90,12 @@ export function classifyContentType(contentType) {
 // A wayback reference: an OPTIONAL archive.org host (absolute or protocol-
 // relative), then `/web/<ts><flag?>/<original>`. The original is captured
 // liberally ([^"'\s<>\\]+) and trimmed/repaired below — the same tempered
-// scan requisites.js and enumerate.js apply corpus-wide.
+// scan requisites.js and manifest.js#extractArchiveUrls apply.
 const WAYBACK_REF_RE = /((?:https?:)?\/\/web\.archive\.org)?\/web\/(\d{4,14})([a-z]{1,3}_)?\/([^"'\s<>\\]+)/g;
 
 /**
  * Truncate an original-URL token at its first UNBALANCED ')' — the
- * CommonMark-style paren rule requisites.js/enumerate.js already use, needed
+ * CommonMark-style paren rule requisites.js/manifest.js already use, needed
  * for refs inside CSS `url(…)` where a bare ')' closes the function while
  * balanced '(…)' pairs are real URL content (msdn's `…(VS.85).aspx`).
  * @param {string} original

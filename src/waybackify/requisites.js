@@ -31,7 +31,7 @@
 // URLs live overwhelmingly in attributes where `&amp;` spells `&`; (2) a
 // bare unbalanced `)` terminates the URL, because CSS `url(...)` refs are
 // common while unbalanced parens in real URLs are not — the exact tempered
-// rule enumerate.js applies corpus-wide (balanced pairs like msdn's
+// rule manifest.js#extractArchiveUrls applies to markdown (balanced pairs like msdn's
 // `(VS.85)` are kept). Both trade vanishing-rare URL shapes for the
 // overwhelmingly common contexts; the residual cases are recorded
 // trade-offs, not oversights.
@@ -45,7 +45,7 @@ const REF_RE = /(?:https?:\/\/web\.archive\.org)?\/web\/(\d{4,14})(im_|cs_|js_|o
 
 /**
  * Truncate at the first UNBALANCED ')' — the CommonMark-style paren rule
- * enumerate.js already applies to markdown link destinations, needed here
+ * manifest.js#extractArchiveUrls already applies to markdown link destinations, needed here
  * for refs inside CSS `url(...)` (style attributes / <style> blocks) where
  * a bare ')' closes the CSS function, while balanced '(...)' pairs are real
  * URL content (msdn's `...(VS.85).aspx` originals).

@@ -15,7 +15,7 @@ describe('getCapture (live CDX)', { skip }, () => {
   const wayback = new WaybackMachine({ timeout: 60000 });
 
   it('returns the exact capture with its archived statuscode', async () => {
-    // A capture the corpus actually references (words/0/004 ledger).
+    // A real archived capture with a recorded manifest entry upstream.
     const cap = await wayback.getCapture(
       'http://blogs.msdn.com:80/mharsh/archive/2008/03/05/slides-and-demos-from-my-mix-08-talk.aspx',
       '20081221144742'

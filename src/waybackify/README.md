@@ -213,25 +213,82 @@ with the wayback toolbar chrome stripped (`stripWaybackChrome` +
 never silently `good`; every verdict carries a short `evidence` snippet for
 human review.
 
-### Corpus audit runner (`bin/audit-corpus.js`)
+## Manifest / Universe / Ledger
 
-Checkpointed, resumable audit over every wayback URL the corpus references
-(inline `words/**/index.md` links + `wayback.json` ledgers — enumerated by
-`enumerate.js`, which converges with render/wayback's canonical enumerator
-when PR #255 merges):
+Three concepts, three modules — the whole model for maintaining archived
+links across a body of markdown, with no directory-layout conventions
+anywhere (file paths are identity):
 
-```sh
-# offline: enumeration counts only
-pnpm --filter waybackify run audit -- --enumerate-only
+- a **Manifest** (`manifest.js`) is one source file's `wayback.json` — a
+  standalone rewrite program;
+- a **Universe** (`universe.js`) is compile-time policy — global rewrites +
+  excludes, consulted only while GENERATING manifests, never at rewrite time;
+- the **Ledger** (`ledger.js`) is the COLLECTION — every manifest discovered
+  under a tree.
 
-# supervised network run (slow!); resumes from the JSONL checkpoint
-pnpm --filter waybackify run audit -- --limit 50 --verbose
+### Manifest schema v2
+
+```json
+{
+  "version": 2,
+  "rewrites": { "<url>": "<replacement-url>" },
+  "entries": {
+    "<url>": {
+      "wayback": "https://web.archive.org/web/<timestamp>/<url>",
+      "timestamp": "<YYYYMMDDHHMMSS>",
+      "checkedAt": "<ISO-8601>"
+    }
+  },
+  "exclude": ["<url>"]
+}
 ```
 
-Verdicts append to `.audit/checkpoint.jsonl` (gitignored — never committed,
-and the runner refuses to run under CI); the summary lists every
-`wayback404`/`suspect` with its posts, reason, and evidence. See
-`bin/audit-corpus.js` for all flags.
+- `entries` — archive resolutions: rewrite each url to its `wayback` replay
+  URL. Every `wayback` is non-null and parseable.
+- `rewrites` (optional) — unconditional url → url substitutions, baked from
+  the Universe subset whose URLs appear in THIS source.
+- `exclude` (optional) — urls deliberately left untouched: policy-live links
+  and confirmed-not-archived links alike. Replaces schema v1's
+  `wayback: null` convention outright.
+
+Readers (`readManifest`/`validateManifest`) accept versions **{1, 2}**: a v1
+file's `wayback: null` entries read as `exclude` (the legacy-exclude
+migration rule); any other version fails loud. `writeManifest` always emits
+canonical v2 (sorted keys, empty optional sections omitted).
+
+### Operations
+
+```js
+import { generate, apply, readManifest, writeManifest, sourceRefs } from 'waybackify/manifest.js';
+import { readUniverse, subset } from 'waybackify/universe.js';
+import { discover, flatten, against } from 'waybackify/ledger.js';
+
+// GENERATE: markdown + universe (+ seen) → manifest. Universe hits are
+// classified offline; previously seen urls are copied offline; only
+// never-seen urls cost an archive round-trip (CDX, injectable). The
+// returned `seen` — Manifest-shaped, read-write — carries every verdict
+// forward, so re-generation is idempotent (zero network).
+const { manifest, seen } = await generate(markdown, universe, previousSeen);
+
+// APPLY: source + manifest → published form. Precedence per url:
+// exclude → rewrites → entries → untouched + warn. Fenced code and link
+// TEXT are never rewritten; the url matching is scheme/slash/port-
+// insensitive (the importer-proven equation: index ≡ apply(readme, manifest)).
+const { content, warnings } = apply(markdown, manifest);
+
+// LEDGER: discovery under any tree, the union manifest (the seen-file
+// bootstrap), and the fetch-worklist join against a local capture cache
+// (unfetched / cached / interstitial / error, via the cache's own sidecar
+// reader).
+const ledger = discover(root);
+const union = flatten(ledger);
+const worklists = await against(ledger, cacheRoot);
+```
+
+`sourceRefs(file, { manifest })` enumerates one file's wayback references
+(inline markdown refs, optionally the sibling `wayback.json`'s entries),
+deduped and deterministically ordered — the per-file unit the CLI's
+enumeration surface wraps.
 
 ## Implementation Details
 

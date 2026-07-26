@@ -19,7 +19,10 @@ function window(near, months) {
  * HTTP goes through `impit` (browser impersonation) rather than a plain client
  * — the Internet Archive throttles/blocks naive bulk clients, and impit's
  * real-browser TLS/HTTP fingerprint sustains the throughput a corpus-wide
- * re-import needs.
+ * re-import needs. The fingerprint is FIREFOX, not chrome: as of impit 0.14.1
+ * archive.org's edge answers the chrome fingerprint with a hard 498 on every
+ * request (an nginx "404 Not Found" body) while the firefox fingerprint gets a
+ * clean 200. Override via `options.impit` if that flips again.
  *
  * Lookups use the CDX index (`/cdx/search/cdx`), not `/wayback/available`:
  * `/available` intermittently returns an empty result for URLs that ARE
@@ -30,7 +33,7 @@ class WaybackMachine {
   constructor(options = {}) {
     this.baseUrl = options.baseUrl || 'http://archive.org';
     this.maxAttempts = options.maxAttempts ?? 3;
-    this.impit = options.impit || new Impit({ browser: 'chrome', timeout: options.timeout ?? 20000 });
+    this.impit = options.impit || new Impit({ browser: 'firefox', timeout: options.timeout ?? 20000 });
     // Optional observer, called with the LITERAL request just before each
     // fetch: ({ method, url, attempt, maxAttempts }). Lets a caller log exactly
     // what is hitting the wire (e.g. the manifest-writing CLI surfaces it via

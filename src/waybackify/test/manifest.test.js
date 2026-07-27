@@ -311,7 +311,7 @@ describe('apply', () => {
   });
 
   it('the normalize equation: applying a v1-read manifest reproduces the rendered form', () => {
-    // index.md ≡ apply(README.md, wayback.json) — the importer's three-file
+    // post.md ≡ apply(README.md, wayback.json) — the importer's three-file
     // contract, expressed through the library. A null entry (legacy
     // not-archived) reads as exclude and leaves its link live, unwarned.
     const readme = [

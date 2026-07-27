@@ -20,8 +20,8 @@ import { parseWaybackUrl } from '../index.js';
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'backfill-e2e-'));
 const wb = (ts, orig) => `https://web.archive.org/web/${ts}/${orig}`;
 
-// 10 representative captures pulled from the live words/ corpus worklist —
-// spread across the domains + eras the blog actually links to. Two carry page
+// 10 representative captures pulled from a real backfill worklist — spread
+// across the domains + eras a blog archive actually links to. Two carry page
 // requisites (so closure fans out); one is archived-missing (404 → gone); one
 // is a transient hiccup (498 → deferred); the rest are plain pages.
 const SAMPLE = [

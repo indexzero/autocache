@@ -3,7 +3,7 @@
 `waybackify` — the human-operable, `xargs`-composable front door over the
 [`waybackify`](../waybackify) library.
 
-**Status: surface v2 pinned; all six commands implemented.**
+**Status: surface v2 pinned; all seven commands implemented.**
 The full command/option surface below is fixed (names, args, flags, help
 text, exit codes — snapshot-tested). Surface v2 speaks the settled
 vocabulary: a `wayback.json` is a **Manifest** (one source file's standalone
@@ -17,28 +17,39 @@ their meanings were inverted from these concepts.
 ```
 waybackify manifest <source.md> -u universe.json [-s seen.json] -o wayback.json [--offline]
 waybackify rewrite  <source.md> -m wayback.json -o <out.md>
-waybackify ledger   <dir> [--flatten] [--against <cache-root>]
+waybackify ledger   <dir> [--flatten] [--root <cache-root>]
 waybackify check    <wayback-url>
 waybackify search   <original-url> [--near <ts>] [--limit <n>]
-waybackify cache    <wayback-url> -o <root> [--no-requisites]
+waybackify cache    <wayback-url> --root <root> [--no-requisites]
+waybackify backfill <dir> --root <root> [--delay-ms N] [--abort-after N] [--max N] [--refresh] [--dry-run]
 ```
+
+The cache root is spelled `--root|-r` on every command that reads or writes one
+(`cache`, `backfill`, `ledger`). `-o/--output` is reserved for commands that
+emit a single file (`manifest`, `rewrite`). The old spellings — `cache -o` and
+`ledger --against` — still parse as deprecated aliases.
 
 | command | does | output |
 |---|---|---|
 | `manifest` | **Generate** the manifest for one markdown source: extract live links, bake the Universe subset (`-u`, policy), copy verdicts from the seen union (`-s`, **read-write**, Manifest-shaped — bootstrap it with `ledger --flatten`), resolve only never-seen urls against the archive. **Idempotent**: a rerun with the same seen file makes zero network calls and writes byte-identical output. `--offline` fails on urls the universe + seen cannot answer instead of querying | canonical manifest at `-o`; seen file extended in place; one JSON stats line (`{output, urls, fromUniverse, fromSeen, resolved, deferred}`) on stdout; unresolved urls → stderr + exit 1, rerun to resume |
 | `rewrite` | **Apply** a manifest to a markdown source (the library's `manifest.js#apply`): precedence `exclude → rewrites → entries → untouched + warn`; fenced code and link text never touched; already-archived links pass through | the published form at `-o`; a url with no verdict warns on stderr and exits 1 (written anyway, untouched — surfaced, never guessed) |
-| `ledger` | Survey the **collection**: every `wayback.json` under `<dir>`, file paths as identity. `--flatten` unions the ledger into ONE canonical manifest (the seen-file bootstrap); `--against <cache-root>` joins referenced captures against the cache's sidecars | default: JSONL `{file, entries, rewrites, exclude}` (counts); `--flatten`: one canonical manifest JSON; `--against`: JSONL `{state: unfetched\|cached\|interstitial\|error, key, waybackUrl, timestamp, originalUrl, files, status}` |
+| `ledger` | Survey the **collection**: every `wayback.json` under `<dir>`, file paths as identity. `--flatten` unions the ledger into ONE canonical manifest (the seen-file bootstrap); `--root <cache-root>` joins referenced captures against the cache's sidecars | default: JSONL `{file, entries, rewrites, exclude}` (counts); `--flatten`: one canonical manifest JSON; `--root`: JSONL `{state: unfetched\|cached\|interstitial\|error, key, waybackUrl, timestamp, originalUrl, files, status}` |
 | `check` | Full **wayback-404 verdict** for the exact capture: CDX `statuscode` + soft-404 content heuristics on the replay body — the corpus audit primitive | JSON verdict on stdout (`{verdict: good\|wayback404\|suspect, statuscode, reason, snippet}`); exit 0 = verified good, nonzero = bad/suspect |
 | `search` | CDX capture query (the library's `getSnapshot`/`getSnapshots` face) — for re-picking a better capture when `check` flags one bad. No date-anchoring cleverness: `--near` passes through, default is CDX's own ordering | JSONL: `{timestamp, statuscode, mimetype, waybackUrl}` per capture |
-| `cache` | Fetch the capture into a **local bucket image** at `<root>` — the wayback.charlie.dev mirror's population path. Syncing that dir to R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment | files written under the shared key scheme; summary line on stdout |
+| `cache` | Fetch ONE capture into a **local bucket image** at `<root>` — the wayback.charlie.dev mirror's population path. Syncing that dir to R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment | files written under the shared key scheme; summary line on stdout |
+| `backfill` | The **bulk, resumable** form of `cache`: drive `<root>` to a COMPLETE asset closure of every capture the ledger under `<dir>` references (page + its requisites). A durable worklist is enumerated once and reused; transient trouble DEFERS, connection failures ABORT, a 404 is recorded gone. Killable + resumable. See [docs/BACKFILL.md](docs/BACKFILL.md) | progress on stderr; one JSON summary line on stdout; exit 1 on abort |
 
 Composability is the design goal:
 
 ```sh
-# Populate a cache root with everything a ledger references but the cache lacks:
-waybackify ledger docs --against /var/cache/wayback \
+# Drive a cache root to full closure of everything a ledger references —
+# paced, resumable, self-limiting (the durable bulk form; re-run to converge):
+waybackify backfill docs --root /var/cache/wayback
+
+# …or one capture at a time, composed by hand (what backfill does in-process):
+waybackify ledger docs --root /var/cache/wayback \
   | jq -r 'select(.state == "unfetched") | .waybackUrl' \
-  | xargs -n1 waybackify cache -o /var/cache/wayback
+  | xargs -n1 -I{} waybackify cache {} --root /var/cache/wayback
 
 # Bootstrap a seen file from an existing corpus, then generate a new manifest offline-first:
 waybackify ledger docs --flatten > seen.json

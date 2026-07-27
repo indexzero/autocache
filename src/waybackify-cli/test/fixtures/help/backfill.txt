@@ -1,0 +1,33 @@
+waybackify backfill [flags] <dir>
+
+Fetch every capture a ledger references into a cache root
+
+Drive a cache root to a COMPLETE asset closure of every capture the
+ledger under <dir> references — each referenced page AND its
+requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache`;
+the population path behind series/run/bin/refetch.
+
+A durable worklist (never-fetched + not-yet-closed captures) is
+enumerated ONCE and reused across runs, so pacing and resume
+accumulate. Transient archive.org trouble DEFERS a capture (retried
+next run); a run of connection failures ABORTS (archive.org down);
+a 404 is recorded gone and never retried. Killable + resumable — the
+cache root is the done-truth; re-run to finish.
+
+Output: progress on stderr; one JSON summary line on stdout. Exit 0
+normal (deferrals expected — re-run to converge), 1 on abort
+(archive.org unreachable — the mirror is incomplete, re-run).
+
+Arguments:
+  <dir>               root to discover wayback.json manifests under
+
+Flags:
+  --root|-r <root>    cache root to populate + measure closure against — required
+  --delay-ms <n>      inter-request pacing between network fetches (default 1500)
+  --abort-after <n>   consecutive connection failures before aborting (default 5)
+  --max <n>           cap NETWORK attempts this run, then exit (default: no cap)
+  --refresh           rebuild the worklist from a fresh enumerate (default: reuse)
+  --dry-run           build/show the worklist; fetch nothing
+  --help|-h           Show help
+
+part of the wayback.charlie.dev mirror tooling

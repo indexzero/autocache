@@ -228,11 +228,12 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     ),
     arg('<dir>', 'root to discover wayback.json manifests under'),
     flag('--flatten', 'print the union manifest (canonical JSON) instead of rows'),
-    flag('--against <root>', 'classify referenced captures against this cache root'),
+    flag('--root|-r <root>', 'classify referenced captures against this cache root'),
+    flag('--against <root>', 'deprecated alias of --root|-r'),
     validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
     validate(
-      ({ flags }) => !(flags.flatten && flags.against),
-      '--flatten and --against are mutually exclusive'
+      ({ flags }) => !(flags.flatten && (flags.root || flags.against)),
+      '--flatten and --root are mutually exclusive'
     ),
     handlers.ledger ?? notImplemented('ledger')
   );
@@ -249,7 +250,8 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'stdout.'
     ),
     arg('<wayback-url>', 'full web.archive.org/web/<timestamp>/<original> replay URL'),
-    flag('--output|-o <root>', 'cache root directory (the local bucket image) — required'),
+    flag('--root|-r <root>', 'cache root directory (the local bucket image) — required'),
+    flag('--output|-o <root>', 'deprecated alias of --root|-r'),
     // Defined as `--no-requisites` so paparam registers flag `requisites`
     // defaulting to TRUE (requisites-by-default) — source-driven note 5.
     flag(
@@ -257,19 +259,51 @@ export function createCLI({ handlers = {}, onBail } = {}) {
       'store only the named capture; skip its im_/cs_/js_/oe_ page requisites'
     ),
     validate(({ args }) => Boolean(args.waybackUrl), 'missing required argument: <wayback-url>'),
-    validate(({ flags }) => Boolean(flags.output), 'missing required flag: --output|-o <root>'),
+    validate(({ flags }) => Boolean(flags.root || flags.output), 'missing required flag: --root|-r <root>'),
     handlers.cache ?? notImplemented('cache')
+  );
+
+  const backfill = command(
+    'backfill',
+    summary('Fetch every capture a ledger references into a cache root'),
+    description(
+      'Drive a cache root to a COMPLETE asset closure of every capture the\n' +
+        'ledger under <dir> references — each referenced page AND its\n' +
+        'requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache`;\n' +
+        'the population path behind series/run/bin/refetch.\n' +
+        '\n' +
+        'A durable worklist (never-fetched + not-yet-closed captures) is\n' +
+        'enumerated ONCE and reused across runs, so pacing and resume\n' +
+        'accumulate. Transient archive.org trouble DEFERS a capture (retried\n' +
+        'next run); a run of connection failures ABORTS (archive.org down);\n' +
+        'a 404 is recorded gone and never retried. Killable + resumable — the\n' +
+        'cache root is the done-truth; re-run to finish.\n' +
+        '\n' +
+        'Output: progress on stderr; one JSON summary line on stdout. Exit 0\n' +
+        'normal (deferrals expected — re-run to converge), 1 on abort\n' +
+        '(archive.org unreachable — the mirror is incomplete, re-run).'
+    ),
+    arg('<dir>', 'root to discover wayback.json manifests under'),
+    flag('--root|-r <root>', 'cache root to populate + measure closure against — required'),
+    flag('--delay-ms <n>', 'inter-request pacing between network fetches (default 1500)'),
+    flag('--abort-after <n>', 'consecutive connection failures before aborting (default 5)'),
+    flag('--max <n>', 'cap NETWORK attempts this run, then exit (default: no cap)'),
+    flag('--refresh', 'rebuild the worklist from a fresh enumerate (default: reuse)'),
+    flag('--dry-run', 'build/show the worklist; fetch nothing'),
+    validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    handlers.backfill ?? notImplemented('backfill')
   );
 
   const root = command(
     'waybackify',
-    summary('manifest / rewrite / ledger / check / search / cache over the spv/waybackify library'),
+    summary('manifest / rewrite / ledger / check / search / cache / backfill over the spv/waybackify library'),
     description(
       'Human-operable, xargs-composable front door over spv/waybackify:\n' +
         'generate a manifest for a source file, rewrite it to its published\n' +
         'form, survey the ledger of manifests under a tree, hand-check a\n' +
-        'capture, re-pick a better one, or populate the wayback.charlie.dev\n' +
-        'mirror.\n' +
+        'capture, re-pick a better one, populate the wayback.charlie.dev\n' +
+        'mirror one capture (cache) or a whole ledger (backfill).\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
         '2 usage error · 3 suspect verdict (check only).'
@@ -280,7 +314,8 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     ledger,
     check,
     search,
-    cache
+    cache,
+    backfill
   );
 
   // One bail handler at the root covers every subcommand (source-driven

@@ -28,7 +28,8 @@ export function cacheHandler(deps = {}) {
     const cacheCapture = deps.cacheCapture ?? (await import('waybackify/cache.js')).cacheCapture;
 
     const summary = await cacheCapture(args.waybackUrl, {
-      root: flags.output,
+      // --root|-r is canonical; --output|-o is the deprecated alias (cli.js).
+      root: flags.root ?? flags.output,
       // paparam registers `--no-requisites` under the name `requisites`,
       // default true (see src/cli.js source-driven note 5).
       requisites: flags.requisites,

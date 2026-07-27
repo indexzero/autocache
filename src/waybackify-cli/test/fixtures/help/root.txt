@@ -1,12 +1,12 @@
 waybackify [flags] [command]
 
-manifest / rewrite / ledger / check / search / cache over the spv/waybackify library
+manifest / rewrite / ledger / check / search / cache / backfill over the spv/waybackify library
 
 Human-operable, xargs-composable front door over spv/waybackify:
 generate a manifest for a source file, rewrite it to its published
 form, survey the ledger of manifests under a tree, hand-check a
-capture, re-pick a better one, or populate the wayback.charlie.dev
-mirror.
+capture, re-pick a better one, populate the wayback.charlie.dev
+mirror one capture (cache) or a whole ledger (backfill).
 
 Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·
 2 usage error · 3 suspect verdict (check only).
@@ -21,5 +21,6 @@ Commands:
   check       Full wayback-404 verdict for the exact capture
   search      CDX capture query — re-pick a better capture
   cache       Fetch the capture into a local bucket image
+  backfill    Fetch every capture a ledger references into a cache root
 
 part of the wayback.charlie.dev mirror tooling

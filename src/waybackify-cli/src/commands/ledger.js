@@ -58,9 +58,11 @@ export function ledgerHandler(deps = {}) {
       return;
     }
 
-    if (flags.against) {
+    // --root|-r is canonical; --against is the deprecated alias (cli.js).
+    const root = flags.root ?? flags.against;
+    if (root) {
       const against = deps.against ?? (await import('waybackify/ledger.js')).against;
-      const worklists = await against(discovered, flags.against);
+      const worklists = await against(discovered, root);
       const rows = [];
       for (const [state, items] of Object.entries(worklists)) {
         for (const item of items) rows.push({ state, ...item });

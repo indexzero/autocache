@@ -14,7 +14,8 @@ Arguments:
 
 Flags:
   --flatten          print the union manifest (canonical JSON) instead of rows
-  --against <root>   classify referenced captures against this cache root
+  --root|-r <root>   classify referenced captures against this cache root
+  --against <root>   deprecated alias of --root|-r
   --help|-h          Show help
 
 part of the wayback.charlie.dev mirror tooling

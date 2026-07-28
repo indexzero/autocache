@@ -45,6 +45,19 @@ describe('classifyFailure — defer-vs-abort fork', () => {
     assert.equal(classifyFailure({ error: 'read ECONNRESET' }), 'connfail');
     assert.equal(classifyFailure(new Error('weird')), 'transient');
   });
+
+  it('timeouts count as connfail (impit ConnectTimeout / "request timeout")', () => {
+    assert.equal(classifyFailure(new Error("ConnectTimeout('request timeout')")), 'connfail');
+    assert.equal(classifyFailure(new Error('request timeout')), 'connfail');
+    assert.equal(classifyFailure(new Error('read ETIMEDOUT')), 'connfail');
+  });
+
+  it('a 404 is terminal but an incidental longer number is NOT gone', () => {
+    assert.equal(classifyFailure(new Error('replay returned HTTP 404 — capture missing')), 'gone');
+    // regression: /HTTP 404\b/ must not fire on "HTTP 4040" and exile a live capture
+    assert.equal(classifyFailure(new Error('upstream said HTTP 4040 weirdness')), 'transient');
+    assert.equal(classifyFailure(new Error('HTTP 4041')), 'transient');
+  });
 });
 
 // A fake cacheCapture whose outcome is chosen per-url by a script map.

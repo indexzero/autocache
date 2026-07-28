@@ -7,9 +7,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test ./test/*.test.js",
-    "test:live": "WAYBACK_LIVE=1 node --test ./test/*.test.js",
-    "fsck": "node ./bin/fsck.js",
-    "remaster": "node ./bin/remaster.js"
+    "test:live": "WAYBACK_LIVE=1 node --test ./test/*.test.js"
   },
   "keywords": [
     "wayback",

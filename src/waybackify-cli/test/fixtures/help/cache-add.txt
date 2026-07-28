@@ -1,0 +1,21 @@
+waybackify cache add [flags] <wayback-url>
+
+Fetch one capture into a local bucket image
+
+Fetch one capture into a local bucket image at <root> — the
+wayback.charlie.dev mirror's population path. Syncing that dir to
+R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment.
+
+Output: files written under the shared key scheme; summary line on
+stdout.
+
+Arguments:
+  <wayback-url>        full web.archive.org/web/<timestamp>/<original> replay URL
+
+Flags:
+  --root|-r <root>     cache root directory (the local bucket image) — required
+  --output|-o <root>   deprecated alias of --root|-r
+  --no-requisites      store only the named capture; skip its im_/cs_/js_/oe_ page requisites
+  --help|-h            Show help
+
+part of the wayback.charlie.dev mirror tooling

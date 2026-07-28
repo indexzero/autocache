@@ -1,21 +1,26 @@
-waybackify cache [flags] <wayback-url>
+waybackify cache [flags] [command]
 
-Fetch the capture into a local bucket image
+Cache-store ops: add · fill · verify · remaster · sync
 
-Fetch the capture into a local bucket image at <root> — the
-wayback.charlie.dev mirror's population path. Syncing that dir to
-R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment.
+The cache-store command group — populate, verify, remaster, and
+project the wayback.charlie.dev mirror image:
 
-Output: files written under the shared key scheme; summary line on
-stdout.
+  add       fetch ONE capture (+ its requisites) into a cache root
+  fill      drive a whole ledger to full asset closure (bulk, resumable)
+  verify    check a cache root against its own sidecars (fsck)
+  remaster  build a standalone remastered root from a hermetic one
+  sync      emit the bucket-population batch (cap/ objects) for a root
 
-Arguments:
-  <wayback-url>        full web.archive.org/web/<timestamp>/<original> replay URL
+Run `waybackify cache <verb> --help` for a verb's full surface.
 
 Flags:
-  --root|-r <root>     cache root directory (the local bucket image) — required
-  --output|-o <root>   deprecated alias of --root|-r
-  --no-requisites      store only the named capture; skip its im_/cs_/js_/oe_ page requisites
-  --help|-h            Show help
+  --help|-h   Show help
+
+Commands:
+  add         Fetch one capture into a local bucket image
+  fill        Fetch every capture a ledger references into a cache root
+  verify      Verify a cache root against its own sidecars
+  remaster    Remaster a hermetic cache root into a standalone root
+  sync        Emit the bucket-population batch for a cache root
 
 part of the wayback.charlie.dev mirror tooling

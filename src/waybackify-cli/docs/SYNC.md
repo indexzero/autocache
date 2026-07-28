@@ -28,7 +28,7 @@ One population is **two passes, treated as ONE operation** — running only one
 leaves the `cap/` and `meta/` layers drift-inconsistent (a bodied object with
 no sidecar, or vice versa):
 
-1. **`cap/`** — [`emit-bucket-batch`](../../waybackify/bin/emit-bucket-batch.js)
+1. **`cap/`** — [`cache sync`](../src/commands/cache-sync.js)
    lists `meta/` and emits `s5cmd run` `cp` lines (bodies + zero-byte bodiless
    objects), each carrying native `Content-Type` + `x-amz-meta-status`. Piped
    to `s5cmd run`.
@@ -39,13 +39,13 @@ The emitter walks **`meta/` only, never `cap/`**, so orphan `cap/` files (a
 crash between the body and sidecar renames) are excluded from the batch by
 construction ([CACHE.md](./CACHE.md#write--atomicity-protocol)).
 
-`emit-bucket-batch` never mutates anything and never talks to the network — it
+`cache sync` never mutates anything and never talks to the network — it
 prints command lines. Inspect them first with `--dry-run` (writes the batch +
 a summary to **stderr**, nothing to stdout, so an accidental `| s5cmd run` is a
 no-op):
 
 ```sh
-node spv/waybackify/bin/emit-bucket-batch.js \
+waybackify cache sync \
   --root <cache-root> --bucket <bucket> --empty-file "$EMPTY" --dry-run
 ```
 
@@ -65,7 +65,7 @@ node spv/waybackify/bin/emit-bucket-batch.js \
   equal the region token in the Fastly endpoint host (below).
 - **The empty-file for bodiless entries** — a single zero-byte scratch file
   created **outside the cache root** (the root contract is: only the writer
-  puts files under it). `emit-bucket-batch` emits `cp <empty-file> …` lines for
+  puts files under it). `cache sync` emits `cp <empty-file> …` lines for
   every bodiless entry (`status` empty/redirect/error — 1,085 as of
   2026-07-13: 17 empty + 1,068 error, 0 redirect), so they become zero-byte
   objects carrying status metadata (known-bad ≠ miss):
@@ -103,7 +103,7 @@ cp --content-type 'text/html; charset=utf-8' --metadata 'status=body' <root>/cap
 Pipe the batch straight into `s5cmd run` (`--endpoint-url` per target below):
 
 ```sh
-node spv/waybackify/bin/emit-bucket-batch.js \
+waybackify cache sync \
   --root <cache-root> --bucket <bucket> --empty-file "$EMPTY" \
   | s5cmd --endpoint-url <endpoint> run
 ```
@@ -137,7 +137,7 @@ export AWS_REGION=auto           # R2 ignores the value but SigV4 still needs on
 R2=https://<account-id>.r2.cloudflarestorage.com
 
 # pass 1
-node spv/waybackify/bin/emit-bucket-batch.js \
+waybackify cache sync \
   --root <cache-root> --bucket <bucket> --empty-file "$EMPTY" \
   | s5cmd --endpoint-url "$R2" run
 
@@ -180,7 +180,7 @@ export AWS_REGION=us-east-1       # MUST match the region token in the endpoint 
 FASTLY=https://us-east-1.object.fastlystorage.app
 
 # pass 1 — cap Fastly's ~100 req/s per-bucket rate with --numworkers if needed
-node spv/waybackify/bin/emit-bucket-batch.js \
+waybackify cache sync \
   --root <cache-root> --bucket <bucket> --empty-file "$EMPTY" \
   | s5cmd --endpoint-url "$FASTLY" --numworkers 32 run
 

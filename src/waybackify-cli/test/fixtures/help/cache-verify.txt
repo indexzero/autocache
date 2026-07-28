@@ -1,0 +1,22 @@
+waybackify cache verify [flags]
+
+Verify a cache root against its own sidecars
+
+Verify a populated cache root against its own sidecars: re-hash every
+body, re-derive every path, and flag the shapes a crash, a bit-flip,
+or a short fetch leaves behind — including a page whose requisite
+closure is incomplete (a referenced im_/cs_/js_/oe_ capture with no
+sidecar in this store). Report-only by default.
+
+Output: a per-category report on stdout (--json for the raw report).
+Exit 0 when the store is clean (or made clean by --fix), 1 when any
+discrepancy remains.
+
+Flags:
+  --root|-r <root>   cache root to verify (contains cap/ meta/ tmp/) — required
+  --fix              reap orphan cap/ files + stale tmp/ scratch (opt-in); never touches corruption or a short closure
+  --json             emit the raw report as JSON (for tooling/checkpoints)
+  --quiet            suppress the per-category "ok" lines
+  --help|-h          Show help
+
+part of the wayback.charlie.dev mirror tooling

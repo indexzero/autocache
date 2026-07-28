@@ -1,10 +1,10 @@
 // fsck tests — offline, tmpdir roots built through the REAL commit path so
 // "clean" means "what cache.js actually writes verifies", then each defect is
-// injected surgically (one category at a time) to pin isolation. Plus a bin
-// smoke test for exit codes and a pin over the committed corpus fixture.
+// injected surgically (one category at a time) to pin isolation. Plus a pin
+// over the committed corpus fixture. (The bin-level exit-code coverage now
+// lives in the CLI's `cache verify` command tests — the library ships no bin.)
 import { describe, it, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -15,7 +15,6 @@ import { commitEntry, entryPaths } from '../cache.js';
 import { fsck, totalFindings, unresolvedFindings, CATEGORIES } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(HERE, '..', 'bin', 'fsck.js');
 const FIXTURE_ROOT = path.resolve(HERE, '../../../render/wayback/test/fixtures/cache-root');
 const WRAPPER = fs.readFileSync(path.join(HERE, 'fixtures/interstitial/wrapper-stub.html'), 'utf8');
 
@@ -236,38 +235,98 @@ describe('fsck — root contract (foreign entries)', () => {
     assert.ok(fs.existsSync(path.join(root, '.runs')), 'operational data is never swept by fsck');
     assert.equal(unresolvedFindings(report), 1, 'foreign entry keeps the store dirty');
   });
+
+  it('does NOT flag .refetch/ — it is `cache fill`\'s sanctioned durable state', async () => {
+    // Regression: `cache fill` writes <root>/.refetch/{worklist,gone}.jsonl, and
+    // `cache verify` (fsck) must treat it as a sibling, not a foreign intrusion —
+    // else fill→verify on one root would report unclean (exit 1) forever.
+    const root = await mkroot();
+    await commitBody(root, '2011/http://x.example/');
+    await fsp.mkdir(path.join(root, '.refetch'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.refetch', 'worklist.jsonl'), '{"waybackUrl":"https://web.archive.org/web/2011/http://x.example/"}\n');
+    await fsp.writeFile(path.join(root, '.refetch', 'gone.jsonl'), '');
+
+    const report = await fsck(root);
+    assert.equal(report.findings.foreignRoot.length, 0, '.refetch/ is not foreign');
+    assert.equal(unresolvedFindings(report), 0, 'a fill-populated root verifies clean');
+  });
+
+  it('does NOT flag remaster.build.json — it is `cache remaster`\'s sanctioned build record', async () => {
+    // Regression: `cache remaster` writes remaster.build.json at the remastered
+    // root; `cache verify` on that root must not report it foreign (exit 1).
+    const root = await mkroot();
+    await commitBody(root, '2011/http://x.example/');
+    await fsp.writeFile(path.join(root, 'remaster.build.json'), '{"schema":1}');
+
+    const report = await fsck(root);
+    assert.equal(report.findings.foreignRoot.length, 0, 'remaster.build.json is not foreign');
+    assert.equal(unresolvedFindings(report), 0, 'a remastered root verifies clean');
+  });
 });
 
-describe('fsck bin — exit codes + summary', () => {
-  const run = (...args) => spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8' });
-
-  it('exits 0 and prints "clean" on a clean root', async () => {
-    const root = await mkroot();
-    await commitBody(root, '2011/http://a.example/');
-    const r = run('--root', root);
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /clean/);
+describe('fsck — incomplete requisite closure (store-relative, report-only)', () => {
+  let root;
+  beforeEach(async () => {
+    root = await mkroot();
   });
 
-  it('exits 1 with findings on a dirty root; --json is machine-readable', async () => {
-    const root = await mkroot();
-    const { body } = await commitBody(root, '2011/http://x.example/');
-    await fsp.writeFile(body, 'TAMPERED');
+  /** Commit a body doc that names `children` as its page requisites. */
+  async function commitDocWithRequisites(key, children) {
+    await commitEntry(root, {
+      key,
+      status: 'body',
+      contentType: 'text/html',
+      requisites: children,
+      body: new TextEncoder().encode(`doc-for-${key}`)
+    });
+    return entryPaths(root, key);
+  }
 
-    const human = run('--root', root);
-    assert.equal(human.status, 1);
-    assert.match(human.stdout, /FAIL/);
+  it('flags a body doc whose requisite child sidecar is absent from the store', async () => {
+    // The doc names two requisites; neither is committed → closure is short.
+    await commitDocWithRequisites('2011/http://x.example/', [
+      '2011/http://x.example/im_/logo.png',
+      '2011/http://x.example/cs_/screen.css'
+    ]);
 
-    const json = run('--root', root, '--json');
-    assert.equal(json.status, 1);
-    const report = JSON.parse(json.stdout);
-    assert.equal(report.findings.hashMismatch.length, 1);
+    const report = await fsck(root);
+    only(report, 'incompleteClosure');
+    assert.equal(report.findings.incompleteClosure.length, 2, 'one finding per missing requisite');
+    const children = report.findings.incompleteClosure.map(f => f.child).sort();
+    assert.deepEqual(children, ['2011/http://x.example/cs_/screen.css', '2011/http://x.example/im_/logo.png']);
+    // The category severity is 'incomplete' and it keeps the store dirty.
+    assert.equal(CATEGORIES.find(c => c.key === 'incompleteClosure').severity, 'incomplete');
+    assert.equal(unresolvedFindings(report), 2);
   });
 
-  it('exits 2 on a usage error (no --root)', () => {
-    const r = run();
-    assert.equal(r.status, 2);
-    assert.match(r.stderr, /--root/);
+  it('does NOT flag a doc whose requisites are all present in the store', async () => {
+    // Commit the two children first, then the doc that references them.
+    await commitBody(root, '2011/http://x.example/im_/logo.png');
+    await commitBody(root, '2011/http://x.example/cs_/screen.css');
+    await commitDocWithRequisites('2011/http://x.example/', [
+      '2011/http://x.example/im_/logo.png',
+      '2011/http://x.example/cs_/screen.css'
+    ]);
+
+    only(await fsck(root)); // clean: the closure is satisfied
+  });
+
+  it('closure is order-independent — a requisite filed under any shard counts', async () => {
+    // Commit the doc BEFORE its child; the walk order must not matter.
+    await commitDocWithRequisites('2011/http://doc.example/', ['2011/http://doc.example/asset.js']);
+    only(await fsck(root), 'incompleteClosure');
+    await commitBody(root, '2011/http://doc.example/asset.js');
+    only(await fsck(root)); // now satisfied regardless of shard placement
+  });
+
+  it('--fix NEVER touches a short closure (report-only; nothing reaped)', async () => {
+    const { body, meta } = await commitDocWithRequisites('2011/http://x.example/', ['2011/http://x.example/im_/gone.png']);
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'incompleteClosure');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'a short closure is filled by fetching, never by reaping');
+    assert.ok(fs.existsSync(body) && fs.existsSync(meta), 'the doc is left in place');
+    assert.equal(unresolvedFindings(report), 1, 'closure gap keeps the store dirty through --fix');
   });
 });
 

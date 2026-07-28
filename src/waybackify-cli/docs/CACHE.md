@@ -1,7 +1,7 @@
 # The cache root — on-disk data structure
 
-Living documentation for the directory `waybackify cache <wayback-url> -o <root>`
-writes. This root is not a scratch cache: it is the **local mirror image
+Living documentation for the directory `waybackify cache add <wayback-url> --root <root>`
+(and its bulk sibling `waybackify cache fill`) writes. This root is not a scratch cache: it is the **local mirror image
 that IS the deploy artifact** for wayback.charlie.dev — syncing it to
 S3-shaped Object Storage (Cloudflare R2, Fastly Object Storage) is deployment,
 and the mirror server reads it directly.
@@ -374,12 +374,12 @@ everything you see is `cap/` + `meta/` + `tmp/`.
 `fsck` is the verify-on-read command the design debate deferred (see the
 Verification dissent below): a store without a verify pass rots silently,
 because `contentHash` recorded at write only pays off when something later
-re-checks it. Implementation:
-[`spv/waybackify/fsck.js`](../../waybackify/fsck.js) (library) +
-[`spv/waybackify/bin/fsck.js`](../../waybackify/bin/fsck.js) (thin CLI).
+re-checks it. It is exposed as **`waybackify cache verify`** (handler:
+[`spv/waybackify-cli/src/commands/cache-verify.js`](../src/commands/cache-verify.js);
+engine: [`spv/waybackify/fsck.js`](../../waybackify/fsck.js)).
 
 ```
-node spv/waybackify/bin/fsck.js --root <store> [--fix] [--json] [--quiet]
+waybackify cache verify --root <store> [--fix] [--json] [--quiet]
 ```
 
 It walks `meta/` (the authority) and `cap/`, deriving paths exactly as
@@ -391,6 +391,7 @@ discrepancy:
 | `hashMismatch` | corruption | `status: "body"` whose `contentHash` ≠ the SRI of the `cap/` bytes — the one failure `fsync` cannot catch (it persists *what* was written, not *that the right bytes* were). |
 | `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
 | `missingBody` | corruption | `status: "body"` with no `cap/` file — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
+| `incompleteClosure` | incomplete | a `status: "body"` doc that references a page requisite (`im_`/`cs_`/`js_`/`oe_` captureKey in its `requisites[]`) whose own sidecar is absent from this store. Store-relative (the doc's own edge list; no ledger, no network). **Report only** — a short closure is filled by re-running `cache add`/`cache fill`, never by reaping — but it keeps the store dirty (nonzero exit) until complete. |
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing). |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
 | `schemaVersion` | advisory | a sidecar whose `v` is outside the supported set `{1, 2}` — a migration flag. (A legacy `v: 1` sidecar is supported and does NOT trip this.) |

@@ -17,7 +17,7 @@
 // ordering. No other query features.
 //
 // The library is imported lazily and by workspace-relative path (mirrors
-// commands/cache.js) so merely loading the CLI surface never constructs a
+// commands/cache-add.js) so merely loading the CLI surface never constructs a
 // client.
 
 /**

@@ -1,0 +1,21 @@
+waybackify cache sync [flags]
+
+Emit the bucket-population batch for a cache root
+
+Walk a cache root and emit one `s5cmd run` cp line per entry — the
+cap/ half of projecting the store onto an R2 / Fastly bucket, ready
+to pipe: `waybackify cache sync … | s5cmd --endpoint-url <ep> run`.
+Never mutates anything, never talks to the network.
+
+Output: the batch lines on stdout, a summary on stderr. --dry-run
+writes the batch to stderr instead, so an accidental `| s5cmd run`
+is a no-op.
+
+Flags:
+  --root|-r <root>      cache root (the archive of record) — required
+  --bucket <name>       target bucket ('name' or 's3://name[/prefix]') — required
+  --empty-file <path>   zero-byte scratch file for bodiless entries (create it OUTSIDE the root)
+  --dry-run             write the batch to stderr; emit NOTHING to stdout
+  --help|-h             Show help
+
+part of the wayback.charlie.dev mirror tooling

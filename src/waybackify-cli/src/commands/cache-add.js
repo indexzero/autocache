@@ -1,4 +1,4 @@
-// `waybackify cache` handler — thin wiring over the library, per the
+// `waybackify cache add` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing implementation (layout, write protocol,
 // resume, requisites) is spv/waybackify/cache.js; this file translates the
 // parsed argv payload into a cacheCapture() call, streams progress to
@@ -13,7 +13,7 @@
 // Cache-root data structure: docs/CACHE.md. Consumer contract: docs/SERVE.md.
 
 /**
- * Build the cache handler. Dependency-injectable for tests; the bin wires
+ * Build the `cache add` handler. Dependency-injectable for tests; the bin wires
  * the default.
  *
  * @param {Object} [deps]
@@ -22,7 +22,7 @@
  * @param {Function} [deps.error] - stderr line sink (progress + failures)
  * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
  */
-export function cacheHandler(deps = {}) {
+export function cacheAddHandler(deps = {}) {
   return async ({ args, flags }) => {
     const { log = console.log, error = console.error } = deps;
     const cacheCapture = deps.cacheCapture ?? (await import('waybackify/cache.js')).cacheCapture;
@@ -56,7 +56,7 @@ export function cacheHandler(deps = {}) {
       for (const f of summary.failures) error(`failed: ${f.key}: ${f.error}`);
       // Thrown runner errors route through the root bail handler → exit 1
       // (domain failure — the mirror image is incomplete; rerun to resume).
-      throw new Error(`cache incomplete: ${summary.failures.length} requisite(s) failed — rerun to resume`);
+      throw new Error(`cache add incomplete: ${summary.failures.length} requisite(s) failed — rerun to resume`);
     }
   };
 }

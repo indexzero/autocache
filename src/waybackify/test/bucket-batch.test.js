@@ -11,14 +11,13 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { commitEntry } from '../cache.js';
 import { capturePath, metaPath } from '../key.js';
 import { emitBucketBatch, emitLine, shellQuote } from '../bucket-batch.js';
 
-const execFileP = promisify(execFile);
-const BIN = fileURLToPath(new URL('../bin/emit-bucket-batch.js', import.meta.url));
+// The stdout/stderr + --dry-run behavior formerly smoke-tested through the
+// library bin now lives in the CLI's `cache sync` command tests — the library
+// ships no bin.
 const FIXTURE_ROOT = fileURLToPath(new URL('../../../render/wayback/test/fixtures/cache-root', import.meta.url));
 
 async function mkRoot() {
@@ -212,25 +211,5 @@ describe('emitBucketBatch over the committed fixture', () => {
       lines.some(l => l.includes('cap/77/77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac')),
       lines.join('\n')
     );
-  });
-});
-
-describe('emit-bucket-batch bin', () => {
-  it('writes lines to stdout by default and NOTHING to stdout under --dry-run', async () => {
-    const root = await mkRoot();
-    await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('x') });
-
-    const run = await execFileP(process.execPath, [BIN, '--root', root, '--bucket', 'b']);
-    assert.match(run.stdout, /^cp --content-type text\/html --metadata status=body /);
-    assert.match(run.stderr, /1 objects \(1 bodied, 0 bodiless\)/);
-
-    const dry = await execFileP(process.execPath, [BIN, '--root', root, '--bucket', 'b', '--dry-run']);
-    assert.equal(dry.stdout, '');
-    assert.match(dry.stderr, /cp --content-type text\/html/);
-    assert.match(dry.stderr, /dry-run, nothing written to stdout/);
-  });
-
-  it('exits non-zero when a required option is missing', async () => {
-    await assert.rejects(execFileP(process.execPath, [BIN, '--bucket', 'b']), /is required/);
   });
 });

@@ -1,11 +1,11 @@
-waybackify backfill [flags] <dir>
+waybackify cache fill [flags] <dir>
 
 Fetch every capture a ledger references into a cache root
 
 Drive a cache root to a COMPLETE asset closure of every capture the
 ledger under <dir> references — each referenced page AND its
-requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache`;
-the population path behind series/run/bin/refetch.
+requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache add` —
+the whole-corpus population path (wrap it in a thin repo shim).
 
 A durable worklist (never-fetched + not-yet-closed captures) is
 enumerated ONCE and reused across runs, so pacing and resume
@@ -23,9 +23,9 @@ Arguments:
 
 Flags:
   --root|-r <root>    cache root to populate + measure closure against — required
-  --delay-ms <n>      inter-request pacing between network fetches (default 1500)
+  --delay-ms <n>      pacing between captures — a page + its requisites fetch together, browser-style (default 1500)
   --abort-after <n>   consecutive connection failures before aborting (default 5)
-  --max <n>           cap NETWORK attempts this run, then exit (default: no cap)
+  --max <n>           cap captures fetched this run, then exit (default: no cap)
   --refresh           rebuild the worklist from a fresh enumerate (default: reuse)
   --dry-run           build/show the worklist; fetch nothing
   --help|-h           Show help

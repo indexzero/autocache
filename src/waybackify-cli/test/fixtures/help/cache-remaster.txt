@@ -1,0 +1,22 @@
+waybackify cache remaster [flags] <hermetic-root> <remastered-root>
+
+Remaster a hermetic cache root into a standalone root
+
+Remaster a hermetic cache root into a standalone remastered root —
+chrome stripped, wayback references localized to /web/<ts><flag>/<orig>,
+sidecars carried over, a content-addressed build record written at the
+root. Deterministic: the same hermetic tree yields a byte-identical
+remastered tree.
+
+Output: a summary line on stdout (--json for the run record). The
+remastered root drops straight under a serve --root.
+
+Arguments:
+  <hermetic-root>     sealed cache root to read (contains cap/ meta/)
+  <remastered-root>   output root to write (created; supply a fresh dir)
+
+Flags:
+  --json              emit the run summary as JSON
+  --help|-h           Show help
+
+part of the wayback.charlie.dev mirror tooling

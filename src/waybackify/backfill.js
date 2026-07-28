@@ -1,7 +1,7 @@
 // backfill — drive a cache root to a COMPLETE asset closure of every capture a
 // ledger references: each referenced page AND its requisites (images/CSS/JS),
 // not just the HTML. The generic, resumable, self-limiting bulk-fetch engine
-// behind `waybackify backfill` and the series/run/bin/refetch shim.
+// behind `waybackify cache fill` (and any repo's thin shim over it).
 //
 // Modeled on the retired series/waybackify-words cron so the byte-download pass
 // is as polite + convergent as that resolve pass was:
@@ -12,7 +12,8 @@
 //     `cached` pages (whose ledger state only means the DOCUMENT sidecar exists
 //     — the asset closure may still be short) both go on the list. Reused across
 //     runs (no re-enumerate) so pacing + resume accumulate; `refresh` rebuilds.
-//   • GENTLE — a real inter-request delay paces network fetches; fully-closed
+//   • GENTLE — a real delay paces successive CAPTURES (a page + its requisites
+//     are fetched together, browser-style, within one cacheCapture); fully-closed
 //     captures skip for free (cacheCapture reads sidecars and fetches only the
 //     missing requisites — no network when complete), never spending the delay.
 //   • CONVERGENT — a transient reply (498/429/5xx/timeout) DEFERS the capture
@@ -26,7 +27,7 @@
 //     caps a single run.
 //
 // Vocabulary shim: the durable dir is `.refetch/` (not `.backfill/`) so an
-// in-progress run started under the old series/run/bin/refetch driver keeps its
+// in-progress run started under an earlier `refetch`-style driver keeps its
 // worklist + gone ledger — the bytes on disk are the contract, not the name.
 
 import fs from 'node:fs';
@@ -79,8 +80,13 @@ export function classifyFailure(err) {
   const msg = typeof err === 'string'
     ? err
     : `${err?.message ?? ''} ${err?.error ?? ''} ${err?.cause?.message ?? ''} ${err?.cause?.code ?? ''}`;
-  if (/HTTP 404/.test(msg)) return 'gone';
-  if (/ECONNREFUSED|ECONNRESET|ConnectionRefused|tcp connect error|connect error|Failed to connect|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|timed ?out|dns error/i.test(msg)) {
+  // \b so a genuine 404 is terminal but "HTTP 4040" (an incidental longer
+  // number) is not mistaken for archive-missing and permanently exiled to gone.
+  if (/HTTP 404\b/.test(msg)) return 'gone';
+  // Connection-level failures → count toward the abort streak. `timeout` (with
+  // /i) also catches impit's ConnectTimeout('request timeout') so a timeout
+  // storm aborts instead of resetting the streak as a "transient".
+  if (/ECONNREFUSED|ECONNRESET|ConnectionRefused|tcp connect error|connect error|Failed to connect|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|timed ?out|timeout|dns error/i.test(msg)) {
     return 'connfail';
   }
   return 'transient'; // "transient archive.org trouble" (non-200) + unknowns → safe to defer
@@ -106,7 +112,8 @@ const refetchDir = root => path.join(root, '.refetch');
  * @param {Object} opts
  * @param {string} opts.ledgerDir - tree to discover wayback.json manifests under
  * @param {string} opts.root - cache root to populate + measure closure against
- * @param {number} [opts.delayMs=1500] - inter-request pacing (network fetches)
+ * @param {number} [opts.delayMs=1500] - pacing between captures (a page + its
+ *   requisites fetch together within one cacheCapture; the delay is per-capture)
  * @param {number} [opts.abortAfter=5] - consecutive connection failures → abort
  * @param {number} [opts.max=Infinity] - cap NETWORK attempts this run
  * @param {boolean} [opts.refresh=false] - rebuild the worklist from a fresh enumerate
@@ -147,7 +154,14 @@ export async function backfill(opts = {}) {
   if (refresh || !fs.existsSync(worklistPath)) {
     urls = selectWorklist(await against(discover(ledgerDir), root));
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(worklistPath, urls.map(u => `${JSON.stringify({ waybackUrl: u })}\n`).join(''));
+    // Atomic write: a kill mid-write must not leave a TRUNCATED worklist that a
+    // later run silently trusts (skipping the lost captures forever without a
+    // re-enumerate). Write to a temp file, then rename into place — the reader
+    // sees either the old complete file or the new complete file, never a
+    // partial one.
+    const tmp = `${worklistPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, urls.map(u => `${JSON.stringify({ waybackUrl: u })}\n`).join(''));
+    fs.renameSync(tmp, worklistPath);
     built = true;
   } else {
     urls = readUrls(worklistPath);
@@ -171,7 +185,7 @@ export async function backfill(opts = {}) {
   let connStreak = 0;
   let aborted = false;
 
-  for (const url of pending) {
+  for (const [idx, url] of pending.entries()) {
     if (stats.attempted >= max) {
       onProgress({ type: 'max', max });
       break;
@@ -182,8 +196,15 @@ export async function backfill(opts = {}) {
       const summary = await cacheCapture(url, { root, wayback, fetch: deps.fetch });
       const failures = summary.failures ?? [];
       if (failures.length > 0) {
-        // Doc landed but requisites failed — incomplete, retry next run.
-        outcome = failures.some(f => classifyFailure(f) === 'connfail') ? 'connfail' : 'deferred';
+        // Requisites failed. If ANYTHING fetched this round the server was
+        // reachable, so a requisite-level connection failure is NOT an outage:
+        // defer (retry the rest next run) and let the success reset the abort
+        // streak. Only a round that fetched NOTHING and hit a connection
+        // failure counts toward abort — the "archive.org is down" signal.
+        outcome =
+          summary.fetched === 0 && failures.some(f => classifyFailure(f) === 'connfail')
+            ? 'connfail'
+            : 'deferred';
       } else if (summary.fetched > 0) {
         outcome = 'fetched';
       } else {
@@ -209,7 +230,7 @@ export async function backfill(opts = {}) {
       onProgress({ type: 'connfail', url, streak: connStreak, abortAfter });
       if (connStreak >= abortAfter) {
         aborted = true;
-        onProgress({ type: 'abort', streak: connStreak, pending: pending.length - stats.attempted });
+        onProgress({ type: 'abort', streak: connStreak, pending: pending.length - (idx + 1) });
         break;
       }
     } else {

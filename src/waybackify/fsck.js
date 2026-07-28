@@ -7,8 +7,9 @@
 // tool the design debate deferred ("a store without a verify command rots
 // silently" — the CACHE.md Verification dissent).
 //
-// LIBRARY-FIRST (thin-CLI rule): all logic lives here; bin/fsck.js is an
-// arg-parsing wrapper. The layout knowledge is a deliberate LOCAL copy of
+// LIBRARY-FIRST (thin-CLI rule): all logic lives here; the CLI's
+// `cache verify` handler (spv/waybackify-cli/src/commands/cache-verify.js) is
+// an arg-parsing + report-printing wrapper. The layout knowledge is a deliberate LOCAL copy of
 // cache.js's derivation (walk meta/, hash = basename minus .json, aa =
 // hash[0:2], body at cap/<aa>/<hash>) so a later rebase onto shared
 // capturePath/metaPath helpers is a cheap swap, not a rewrite.
@@ -24,6 +25,16 @@
 //   - missingBody   status 'body' with no cap/ file (incomplete entry: the
 //                   body rename was lost, or a body was deleted out from
 //                   under a complete sidecar)
+//   - incompleteClosure  a status 'body' doc that lists a page requisite
+//                   (im_/cs_/js_/oe_ captureKey in its sidecar.requisites[])
+//                   whose own sidecar is absent from THIS store. Store-relative
+//                   — the check reads the doc's own edge list, no ledger and no
+//                   network. It is the reason this pass exists: a mirror can be
+//                   free of corruption yet serve a page whose asset closure is
+//                   short. REPORT ONLY (--fix never touches it — closure is
+//                   filled by re-running `cache add`/`cache fill`, not by
+//                   deleting anything), but it DOES keep the store dirty (exit
+//                   nonzero) until the closure is complete.
 //   - interstitialAsBody  a status 'body' entry whose stored bytes are a
 //                   wayback interstitial (#363: a wrapper stub, a redirect
 //                   interstitial, or a .pdf/.txt served as text/html) — a
@@ -43,7 +54,9 @@
 // (neither is reachable by any reader: an orphan has no completion token, a
 // tmp file was never renamed into place). It NEVER touches a valid entry and
 // REFUSES to "fix" a hashMismatch/keyMismatch/missingBody/malformed finding:
-// those are corruption to investigate, not garbage to sweep.
+// those are corruption to investigate, not garbage to sweep. An
+// incompleteClosure finding is likewise never touched — a short closure is
+// filled by fetching the missing requisite, never by deleting.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -56,13 +69,14 @@ import { detectInterstitial } from './interstitial.js';
 /**
  * Finding categories, in report order. `severity` drives both the printed
  * grouping and --fix: only `reapable` classes are ever deleted.
- * @type {ReadonlyArray<{ key: string, label: string, severity: 'corruption'|'advisory'|'reapable' }>}
+ * @type {ReadonlyArray<{ key: string, label: string, severity: 'corruption'|'incomplete'|'advisory'|'reapable' }>}
  */
 export const CATEGORIES = [
   { key: 'malformed', label: 'malformed sidecar (will not parse)', severity: 'corruption' },
   { key: 'hashMismatch', label: 'contentHash != stored body bytes', severity: 'corruption' },
   { key: 'keyMismatch', label: 'sidecar filed under the wrong hash', severity: 'corruption' },
   { key: 'missingBody', label: "status 'body' with no cap/ file (incomplete)", severity: 'corruption' },
+  { key: 'incompleteClosure', label: "status 'body' requisite whose sidecar is absent (closure short)", severity: 'incomplete' },
   { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial (#363)", severity: 'advisory' },
   { key: 'schemaVersion', label: 'sidecar schema version outside the supported set', severity: 'advisory' },
   { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/', severity: 'advisory' },
@@ -135,10 +149,19 @@ export async function fsck(root, options = {}) {
   const findings = Object.fromEntries(CATEGORIES.map(c => [c.key, []]));
 
   // ---- foreign root entries -------------------------------------------------
-  // The root contract (CACHE.md Layout) is cap/ + meta/ + tmp/ and nothing
-  // else — anything else is an operational artifact living where a rebuildable
-  // projection should be pure store.
-  const allowed = new Set(['cap', 'meta', 'tmp']);
+  // The root contract (CACHE.md Layout) is cap/ + meta/ + tmp/ for the store
+  // itself — anything else is an operational artifact living where a
+  // rebuildable projection should be pure store. Two sibling-command state
+  // files are sanctioned exceptions, written INTO the root by design:
+  //   .refetch/            `cache fill`'s durable worklist + gone ledger
+  //                        (backfill.js) — a resumable bulk fetch's memory.
+  //   remaster.build.json  `cache remaster`'s build record (remaster.js
+  //                        BUILD_NAME) at a remastered root.
+  // fsck must not flag its own sibling commands' state as foreign — else
+  // `cache fill`/`cache remaster` then `cache verify` on that root would report
+  // unclean forever (a non-reapable advisory). (Filenames are a deliberate
+  // local copy, per this file's layout-knowledge note.)
+  const allowed = new Set(['cap', 'meta', 'tmp', '.refetch', 'remaster.build.json']);
   for (const ent of await readdirSafe(root)) {
     if (!allowed.has(ent.name)) {
       findings.foreignRoot.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, ent.name) });
@@ -156,6 +179,10 @@ export async function fsck(root, options = {}) {
   // ---- sidecar sweep (the authority) ---------------------------------------
   const metaFiles = (await walkShards(root, 'meta')).filter(f => f.name.endsWith('.json'));
   const sidecarHashes = new Set();
+  // Body docs + their requisite edge lists, collected during the sweep and
+  // checked for closure AFTER sidecarHashes is complete (a requisite may be
+  // filed under any shard, walked before or after its referrer).
+  const bodyDocs = [];
   let bodies = 0;
 
   for (const { aa, name, path: metaPath } of metaFiles) {
@@ -183,6 +210,13 @@ export async function fsck(root, options = {}) {
 
     if (sidecar.status === 'body') {
       bodies++;
+      // Record this doc's requisite closure for the store-relative check below.
+      bodyDocs.push({
+        hash,
+        aa,
+        key: sidecar.key ?? null,
+        requisites: Array.isArray(sidecar.requisites) ? sidecar.requisites : []
+      });
       const capPath = path.join(root, 'cap', aa, hash);
       if (!capHashes.has(hash)) {
         findings.missingBody.push({ hash, aa, key: sidecar.key ?? null });
@@ -214,6 +248,23 @@ export async function fsck(root, options = {}) {
   // ---- orphan cap/ files (body present, no completion token) ----------------
   for (const f of capFiles) {
     if (!sidecarHashes.has(f.name)) findings.orphanCap.push({ hash: f.name, aa: f.aa, path: f.path });
+  }
+
+  // ---- requisite closure (store-relative — the doc's own edge list) ---------
+  // Every body doc names its page requisites in sidecar.requisites[] (verbatim
+  // captureKeys). A mirror is only self-contained if each of those requisites
+  // has its OWN sidecar in this store. This reads no ledger and touches no
+  // network — the doc's edge list IS the closure spec — so it holds for a
+  // single-page `cache add` root as much as a whole-ledger `cache fill` one.
+  // One finding per missing requisite (a doc short three assets is three
+  // findings), each keeping the store dirty.
+  for (const doc of bodyDocs) {
+    for (const childKey of doc.requisites) {
+      const childHash = await captureHash(childKey);
+      if (!sidecarHashes.has(childHash)) {
+        findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash });
+      }
+    }
   }
 
   // ---- --fix: reap ONLY the safe classes ------------------------------------

@@ -10,9 +10,7 @@
 //      integrity, orphan-cap drop, and a bin smoke.
 import { describe, it, before } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,8 +19,9 @@ import { captureHash } from '../key.js';
 import { RULE_VERSION } from '../rewrite.js';
 import { BUILD_NAME, ENGINE_VERSION, remaster } from '../remaster.js';
 
+// The `remaster <hermetic> <out>` bin smoke now lives in the CLI's
+// `cache remaster` command tests — the library ships no bin.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(HERE, '..', 'bin', 'remaster.js');
 const FIXTURE_ROOT = path.resolve(HERE, '../../../render/wayback/test/fixtures/cache-root');
 
 const mkroot = prefix => fsp.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -287,13 +286,5 @@ describe('remaster — committed 7-entry fixture', () => {
     assert.ok(!html.includes('web-static.archive.org'));
     assert.ok(html.includes('Search the web using Google!')); // page survived
     assert.ok(html.includes('/web/19981202230410im_/http://www.google.com/google.jpg')); // requisite in corpus
-  });
-
-  it('bin smoke: `remaster <hermetic> <out>` exits 0 and writes a build record', async () => {
-    const binOut = await mkroot('rm-bin-');
-    const res = spawnSync('node', [BIN, FIXTURE_ROOT, binOut], { encoding: 'utf8' });
-    assert.equal(res.status, 0, res.stderr);
-    assert.ok(fs.existsSync(path.join(binOut, BUILD_NAME)));
-    assert.match(res.stdout, /7 sidecars/);
   });
 });

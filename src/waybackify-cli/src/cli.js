@@ -1,10 +1,17 @@
 // waybackify CLI surface.
 //
 // This module pins the ENTIRE command/option contract — names, args, flags,
-// help text, exit codes — with ZERO implementation. All six command
-// handlers (manifest, rewrite, ledger, check, search, cache) are injected by
-// the bin; a missing handler throws Not implemented (exit 70) as a defensive
-// path. Implementations never touch argv parsing.
+// help text, exit codes — with ZERO implementation. The command handlers
+// (manifest, rewrite, ledger, check, search, and the `cache` group's five
+// subcommands: add · fill · verify · remaster · sync) are injected by the bin;
+// a missing handler throws Not implemented (exit 70) as a defensive path.
+// Implementations never touch argv parsing.
+//
+// `cache` is a GROUP command (paparam nests: a command() may take child
+// command()s as args, and `cmd.help('cache','add')` yields the nested help).
+// It carries no runner of its own — every cache-store operation is a verb
+// under it, so `waybackify cache` with no verb prints the group's help (run()
+// mirrors bare `waybackify`).
 //
 // SURFACE v2 (#386): `manifest` means GENERATION (source + universe [+ seen]
 // → wayback.json), `rewrite` means APPLICATION (source + manifest → the
@@ -79,7 +86,7 @@
 //   2   usage error (unknown flag/arg, missing required arg/flag)
 //   3   check only: suspect verdict (nonzero on purpose, distinct from 1)
 //   70  a command handler is missing from the bin wiring — DEFENSIVE ONLY
-//       now that all six handlers are wired; should never be observable.
+//       now that every handler is wired; should never be observable.
 //       70 is BSD sysexits EX_SOFTWARE ("internal software error") — see
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
 
@@ -238,11 +245,15 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     handlers.ledger ?? notImplemented('ledger')
   );
 
-  const cache = command(
-    'cache',
-    summary('Fetch the capture into a local bucket image'),
+  // ---- cache: the cache-store command group --------------------------------
+  // add · fill · verify · remaster · sync. Each subcommand enforces its own
+  // required args/flags via validate() (MISSING_ARG is root-only — note 4).
+
+  const cacheAdd = command(
+    'add',
+    summary('Fetch one capture into a local bucket image'),
     description(
-      'Fetch the capture into a local bucket image at <root> — the\n' +
+      'Fetch one capture into a local bucket image at <root> — the\n' +
         "wayback.charlie.dev mirror's population path. Syncing that dir to\n" +
         'R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment.\n' +
         '\n' +
@@ -260,17 +271,17 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     ),
     validate(({ args }) => Boolean(args.waybackUrl), 'missing required argument: <wayback-url>'),
     validate(({ flags }) => Boolean(flags.root || flags.output), 'missing required flag: --root|-r <root>'),
-    handlers.cache ?? notImplemented('cache')
+    handlers.cacheAdd ?? notImplemented('cache add')
   );
 
-  const backfill = command(
-    'backfill',
+  const cacheFill = command(
+    'fill',
     summary('Fetch every capture a ledger references into a cache root'),
     description(
       'Drive a cache root to a COMPLETE asset closure of every capture the\n' +
         'ledger under <dir> references — each referenced page AND its\n' +
-        'requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache`;\n' +
-        'the population path behind series/run/bin/refetch.\n' +
+        'requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache add` —\n' +
+        'the whole-corpus population path (wrap it in a thin repo shim).\n' +
         '\n' +
         'A durable worklist (never-fetched + not-yet-closed captures) is\n' +
         'enumerated ONCE and reused across runs, so pacing and resume\n' +
@@ -285,25 +296,131 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     ),
     arg('<dir>', 'root to discover wayback.json manifests under'),
     flag('--root|-r <root>', 'cache root to populate + measure closure against — required'),
-    flag('--delay-ms <n>', 'inter-request pacing between network fetches (default 1500)'),
+    flag('--delay-ms <n>', 'pacing between captures — a page + its requisites fetch together, browser-style (default 1500)'),
     flag('--abort-after <n>', 'consecutive connection failures before aborting (default 5)'),
-    flag('--max <n>', 'cap NETWORK attempts this run, then exit (default: no cap)'),
+    flag('--max <n>', 'cap captures fetched this run, then exit (default: no cap)'),
     flag('--refresh', 'rebuild the worklist from a fresh enumerate (default: reuse)'),
     flag('--dry-run', 'build/show the worklist; fetch nothing'),
     validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
     validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
-    handlers.backfill ?? notImplemented('backfill')
+    // paparam does not type flags — they arrive as strings. Reject a non-numeric
+    // or negative pacing/abort/cap here (usage error, exit 2) rather than let a
+    // typo like `--delay-ms 1,500` become NaN and silently disable pacing.
+    validate(
+      ({ flags }) =>
+        ['delayMs', 'abortAfter', 'max'].every(k => {
+          if (flags[k] === undefined) return true;
+          const n = Number(flags[k]);
+          return Number.isFinite(n) && n >= 0;
+        }),
+      '--delay-ms, --abort-after, and --max must be non-negative numbers'
+    ),
+    handlers.cacheFill ?? notImplemented('cache fill')
+  );
+
+  const cacheVerify = command(
+    'verify',
+    summary('Verify a cache root against its own sidecars'),
+    description(
+      'Verify a populated cache root against its own sidecars: re-hash every\n' +
+        'body, re-derive every path, and flag the shapes a crash, a bit-flip,\n' +
+        'or a short fetch leaves behind — including a page whose requisite\n' +
+        'closure is incomplete (a referenced im_/cs_/js_/oe_ capture with no\n' +
+        'sidecar in this store). Report-only by default.\n' +
+        '\n' +
+        'Output: a per-category report on stdout (--json for the raw report).\n' +
+        'Exit 0 when the store is clean (or made clean by --fix), 1 when any\n' +
+        'discrepancy remains.'
+    ),
+    flag('--root|-r <root>', 'cache root to verify (contains cap/ meta/ tmp/) — required'),
+    flag('--fix', 'reap orphan cap/ files + stale tmp/ scratch (opt-in); never touches corruption or a short closure'),
+    flag('--json', 'emit the raw report as JSON (for tooling/checkpoints)'),
+    flag('--quiet', 'suppress the per-category "ok" lines'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    handlers.cacheVerify ?? notImplemented('cache verify')
+  );
+
+  const cacheRemaster = command(
+    'remaster',
+    summary('Remaster a hermetic cache root into a standalone root'),
+    description(
+      'Remaster a hermetic cache root into a standalone remastered root —\n' +
+        'chrome stripped, wayback references localized to /web/<ts><flag>/<orig>,\n' +
+        'sidecars carried over, a content-addressed build record written at the\n' +
+        'root. Deterministic: the same hermetic tree yields a byte-identical\n' +
+        'remastered tree.\n' +
+        '\n' +
+        'Output: a summary line on stdout (--json for the run record). The\n' +
+        'remastered root drops straight under a serve --root.'
+    ),
+    arg('<hermetic-root>', 'sealed cache root to read (contains cap/ meta/)'),
+    arg('<remastered-root>', 'output root to write (created; supply a fresh dir)'),
+    flag('--json', 'emit the run summary as JSON'),
+    validate(({ args }) => Boolean(args.hermeticRoot), 'missing required argument: <hermetic-root>'),
+    validate(({ args }) => Boolean(args.remasteredRoot), 'missing required argument: <remastered-root>'),
+    handlers.cacheRemaster ?? notImplemented('cache remaster')
+  );
+
+  const cacheSync = command(
+    'sync',
+    summary('Emit the bucket-population batch for a cache root'),
+    description(
+      'Walk a cache root and emit one `s5cmd run` cp line per entry — the\n' +
+        'cap/ half of projecting the store onto an R2 / Fastly bucket, ready\n' +
+        'to pipe: `waybackify cache sync … | s5cmd --endpoint-url <ep> run`.\n' +
+        'Never mutates anything, never talks to the network.\n' +
+        '\n' +
+        'Output: the batch lines on stdout, a summary on stderr. --dry-run\n' +
+        'writes the batch to stderr instead, so an accidental `| s5cmd run`\n' +
+        'is a no-op.'
+    ),
+    flag('--root|-r <root>', 'cache root (the archive of record) — required'),
+    flag('--bucket <name>', "target bucket ('name' or 's3://name[/prefix]') — required"),
+    flag('--empty-file <path>', 'zero-byte scratch file for bodiless entries (create it OUTSIDE the root)'),
+    flag('--dry-run', 'write the batch to stderr; emit NOTHING to stdout'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    validate(({ flags }) => Boolean(flags.bucket), 'missing required flag: --bucket <name>'),
+    handlers.cacheSync ?? notImplemented('cache sync')
+  );
+
+  const cache = command(
+    'cache',
+    summary('Cache-store ops: add · fill · verify · remaster · sync'),
+    description(
+      'The cache-store command group — populate, verify, remaster, and\n' +
+        'project the wayback.charlie.dev mirror image:\n' +
+        '\n' +
+        '  add       fetch ONE capture (+ its requisites) into a cache root\n' +
+        '  fill      drive a whole ledger to full asset closure (bulk, resumable)\n' +
+        '  verify    check a cache root against its own sidecars (fsck)\n' +
+        '  remaster  build a standalone remastered root from a hermetic one\n' +
+        '  sync      emit the bucket-population batch (cap/ objects) for a root\n' +
+        '\n' +
+        'Run `waybackify cache <verb> --help` for a verb\'s full surface.'
+    ),
+    // Footer BEFORE the subcommands: paparam's _addCommand copies the parent's
+    // footer onto a child only if the child has none YET, and root's footer
+    // never re-propagates down to the group's children. Set it here so each
+    // `cache <verb> --help` prints the same footer the flat verbs do — and so
+    // the live output matches root.help('cache', verb).
+    footer('part of the wayback.charlie.dev mirror tooling'),
+    cacheAdd,
+    cacheFill,
+    cacheVerify,
+    cacheRemaster,
+    cacheSync
   );
 
   const root = command(
     'waybackify',
-    summary('manifest / rewrite / ledger / check / search / cache / backfill over the spv/waybackify library'),
+    summary('manifest / rewrite / ledger / check / search + the cache store group over the spv/waybackify library'),
     description(
       'Human-operable, xargs-composable front door over spv/waybackify:\n' +
         'generate a manifest for a source file, rewrite it to its published\n' +
         'form, survey the ledger of manifests under a tree, hand-check a\n' +
-        'capture, re-pick a better one, populate the wayback.charlie.dev\n' +
-        'mirror one capture (cache) or a whole ledger (backfill).\n' +
+        'capture, re-pick a better one, and — under the `cache` group —\n' +
+        'populate, verify, remaster, and project the wayback.charlie.dev\n' +
+        'mirror image.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
         '2 usage error · 3 suspect verdict (check only).'
@@ -314,8 +431,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     ledger,
     check,
     search,
-    cache,
-    backfill
+    cache
   );
 
   // One bail handler at the root covers every subcommand (source-driven
@@ -387,10 +503,13 @@ export async function run(argv, { handlers = {}, error = console.error } = {}) {
     return exitCode ?? EXIT.OK;
   }
 
-  // Bare `waybackify` (no subcommand): paparam matches the root command and
-  // runs its noop runner. Treat as usage: print help, exit 2.
-  if (parsed === root) {
-    error(root.help().trimEnd());
+  // A GROUP command matched with no subcommand — bare `waybackify` OR bare
+  // `waybackify cache`. paparam runs the group's noop runner and returns the
+  // group command itself (a leaf owns no subcommands, so `_definedCommands`
+  // is the reliable discriminator). Treat as usage: print THAT group's own
+  // help, exit 2.
+  if (parsed._definedCommands.size > 0) {
+    error(parsed.help().trimEnd());
     return EXIT.USAGE;
   }
 

@@ -1,17 +1,17 @@
-// `waybackify backfill` handler — thin-wrapper wiring test. The load-bearing
+// `waybackify cache fill` handler — thin-wrapper wiring test. The load-bearing
 // engine (spv/waybackify/backfill.js) is covered by its own unit + e2e suites;
 // here we prove the handler maps argv → backfill() options, prints the one
 // summary line, and turns an abort into a domain-failure throw.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { backfillHandler } from '../src/commands/backfill.js';
+import { cacheFillHandler } from '../src/commands/cache-fill.js';
 
 /** Run the handler with an injected library backfill(); capture its call + io. */
 function run({ args, flags, result }) {
   const calls = [];
   const stdout = [];
   const stderr = [];
-  const handler = backfillHandler({
+  const handler = cacheFillHandler({
     backfill: async opts => { calls.push(opts); return result; },
     log: l => stdout.push(l),
     error: l => stderr.push(l)
@@ -64,7 +64,7 @@ test('prints exactly one JSON summary line on stdout', async () => {
 test('abort → throws (domain failure → exit 1), summary still printed', async () => {
   const aborted = { ...okResult, aborted: true, stats: { attempted: 5, fetched: 0, cached: 0, deferred: 5, gone: 0 } };
   const { promise, stdout } = run({ args: { dir: 'w' }, flags: { root: '/c' }, result: aborted });
-  await assert.rejects(promise, /backfill aborted: archive\.org unreachable/);
+  await assert.rejects(promise, /cache fill aborted: archive\.org unreachable/);
   assert.equal(JSON.parse(stdout[0]).aborted, true);
 });
 

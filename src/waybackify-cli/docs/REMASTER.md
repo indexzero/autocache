@@ -1,7 +1,7 @@
 # The remaster build — hermetic in, remastered out
 
-Living documentation for `remaster <hermetic-root> <remastered-root>`
-(bin: [`spv/waybackify/bin/remaster.js`](../../waybackify/bin/remaster.js);
+Living documentation for `waybackify cache remaster <hermetic-root> <remastered-root>`
+(handler: [`spv/waybackify-cli/src/commands/cache-remaster.js`](../src/commands/cache-remaster.js);
 engine: [`spv/waybackify/rewrite.js`](../../waybackify/rewrite.js);
 build: [`spv/waybackify/remaster.js`](../../waybackify/remaster.js)).
 
@@ -144,5 +144,5 @@ the deterministic rewrite engine, the build record sorts its entries. Proven in
 - Engine: [`spv/waybackify/rewrite.js`](../../waybackify/rewrite.js),
   strip port: [`spv/waybackify/strip.js`](../../waybackify/strip.js)
 - Build: [`spv/waybackify/remaster.js`](../../waybackify/remaster.js),
-  bin: [`spv/waybackify/bin/remaster.js`](../../waybackify/bin/remaster.js)
+  handler: [`spv/waybackify-cli/src/commands/cache-remaster.js`](../src/commands/cache-remaster.js)
 - Serving contract: [SERVE.md](./SERVE.md) · store: [CACHE.md](./CACHE.md)

@@ -33,7 +33,7 @@
 // section wins); a URL claimed by none is surfaced, never guessed at.
 //
 // Provenance: `apply` generalizes the importer's proven normalize equation
-// (index.md ≡ apply(README.md, wayback.json)) — same delimiter-bounded URL
+// (post.md ≡ apply(README.md, wayback.json)) — same delimiter-bounded URL
 // matching, same scheme/slash/port-insensitive match key, same fenced-code
 // and link-text guards — so applying a v1-read manifest reproduces the old
 // pipeline's output byte-for-byte.

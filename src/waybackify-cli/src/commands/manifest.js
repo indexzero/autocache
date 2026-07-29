@@ -56,6 +56,10 @@ export function manifestHandler(deps = {}) {
     const seen = flags.seen && fs.existsSync(flags.seen) ? readManifest(flags.seen) : null;
 
     const options = {};
+    // --near passes straight through to generate → resolve(url, { near }):
+    // the library picks the archive capture closest to this timestamp for
+    // never-seen urls (covered/seen urls are answered offline, unaffected).
+    if (flags.near) options.near = flags.near;
     if (flags.offline) {
       // Offline resolution: the resolver never runs the network — it throws,
       // generate() records the url in `deferred`, and the exit-1 path below

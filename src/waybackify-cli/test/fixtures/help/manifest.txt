@@ -20,6 +20,7 @@ Flags:
   --seen|-s <file>       Manifest-shaped resolution union, read-write (bootstrap: ledger --flatten)
   --output|-o <file>     manifest destination (wayback.json) — required
   --offline              fail on urls the universe and seen file cannot answer (zero network)
+  --near <ts>            preferred capture timestamp (YYYYMMDD[HHMMSS]) — resolve never-seen urls to the archive capture closest to it
   --help|-h              Show help
 
 part of the wayback.charlie.dev mirror tooling

@@ -194,9 +194,18 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     flag('--seen|-s <file>', 'Manifest-shaped resolution union, read-write (bootstrap: ledger --flatten)'),
     flag('--output|-o <file>', 'manifest destination (wayback.json) — required'),
     flag('--offline', 'fail on urls the universe and seen file cannot answer (zero network)'),
+    flag('--near <ts>', 'preferred capture timestamp (YYYYMMDD[HHMMSS]) — resolve never-seen urls to the archive capture closest to it'),
     validate(({ args }) => Boolean(args.source), 'missing required argument: <source.md>'),
     validate(({ flags }) => Boolean(flags.universe), 'missing required flag: --universe|-u <file>'),
     validate(({ flags }) => Boolean(flags.output), 'missing required flag: --output|-o <file>'),
+    // paparam does not type flags — --near arrives as a string. The library's
+    // window()/getSnapshot slice it as YYYYMMDD[HHMMSS] and pad to 14, so a
+    // non-timestamp value would silently become NaN; reject it here (usage
+    // error, exit 2) rather than let it corrupt the capture pick.
+    validate(
+      ({ flags }) => flags.near === undefined || /^(\d{8}|\d{14})$/.test(flags.near),
+      '--near must be a YYYYMMDD or YYYYMMDDHHMMSS timestamp (8 or 14 digits)'
+    ),
     handlers.manifest ?? notImplemented('manifest')
   );
 

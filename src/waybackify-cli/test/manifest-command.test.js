@@ -192,3 +192,62 @@ test('a "clean not archived" verdict (resolver null) lands in exclude, and the s
   const second = await generate([UNCOVERED, '-u', UNIVERSE, '-s', seenFile, '-o', outFile, '--offline']);
   assert.equal(second.code, EXIT.OK);
 });
+
+// --- #404: --near passes straight through to generate → resolve(url, { near })
+
+test('--near passes through to the resolver as { near } for a never-seen url', async () => {
+  const dir = tmp();
+  const outFile = path.join(dir, 'wayback.json');
+
+  const nears = [];
+  const { code } = await generate([UNCOVERED, '-u', UNIVERSE, '-o', outFile, '--near', '20180615'], {
+    // The library invokes the injected resolver as resolve(url, { near }); the
+    // flag value must arrive verbatim as the second-arg near.
+    resolve: (url, opts) => {
+      nears.push(opts?.near);
+      return { url: `https://web.archive.org/web/20180615000000/${url}`, timestamp: '20180615000000' };
+    }
+  });
+  assert.equal(code, EXIT.OK);
+  assert.deepEqual(nears, ['20180615'], 'the resolver saw the exact --near value');
+  // The picked capture is the one the resolver returned under that anchor.
+  assert.equal(
+    JSON.parse(fs.readFileSync(outFile, 'utf8')).entries['http://unknown.example.com/page'].timestamp,
+    '20180615000000'
+  );
+});
+
+test('--near accepts both the 8-digit date and the 14-digit datetime shapes', async () => {
+  for (const ts of ['20180615', '20180615120000']) {
+    const dir = tmp();
+    const outFile = path.join(dir, 'wayback.json');
+    const nears = [];
+    const { code } = await generate([UNCOVERED, '-u', UNIVERSE, '-o', outFile, '--near', ts], {
+      resolve: (url, opts) => {
+        nears.push(opts?.near);
+        return { url: `https://web.archive.org/web/${ts.padEnd(14, '0')}/${url}`, timestamp: ts.padEnd(14, '0') };
+      }
+    });
+    assert.equal(code, EXIT.OK, `shape ${ts} is accepted`);
+    assert.deepEqual(nears, [ts]);
+  }
+});
+
+test('a malformed --near is a usage error (exit 2), never a NaN capture pick', async () => {
+  // Not-a-timestamp, wrong digit counts, and a mixed alnum value — each a
+  // usage error surfaced BEFORE any resolver call or file write.
+  for (const ts of ['2018', '201806', '2018061', '201806150', '2018-06-15', '20180615T12', 'yesterday', '']) {
+    const dir = tmp();
+    const outFile = path.join(dir, 'wayback.json');
+    const calls = [];
+    const { code } = await generate([UNCOVERED, '-u', UNIVERSE, '-o', outFile, '--near', ts], {
+      resolve: url => {
+        calls.push(url);
+        throw new Error('resolver must not run for a malformed --near');
+      }
+    });
+    assert.equal(code, EXIT.USAGE, `--near ${JSON.stringify(ts)} is a usage error`);
+    assert.deepEqual(calls, [], 'no resolver call for a malformed --near');
+    assert.equal(fs.existsSync(outFile), false, 'no manifest written for a malformed --near');
+  }
+});

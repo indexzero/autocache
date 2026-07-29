@@ -16,7 +16,13 @@
 //
 // WHAT IT CHECKS (report-only by default; see CATEGORIES for severities):
 //   - malformed     sidecar that will not parse (disk rot, NOT absence —
-//                   the rename published a whole fsync'd file or nothing)
+//                   the rename published a whole fsync'd file or nothing) OR a
+//                   structurally-bad `dynamic[]` entry (v3): `dynamic` present
+//                   but not an array, or an entry that is not an object / has a
+//                   non-string or separatorless `key` / a `flag` outside
+//                   {im_,cs_,js_,oe_,null} / a `via` outside {remaster-verify,
+//                   manual}. Same trust boundary as a malformed requisite — a
+//                   bad entry is surfaced, never silently trusted.
 //   - hashMismatch  status 'body' whose contentHash != the SRI of the cap/
 //                   bytes — the one thing fsync cannot catch (it persists
 //                   what was written, not that the right bytes were written)
@@ -26,8 +32,13 @@
 //                   body rename was lost, or a body was deleted out from
 //                   under a complete sidecar)
 //   - incompleteClosure  a status 'body' doc that lists a page requisite
-//                   (im_/cs_/js_/oe_ captureKey in its sidecar.requisites[])
-//                   whose own sidecar is absent from THIS store. Store-relative
+//                   (im_/cs_/js_/oe_ captureKey in its sidecar.requisites[]) OR
+//                   a browser-discovered dynamic child (a well-formed
+//                   sidecar.dynamic[].key, v3 — findings marked `dynamic: true`)
+//                   whose own sidecar is absent from THIS store. The frontier is
+//                   `requisites ∪ dynamic`: a recorded-but-unfetched dynamic
+//                   child is exactly as incomplete as a missing requisite.
+//                   Store-relative
 //                   — the check reads the doc's own edge list, no ledger and no
 //                   network. It is the reason this pass exists: a mirror can be
 //                   free of corruption yet serve a page whose asset closure is
@@ -62,7 +73,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS } from './cache.js';
+import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS, dynamicEntryError } from './cache.js';
 import { captureHash } from './key.js';
 import { detectInterstitial } from './interstitial.js';
 
@@ -208,14 +219,38 @@ export async function fsck(root, options = {}) {
       if (derived !== hash) findings.keyMismatch.push({ hash, aa, key: sidecar.key, derived });
     }
 
+    // ---- v3 dynamic[] validation (same trust boundary as requisites) ------
+    // `dynamic` present but not an array is one malformed finding; an array is
+    // validated entry-by-entry. Only entries that PASS feed the closure check
+    // below — a malformed entry is surfaced, never trusted into the frontier.
+    const dynamicKeys = [];
+    if (sidecar.dynamic !== undefined) {
+      if (!Array.isArray(sidecar.dynamic)) {
+        findings.malformed.push({ hash, aa, key: sidecar.key ?? null, path: metaPath, error: 'dynamic is not an array' });
+      } else {
+        // The SAME predicate recordDynamic throws on — one shared definition,
+        // so a bad entry the writer would reject is exactly what fsck flags.
+        sidecar.dynamic.forEach((entry, index) => {
+          const why = dynamicEntryError(entry);
+          if (why) {
+            findings.malformed.push({ hash, aa, key: sidecar.key ?? null, path: metaPath, error: `malformed dynamic entry: ${why}`, index });
+          } else {
+            dynamicKeys.push(entry.key);
+          }
+        });
+      }
+    }
+
     if (sidecar.status === 'body') {
       bodies++;
-      // Record this doc's requisite closure for the store-relative check below.
+      // Record this doc's requisite + dynamic closure for the store-relative
+      // check below. Only well-formed dynamic keys (validated above) are carried.
       bodyDocs.push({
         hash,
         aa,
         key: sidecar.key ?? null,
-        requisites: Array.isArray(sidecar.requisites) ? sidecar.requisites : []
+        requisites: Array.isArray(sidecar.requisites) ? sidecar.requisites : [],
+        dynamic: dynamicKeys
       });
       const capPath = path.join(root, 'cap', aa, hash);
       if (!capHashes.has(hash)) {
@@ -259,10 +294,27 @@ export async function fsck(root, options = {}) {
   // One finding per missing requisite (a doc short three assets is three
   // findings), each keeping the store dirty.
   for (const doc of bodyDocs) {
+    // The frontier is the DEDUPED union `requisites ∪ dynamic`: a key in both
+    // (or repeated within either) yields exactly ONE finding. Requisites are
+    // walked first, so a key shared with dynamic is attributed to the requisite
+    // (no `dynamic: true`); a key SOLELY in dynamic — a recorded-but-unfetched
+    // browser child, exactly as `incomplete` as a missing requisite — is marked
+    // `dynamic: true` so a reader can tell them apart.
+    const seen = new Set();
     for (const childKey of doc.requisites) {
+      if (seen.has(childKey)) continue;
+      seen.add(childKey);
       const childHash = await captureHash(childKey);
       if (!sidecarHashes.has(childHash)) {
         findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash });
+      }
+    }
+    for (const childKey of doc.dynamic) {
+      if (seen.has(childKey)) continue;
+      seen.add(childKey);
+      const childHash = await captureHash(childKey);
+      if (!sidecarHashes.has(childHash)) {
+        findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash, dynamic: true });
       }
     }
   }

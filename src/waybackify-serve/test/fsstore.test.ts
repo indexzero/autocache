@@ -259,6 +259,31 @@ describe('FsStore', () => {
       assert.equal((await new FsStore(root).head(KEY))?.status, 'body');
     });
 
+    it('reads a v3 sidecar carrying dynamic[] — accepted and served, dynamic ignored', async () => {
+      // The `{1,2}` → `{1,2,3}` support-set bump: a v3 sidecar ADDS the optional
+      // `dynamic[]` array (browser-discovered requisites). FsStore must NOT throw
+      // "unsupported sidecar version" and must serve body + meta correctly — it
+      // is not a `dynamic` consumer, so the extra field is simply ignored. If
+      // SUPPORTED_SIDECAR_VERSIONS regressed to {1,2} this head() would throw
+      // /version/ instead of returning the metadata, failing the test.
+      const root = await makeRoot();
+      await writeEntry(root, KEY, {
+        sidecar: {
+          ...bodiedSidecar('<html>x</html>'),
+          v: 3,
+          dynamic: [{ key: '20140403040000/http://example.com/font.woff', flag: 'oe_', via: 'remaster-verify' }]
+        },
+        body: '<html>x</html>'
+      });
+
+      const store = new FsStore(root);
+      const meta = await store.head(KEY);
+      assert.deepEqual(meta, { contentType: 'text/html; charset=utf-8', size: 14, status: 'body' });
+      const capture = await store.get(KEY);
+      assert.equal('body' in capture!, true);
+      assert.equal(await bodyText(capture as Capture), '<html>x</html>');
+    });
+
     it('throws when the sidecar at a hash path claims a different key', async () => {
       const root = await makeRoot();
       await writeEntry(root, KEY, {

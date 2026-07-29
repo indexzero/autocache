@@ -85,7 +85,7 @@ describe('cacheCapture — requisites by default', () => {
     assert.deepEqual(summary.failures, []);
 
     const doc = await readSidecar(root, DOC_KEY);
-    assert.equal(doc.v, 2);
+    assert.equal(doc.v, 3);
     assert.equal(doc.key, DOC_KEY);
     assert.equal(doc.status, 'body');
     assert.equal(doc.contentType, 'text/html; charset=utf-8');
@@ -462,7 +462,7 @@ describe('commitEntry — interstitial refusal (#363)', () => {
     const raw = await fsp.readFile((await entryPaths(root, key)).meta, 'utf8');
     assert.doesNotMatch(raw, /[\r\n]/);
     assert.equal(raw, canonicalJSON(JSON.parse(raw)));
-    assert.equal(JSON.parse(raw).v, 2);
+    assert.equal(JSON.parse(raw).v, 3);
   });
 
   it('a legitimate real page is untouched — no false refusal', async () => {

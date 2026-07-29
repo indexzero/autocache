@@ -140,9 +140,9 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const sidecars = [];
   for (const entry of found) {
     const sidecar = JSON.parse(await fsp.readFile(entry.metaPath, 'utf8'));
-    // Accept every sidecar version cache.js currently writes (v1 + v2 today) —
-    // not a hard-pinned 1, which silently rejected the v2 sidecars cacheCapture
-    // has written since the schema bump.
+    // Accept every sidecar version cache.js currently writes (v1 + v2 + v3
+    // today) — not a hard-pinned 1, which silently rejected the v2 sidecars
+    // cacheCapture has written since the schema bump.
     if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
       throw new Error(`remaster: unsupported sidecar version ${sidecar.v} at ${entry.metaPath}`);
     }
@@ -191,7 +191,9 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
       // must tell the truth about the bytes it now sits beside (FsStore serves
       // contentLength as the Content-Length header, and rmfsck re-verifies
       // contentHash against the body). Unchanged bodies keep the sidecar
-      // byte-identical.
+      // byte-identical. Every other field — including the v3 `dynamic[]` array
+      // — carries through verbatim via the spread: it is a doc-level fact,
+      // never rewritten, so the remastered sidecar preserves it untouched.
       if (outputHash !== inputHash) {
         outSidecar = { ...sidecar, contentHash: outputHash, contentLength: outBytes.length };
       }

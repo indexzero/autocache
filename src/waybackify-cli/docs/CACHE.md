@@ -24,6 +24,7 @@ full throughout this document. Implementation:
 - [Write / atomicity protocol](#write--atomicity-protocol)
 - [Resume semantics](#resume-semantics)
 - [The requisite DAG](#the-requisite-dag)
+- [Browser-discovered requisites (v3)](#browser-discovered-requisites-v3)
 - [Failure policy](#failure-policy)
 - [Integrity and dedupe stance](#integrity-and-dedupe-stance)
 - [Bucket projection](#bucket-projection)
@@ -110,19 +111,20 @@ authoritative and mandatory.
 
 ## The sidecar, field by field
 
-`meta/<aa>/<hash>.json`, schema version `v: 2`:
+`meta/<aa>/<hash>.json`, schema version `v: 3`:
 
-> **Schema versions.** New writes stamp `v: 2` (the `interstitial` status,
-> below). A v2 sidecar is a backward-compatible **superset** of v1 — every v1
-> field keeps its meaning; v2 only ADDS the `interstitial` status and its
-> `signature`/`target` fields. Every consumer (mirror server `FsStore`, sync
-> emitter, `fsck`, this CLI) therefore accepts **either** version: the whole
-> existing v1 corpus still reads. A version outside `{1, 2}` is genuinely
-> unknown and fails loud, never treated as complete-current. (#363)
+> **Schema versions.** New writes stamp `v: 3` (the optional `dynamic[]` array,
+> below). Each version is a backward-compatible **superset** of the last — every
+> older field keeps its meaning; v2 ADDED the `interstitial` status and its
+> `signature`/`target` fields, v3 ADDS the optional `dynamic[]` array. Every
+> consumer (mirror server `FsStore`, sync emitter, `fsck`, this CLI) therefore
+> accepts **any** of them: the whole existing v1 corpus and every v2 root still
+> read. A version outside `{1, 2, 3}` is genuinely unknown and fails loud, never
+> treated as complete-current. (#363 interstitial; v3 dynamic sidecar)
 
 | field | type | presence | rationale |
 |---|---|---|---|
-| `v` | int | always | Schema version (`2`). Bump on any incompatible change — an added enum value IS incompatible for an old reader — coordinated across every consumer (mirror server, sync tooling, this CLI). Readers accept the supported set `{1, 2}`. |
+| `v` | int | always | Schema version (`3`). Bump on any incompatible change — an added enum value IS incompatible for an old reader — coordinated across every consumer (mirror server, sync tooling, this CLI). Readers accept the supported set `{1, 2, 3}`. |
 | `key` | string | always | **Verbatim** captureKey, UTF-8. The sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
 | `contentType` | string | always (`''` when the archive sent none) | Rides each bucket object's native `Content-Type` header. Write-time enforced (key.js `assertMetadataSafe`): no CR/LF (the value rides an HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes (the sync targets' object-metadata cap). |
 | `status` | `body \| redirect \| error \| empty \| interstitial` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus — and `interstitial`) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
@@ -132,6 +134,7 @@ authoritative and mandatory.
 | `target` | `{ url, timestamp }` | iff `signature == "redirect-interstitial"` (when decodable) | The decoded destination of a redirect interstitial — the only content that page carried. Absent when the stub had no parseable `/web/…` reference. |
 | `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern. Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
 | `flag` | `im_ \| cs_ \| js_ \| oe_ \| null` | always | Requisite-type tag when this entry is itself a requisite (image / stylesheet / script / object-embed replay flags); `null` for operator-named documents. |
+| `dynamic` | array of `{ key, flag, via, firstSeen? }` | optional (present only when a browser probe recorded runtime-discovered requisites; **absent** otherwise) | Browser-discovered requisites (v3). `key` is a child's verbatim captureKey (same identity rules as `requisites[]`); `flag` (`im_`/`cs_`/`js_`/`oe_`/`null`) is the replay flag for the raw-byte fetch, **persisted because it is unrecoverable from the stored bytes** — a runtime-leaked asset never appears in the captured HTML; `via` is the provenance enum (`remaster-verify` for probe-discovered, `manual` reserved); `firstSeen` is an optional ISO-8601 audit field. See [Browser-discovered requisites](#browser-discovered-requisites-v3). |
 | `fetchedAt` | string | always | ISO-8601 fetch time. Provenance only — identity is entirely in `key`. |
 
 ### Interstitial captures (#363)
@@ -274,6 +277,39 @@ page and are not requisites).
   recovered by re-extracting from the stored document body — the normative
   edge list stays flagless.
 
+## Browser-discovered requisites (v3)
+
+A static parse of the captured HTML finds the `requisites[]` above, but a real
+browser render can pull in assets that never appear in those bytes — a font
+`@import`-ed from a child stylesheet, an image a script injects at runtime. Those
+are **dynamic requisites**, recorded in the sidecar's optional `dynamic[]` array
+(schema v3).
+
+- **Source.** Entries are written by `recordDynamic(root, docKey, entries)` from
+  the `remaster verify` dynamic probe: a browser renders the served-localized doc
+  and every request that still escapes to `web.archive.org` is a missing dynamic
+  child. Each is recorded with `via: "remaster-verify"` (`manual` is reserved).
+- **The persisted `flag`.** Unlike a requisite — whose replay flag is
+  re-extractable from the stored document body — a dynamic child *never appears
+  in the captured bytes*, so its `flag` (`im_`/`cs_`/`js_`/`oe_`/`null`) is stored
+  in the entry. It is the only place that flag survives; the raw-byte fetch URL
+  (`…/web/<ts><flag>/<original>`) is built from it, never re-extracted.
+- **The frontier closes over `requisites ∪ dynamic`.** `cacheCapture` fans out to
+  the union of static requisites and well-formed dynamic keys, so a run after
+  `recordDynamic` fetches exactly the newly-recorded children (idempotent/resumable
+  as ever — recorded-and-fetched children are skipped). `fsck`'s `incompleteClosure`
+  likewise unions the two: a recorded-but-unfetched dynamic child keeps the store
+  dirty exactly like a missing requisite, and a malformed `dynamic[]` entry is a
+  `malformed` finding on the same trust boundary as a malformed requisite.
+- **Merge is deterministic.** `recordDynamic` merges new entries onto any existing
+  `dynamic[]`, de-duplicating by `key` (**existing wins** — first-seen provenance
+  is never overwritten) and sorting by `key`, then re-commits the meta via the
+  same tmp-write + atomic-rename path (the body is untouched;
+  `contentHash`/`contentLength` and every other field carry over). Recording the
+  same entries twice yields byte-identical meta. Attribution is **doc-level** —
+  a dynamic child is recorded as "needed to render this document" even when its
+  true parent is a child stylesheet.
+
 ## Failure policy
 
 Per entry class (implementation-defined within the command's decided
@@ -391,10 +427,10 @@ discrepancy:
 | `hashMismatch` | corruption | `status: "body"` whose `contentHash` ≠ the SRI of the `cap/` bytes — the one failure `fsync` cannot catch (it persists *what* was written, not *that the right bytes* were). |
 | `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
 | `missingBody` | corruption | `status: "body"` with no `cap/` file — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
-| `incompleteClosure` | incomplete | a `status: "body"` doc that references a page requisite (`im_`/`cs_`/`js_`/`oe_` captureKey in its `requisites[]`) whose own sidecar is absent from this store. Store-relative (the doc's own edge list; no ledger, no network). **Report only** — a short closure is filled by re-running `cache add`/`cache fill`, never by reaping — but it keeps the store dirty (nonzero exit) until complete. |
-| `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing). |
+| `incompleteClosure` | incomplete | a `status: "body"` doc that references a page requisite (`im_`/`cs_`/`js_`/`oe_` captureKey in its `requisites[]`) **or** a well-formed browser-discovered dynamic child (a `dynamic[].key`, v3 — findings marked `dynamic: true`) whose own sidecar is absent from this store. The frontier is `requisites ∪ dynamic`. Store-relative (the doc's own edge list; no ledger, no network). **Report only** — a short closure is filled by re-running `cache add`/`cache fill`, never by reaping — but it keeps the store dirty (nonzero exit) until complete. |
+| `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
-| `schemaVersion` | advisory | a sidecar whose `v` is outside the supported set `{1, 2}` — a migration flag. (A legacy `v: 1` sidecar is supported and does NOT trip this.) |
+| `schemaVersion` | advisory | a sidecar whose `v` is outside the supported set `{1, 2, 3}` — a migration flag. (A legacy `v: 1` or `v: 2` sidecar is supported and does NOT trip this.) |
 | `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` — the check that catches a contract violation like a stray `.runs/`. |
 | `orphanCap` | reapable | a `cap/` file with no sidecar — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). |
 | `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. |

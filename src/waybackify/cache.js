@@ -66,12 +66,17 @@
 // Integrity, not addressing: the filename stays the identity hash.
 //
 // RESUME: completion signal = sidecar exists, nothing else. The fetch
-// frontier on re-run = the document's sidecar.requisites[] entries whose
-// child sidecar is missing. Fetch URLs for missing children are recovered
-// by re-extracting the flagged refs from the STORED document body (the
-// requisites[] edge list is normatively flagless captureKeys, and the
-// im_/cs_/js_/oe_ flag is required to fetch an asset's raw bytes — the
-// stored body is the authoritative place the flags live).
+// frontier on re-run = `requisites[] ∪ dynamic[].key` — the document's
+// static edge-list children PLUS its browser-discovered dynamic children
+// (v3) — restricted to those whose child sidecar is missing. Fetch URLs for
+// missing REQUISITE children are recovered by re-extracting the flagged refs
+// from the STORED document body (the requisites[] edge list is normatively
+// flagless captureKeys, and the im_/cs_/js_/oe_ flag is required to fetch an
+// asset's raw bytes — the stored body is the authoritative place the flags
+// live). Fetch URLs for missing DYNAMIC children are built from the flag
+// PERSISTED in each dynamic entry, NOT re-extracted: a browser-discovered
+// requisite never appears in the stored bytes, which is the whole reason its
+// flag is recorded in the sidecar.
 //
 // CONCURRENCY: no locks. Same-key writers use distinct temp names and both
 // rename onto the final name — last-writer-wins on identical bytes (the
@@ -90,20 +95,95 @@ import { detectInterstitial } from './interstitial.js';
 // (#363): a v2 sidecar may carry `status: "interstitial"` (+ `signature`, and a
 // redirect's decoded `target`), an enum value a strictly-v1 reader would not
 // understand — hence the coordinated bump the schema discipline requires
-// (CACHE.md §sidecar).
-export const SIDECAR_VERSION = 2;
+// (CACHE.md §sidecar). Bumped to 3 for the optional `dynamic[]` array: a doc's
+// browser-discovered requisites (recorded by recordDynamic from the `remaster
+// verify` dynamic probe). v3 is a backward-compatible SUPERSET of v2 — it only
+// ADDS one optional array whose entries carry a persisted replay `flag`
+// (unrecoverable from stored bytes), so every v2/v1 field keeps its meaning and
+// a v3 write with no dynamic data is byte-identical to the v2 it would have
+// been (the field is ABSENT, never invented empty).
+export const SIDECAR_VERSION = 3;
 
-// Readers accept a v2 sidecar OR a legacy v1 one: v2 is a backward-compatible
-// SUPERSET (every v1 field keeps its meaning; v2 only ADDS the interstitial
-// status + its fields), so a v1 root — the whole existing corpus — still reads.
-// A version outside this set is genuinely unknown and must fail loud, never be
-// treated as complete-current. Old v1 `status:body` entries that HIDE an
-// interstitial are surfaced by `fsck`'s interstitial-as-body category, not by
-// rejecting them here.
-export const SUPPORTED_SIDECAR_VERSIONS = Object.freeze(new Set([1, 2]));
+// Readers accept a v3, v2, OR legacy v1 sidecar: each newer version is a
+// backward-compatible SUPERSET (v2 ADDS the interstitial status + its fields;
+// v3 ADDS the optional `dynamic[]` array), so a v1 root — the whole existing
+// corpus — still reads, as does a v2 one. A version outside this set is
+// genuinely unknown and must fail loud, never be treated as complete-current.
+// Old v1 `status:body` entries that HIDE an interstitial are surfaced by
+// `fsck`'s interstitial-as-body category, not by rejecting them here.
+export const SUPPORTED_SIDECAR_VERSIONS = Object.freeze(new Set([1, 2, 3]));
 
 /** Content types the requisite extractor runs over (documents). */
 const isHtmlish = ct => !ct || /html|xhtml/i.test(ct);
+
+/** The replay flags a v3 `dynamic[]` entry may carry (null = flagless). */
+const DYNAMIC_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_', null]);
+
+/** The provenance enum a v3 `dynamic[]` entry's `via` must be one of. */
+const DYNAMIC_VIA = new Set(['remaster-verify', 'manual']);
+
+/**
+ * ISO-8601 date-time shape a v3 `dynamic[]` entry's OPTIONAL `firstSeen` must
+ * match: `YYYY-MM-DDThh:mm:ss[.sss](Z|±hh:mm)` — the same form
+ * `new Date().toISOString()` emits. The shape check pairs with a `Date.parse`
+ * validity check (a shape-legal but impossible calendar value like month 13
+ * still parses to NaN), so a bare `"not-a-date"` — or any non-ISO string — is
+ * rejected rather than silently persisted as an audit field nothing can read.
+ */
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Normalize a (already well-formed) v3 `dynamic[]` entry to the documented
+ * persisted shape `{ key, flag, via, firstSeen? }`: `flag` is ALWAYS present,
+ * `null` when the caller omitted it — a dynamic child's replay flag is
+ * unrecoverable from the stored bytes, so an unknown flag is recorded as an
+ * explicit `null`, NEVER a missing key (CACHE.md: `flag` presence is "always").
+ * `firstSeen` rides through only when present (it is optional). This is the ONE
+ * place a persisted entry is shaped, so every writer emits byte-identical meta
+ * and the shape can never drift between a fresh write and an existing-wins
+ * merge. `via` is required by `dynamicEntryError`, so it is carried verbatim.
+ * @param {{ key: string, flag?: 'im_'|'cs_'|'js_'|'oe_'|null,
+ *   via: 'remaster-verify'|'manual', firstSeen?: string }} entry
+ * @returns {{ key: string, flag: 'im_'|'cs_'|'js_'|'oe_'|null,
+ *   via: 'remaster-verify'|'manual', firstSeen?: string }}
+ */
+export function normalizeDynamicEntry(entry) {
+  const normalized = { key: entry.key, flag: entry.flag ?? null, via: entry.via };
+  if (entry.firstSeen !== undefined) normalized.firstSeen = entry.firstSeen;
+  return normalized;
+}
+
+/**
+ * The SINGLE well-formedness predicate for a v3 `dynamic[]` entry — the one
+ * definition BOTH the writer (recordDynamic, which THROWS on a bad entry) and
+ * the verifier (fsck.js, which FLAGS one `malformed` finding per bad entry)
+ * share, so writer and verifier can never disagree about what "well-formed"
+ * means. A well-formed entry is an object whose `key` is a string with a valid
+ * `<ts>/<orig>` separator (both parts non-empty), whose `flag` (after `?? null`)
+ * is in `{im_,cs_,js_,oe_,null}`, and whose `via` provenance is in
+ * `{remaster-verify,manual}` (a required enum in the v3 spec). The KEY shape
+ * check is deliberately slash-separator-only — the SAME trust boundary as a
+ * malformed requisite (the requisite guard is slash-only; no digit-only
+ * timestamp rule) — so writer/verifier match the existing requisite policy.
+ * `firstSeen` is OPTIONAL (absent = fine), but when present it MUST be a valid
+ * ISO-8601 timestamp — a persisted audit field nothing could parse is not a
+ * legal record, so `firstSeen: "not-a-date"` is rejected. Returns a short human
+ * reason string when the entry is malformed, or `null` when it is valid.
+ * @param {unknown} entry
+ * @returns {string | null}
+ */
+export function dynamicEntryError(entry) {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return 'not an object';
+  if (typeof entry.key !== 'string') return 'key is not a string';
+  const sep = entry.key.indexOf('/');
+  if (sep <= 0 || sep === entry.key.length - 1) return 'key has no <ts>/<orig> separator';
+  if (!DYNAMIC_FLAGS.has(entry.flag ?? null)) return `flag ${JSON.stringify(entry.flag)} not in {im_,cs_,js_,oe_,null}`;
+  if (!DYNAMIC_VIA.has(entry.via)) return `via ${JSON.stringify(entry.via)} not in {remaster-verify,manual}`;
+  if (entry.firstSeen !== undefined && (typeof entry.firstSeen !== 'string' || !ISO_8601.test(entry.firstSeen) || Number.isNaN(Date.parse(entry.firstSeen)))) {
+    return `firstSeen ${JSON.stringify(entry.firstSeen)} is not an ISO-8601 timestamp`;
+  }
+  return null;
+}
 
 /* ------------------------------------------------------------------------ *
  * Paths + canonical JSON
@@ -295,6 +375,12 @@ async function syncDir(dir) {
  * @param {string} entry.contentType - as returned by archive.org ('' if none)
  * @param {'im_'|'cs_'|'js_'|'oe_'|null} [entry.flag] - requisite-type tag
  * @param {string[]} [entry.requisites] - verbatim child captureKeys
+ * @param {Array<{ key: string, flag: 'im_'|'cs_'|'js_'|'oe_'|null,
+ *   via: 'remaster-verify'|'manual', firstSeen?: string }>} [entry.dynamic] -
+ *   browser-discovered requisites (v3). Passed through verbatim; the field is
+ *   ABSENT from the sidecar when the caller omits it (a v3 write with no
+ *   dynamic data must NOT invent an empty `dynamic`). recordDynamic is the
+ *   usual writer — commitEntry only carries what it is handed.
  * @param {Uint8Array|AsyncIterable<Uint8Array>|null} [entry.body] - required
  *   iff a bodied write is intended; a zero-byte body demotes status to 'empty'.
  *   A body whose bytes trip an interstitial signature (#363) is REFUSED — the
@@ -308,7 +394,7 @@ async function syncDir(dir) {
  * @returns {Promise<object>} the sidecar as written (parsed form)
  */
 export async function commitEntry(root, entry, hooks = {}) {
-  const { key, contentType = '', flag = null, requisites = [], fetchedAt = new Date().toISOString() } = entry;
+  const { key, contentType = '', flag = null, requisites = [], dynamic, fetchedAt = new Date().toISOString() } = entry;
   let { status, body = null } = entry;
   // Enforce the sync targets' metadata constraints at write time (key.js:
   // no CR/LF, ≤ 1000 encoded bytes) so no sidecar ever holds a contentType
@@ -328,6 +414,10 @@ export async function commitEntry(root, entry, hooks = {}) {
     status,
     v: SIDECAR_VERSION
   };
+  // v3 dynamic[] passthrough: carry the field ONLY when the caller supplies it
+  // — a plain capture (no browser probe) writes NO `dynamic` key, keeping a v3
+  // write byte-identical to the v2 it would otherwise be.
+  if (dynamic !== undefined) sidecar.dynamic = dynamic;
 
   // Interstitial refusal (#363): before a body is committed, check whether it
   // is the Wayback Machine talking ABOUT content rather than content. A fired
@@ -381,6 +471,143 @@ export async function commitEntry(root, entry, hooks = {}) {
   return sidecar;
 }
 
+/**
+ * Record browser-discovered dynamic requisites (v3) onto a document's EXISTING
+ * sidecar — the durable half of the crawl fixpoint (`remaster verify`'s dynamic
+ * probe finds a leaked child, recordDynamic writes it, the next cacheCapture
+ * closes over it via the `requisites ∪ dynamic` frontier).
+ *
+ * This is a META-ONLY re-write: the body is never touched. It deliberately does
+ * NOT go through commitEntry — commitEntry rewrites the body (or requires body
+ * bytes for a `status:body` entry) and re-runs interstitial detection, none of
+ * which applies to appending a fact to a doc already captured. Every other
+ * sidecar field (status, contentHash, contentLength, requisites, flag, …)
+ * carries over verbatim through the spread of the existing sidecar.
+ *
+ * VALIDATION: every incoming entry MUST pass the SAME well-formedness predicate
+ * fsck flags a `malformed` finding for (`dynamicEntryError`) — an object, a
+ * `key` with a valid `<ts>/<orig>` separator, a `flag` in `{im_,cs_,js_,oe_,
+ * null}`, a `via` in `{remaster-verify,manual}`. A violation THROWS a TypeError
+ * (the crawl driver builds these; a bad entry is a bug, not something to launder
+ * into the frontier). Within one call a repeated `key` is fine when the entries
+ * are byte-identical (a browser fetching one asset twice) — it collapses to one;
+ * a CONFLICTING same-key entry (same key, differing fields) THROWS. Either way
+ * the result is order-independent. An EXISTING `dynamic` that is not a
+ * well-formed array also THROWS rather than being silently dropped: masking
+ * corruption here is exactly what fsck exists to surface.
+ *
+ * MERGE: existing `dynamic` entries (if any) come FIRST, then `entries`;
+ * duplicates by `key` across the two are collapsed EXISTING-WINS (first-seen
+ * wins — an already-recorded entry, with its original `via`/`firstSeen`, is
+ * never overwritten by a re-probe). The merged array is SORTED by `key`
+ * ascending. Together with canonicalJSON's sorted-key emission, that makes the
+ * write DETERMINISTIC (input order does not matter) and IDEMPOTENT (recording
+ * the same entries twice produces byte-identical meta).
+ *
+ * The `dynamic` field is set ONLY when the merged array is non-empty — calling
+ * with an empty list against a doc that has no prior dynamic entries leaves the
+ * sidecar without a `dynamic` key (never invent an empty array).
+ *
+ * CONCURRENCY: this is a meta-only read-modify-write that shares the store's
+ * existing LOCKLESS model — no locks, no CAS, consistent with every other
+ * writer in the core. It is safe under the store's two invariants: (1) same-key
+ * capture bytes are IMMUTABLE (the wayback timestamp pins content — a re-commit
+ * writes byte-identical body bytes), so the `contentHash`/`contentLength`
+ * carried through the spread stay correct even though the body is never
+ * re-read; and (2) a cache root is SINGLE-WRITER during a run (TDD Operational
+ * policy), so two recordDynamic calls never race the same doc. Adding locking
+ * here would be inconsistent with the rest of the core, which locks nowhere.
+ *
+ * @param {string} root - cache root
+ * @param {string} docKey - verbatim captureKey of the document whose sidecar
+ *   the dynamic children attach to
+ * @param {Array<{ key: string, flag?: 'im_'|'cs_'|'js_'|'oe_'|null,
+ *   via?: 'remaster-verify'|'manual', firstSeen?: string }>} entries - the
+ *   discovered dynamic requisites; each MUST pass `dynamicEntryError`
+ * @returns {Promise<object>} the sidecar as written (parsed form)
+ */
+export async function recordDynamic(root, docKey, entries = []) {
+  const existing = await readSidecar(root, docKey);
+  if (existing === null) {
+    // You cannot record dynamic children of a document that was never captured
+    // — there is no sidecar to attach them to, and inventing one would fabricate
+    // a body-less doc the store never fetched.
+    throw new Error(`recordDynamic: no sidecar for ${docKey}`);
+  }
+
+  // The crawl driver constructs these entries; a bad entry is a bug, so be loud
+  // (the SAME predicate fsck flags `malformed` for — one definition, so writer
+  // and verifier can never disagree). Within one call a repeated key is only a
+  // problem when the two entries DISAGREE: a browser legitimately requests the
+  // same asset twice, so a BYTE-IDENTICAL repeat collapses to one (no throw);
+  // only a CONFLICTING same-key entry (differing flag/via/firstSeen) throws —
+  // that is a genuine ambiguity about which fact to record. Either way the
+  // result never depends on input order.
+  // NORMALIZE on the way in (`flag: entry.flag ?? null` always present, per
+  // CACHE.md) so the byte-identical dedup below and the merge/write further down
+  // all operate on — and persist — the one documented `{ key, flag, via,
+  // firstSeen? }` shape. A `flag`-omitted entry and an explicit `flag:null`
+  // entry are therefore the SAME entry (they collapse, they never "conflict").
+  const seen = new Map();
+  const incoming = [];
+  for (const entry of entries) {
+    const why = dynamicEntryError(entry);
+    if (why) throw new TypeError(`recordDynamic: malformed dynamic entry (${why}) for ${docKey}`);
+    const normalized = normalizeDynamicEntry(entry);
+    const prev = seen.get(normalized.key);
+    if (prev !== undefined) {
+      if (canonicalJSON(prev) !== canonicalJSON(normalized)) {
+        throw new TypeError(`recordDynamic: conflicting duplicate key in entries: ${normalized.key}`);
+      }
+      continue; // benign byte-identical repeat — collapse to the one already seen
+    }
+    seen.set(normalized.key, normalized);
+    incoming.push(normalized);
+  }
+
+  // Never silently launder a malformed EXISTING dynamic array — that would mask
+  // corruption fsck is meant to surface. A present `dynamic` MUST be an array
+  // whose every member passes the shared predicate before we merge onto it.
+  let prior = [];
+  if (existing.dynamic !== undefined) {
+    if (!Array.isArray(existing.dynamic)) {
+      throw new TypeError(`recordDynamic: existing dynamic is not an array for ${docKey}`);
+    }
+    for (const entry of existing.dynamic) {
+      const why = dynamicEntryError(entry);
+      if (why) throw new TypeError(`recordDynamic: existing dynamic has a malformed entry (${why}) for ${docKey}`);
+    }
+    // Normalize the existing entries too, so a re-write over a pre-normalization
+    // sidecar (a `flag`-omitted entry from before this fix) is republished in
+    // the documented `flag`-always shape — writer output never drifts.
+    prior = existing.dynamic.map(normalizeDynamicEntry);
+  }
+
+  // EXISTING-WINS dedupe by key: seed the map from the current dynamic array,
+  // then only add an incoming entry whose key is not already present. Both
+  // sides are already normalized, so the persisted bytes are deterministic.
+  const byKey = new Map();
+  for (const entry of prior) if (!byKey.has(entry.key)) byKey.set(entry.key, entry);
+  for (const entry of incoming) if (!byKey.has(entry.key)) byKey.set(entry.key, entry);
+  const merged = [...byKey.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+  const sidecar = { ...existing, v: SIDECAR_VERSION };
+  if (merged.length > 0) sidecar.dynamic = merged;
+  else delete sidecar.dynamic; // never carry an empty array (existing had none)
+
+  // Write the meta the SAME way commitEntry's tail does — tmp write + atomic
+  // rename — leaving the body untouched. The sidecar rename remains the sole
+  // completion token; here it simply republishes a superset of the same doc.
+  const { hash, meta } = await entryPaths(root, docKey);
+  await fsp.mkdir(path.join(root, 'tmp'), { recursive: true });
+  await fsp.mkdir(path.dirname(meta), { recursive: true });
+  const tmpMeta = tmpPath(root, hash, '.json');
+  await writeTmp(tmpMeta, new TextEncoder().encode(canonicalJSON(sidecar)));
+  await fsp.rename(tmpMeta, meta);
+
+  return sidecar;
+}
+
 /* ------------------------------------------------------------------------ *
  * Fetch → entry classification
  * ------------------------------------------------------------------------ */
@@ -404,8 +631,9 @@ async function responseBytes(res) {
  * Cache one capture — and, by default, its page requisites — into <root>.
  *
  * Idempotent + resumable: entries whose sidecar exists are skipped without
- * a fetch; the requisite frontier is recomputed from the document sidecar's
- * requisites[] on every run.
+ * a fetch; the fetch frontier is recomputed on every run as the union of the
+ * document sidecar's requisites[] and its browser-discovered dynamic[] (v3)
+ * children.
  *
  * Failure policy (per entry class):
  *   - document fetch failure / replay 404 / non-200: THROWS — the operator
@@ -502,12 +730,46 @@ export async function cacheCapture(waybackUrl, options = {}) {
     record({ key: docKey, hash: docPaths.hash, status: docSidecar.status, action: 'fetched', flag: null });
   }
 
-  // ---- requisite fan-out ---------------------------------------------------
-  if (wantRequisites && docSidecar.requisites.length > 0) {
-    // Frontier = edge-list children whose sidecar is missing (per-entry
+  // ---- requisite ∪ dynamic fan-out -----------------------------------------
+  // The fetch frontier is the union of the document's static edge-list
+  // children (requisites[]) and its browser-discovered dynamic children
+  // (dynamic[].key, v3). A dynamic child is fetched exactly like a requisite —
+  // the only difference is where its fetch URL comes from: a requisite's flag
+  // is re-extracted from the stored body, a dynamic child's flag is PERSISTED
+  // in the sidecar (it never appears in the bytes).
+  const docDynamic = Array.isArray(docSidecar.dynamic) ? docSidecar.dynamic : [];
+  if (wantRequisites && (docSidecar.requisites.length > 0 || docDynamic.length > 0)) {
+    // Well-formed dynamic children → fetch URL built from the STORED flag.
+    // Well-formedness is the SAME predicate fsck flags a malformed finding for
+    // (dynamicEntryError); a malformed entry is fsck's concern, so skip it
+    // defensively here so a bad entry never crashes cacheCapture.
+    const dynamicByKey = new Map();
+    for (const d of docDynamic) {
+      if (dynamicEntryError(d)) continue;
+      const flag = d.flag ?? null;
+      const sep = d.key.indexOf('/');
+      const ts = d.key.slice(0, sep);
+      const orig = d.key.slice(sep + 1);
+      dynamicByKey.set(d.key, {
+        key: d.key,
+        flag,
+        // Built from the persisted flag — NEVER re-extracted from the body.
+        waybackUrl: `https://web.archive.org/web/${ts}${flag ?? ''}/${orig}`
+      });
+    }
+
+    // Union child-key list = requisites (verbatim) followed by the well-formed
+    // dynamic keys, de-duplicated. Fetch-URL resolution below PREFERS the stored
+    // dynamic flag over a re-extracted static one: a dynamic child's flag is
+    // authoritative and never re-extracted, so when a key is in BOTH the stored
+    // dynamic flag wins BY RULE — the two flags MAY differ, and dynamic wins
+    // regardless (never re-derive a dynamic child's flag from the body).
+    const childKeys = [...new Set([...docSidecar.requisites, ...dynamicByKey.keys()])];
+
+    // Frontier = union children whose sidecar is missing (per-entry
     // completion; closure is this query, never a write barrier).
     const missing = [];
-    for (const childKey of docSidecar.requisites) {
+    for (const childKey of childKeys) {
       const childSidecar = await readSidecar(root, childKey);
       if (childSidecar) {
         const { hash } = await entryPaths(root, childKey);
@@ -518,8 +780,10 @@ export async function cacheCapture(waybackUrl, options = {}) {
     }
 
     if (missing.length > 0) {
-      // Recover flagged fetch URLs. On a fresh run docBytes is in hand; on
-      // resume, re-read the stored document body (see RESUME note above).
+      // Recover flagged fetch URLs for REQUISITE children. On a fresh run
+      // docBytes is in hand; on resume, re-read the stored document body (see
+      // RESUME note above). Dynamic children never live in the body — their
+      // URLs come from dynamicByKey (the persisted flag).
       if (docBytes === null && docSidecar.status === 'body') {
         docBytes = await fsp.readFile(docPaths.body);
       }
@@ -538,13 +802,20 @@ export async function cacheCapture(waybackUrl, options = {}) {
           record({ key: childKey, hash: null, status: 'failed', action: 'failed', flag: null });
           continue;
         }
-        const ref = byKey.get(childKey) ?? {
-          // Theoretical fallback (edge list and stored body always agree —
-          // same bytes, same extraction): flagless replay URL.
-          key: childKey,
-          flag: null,
-          waybackUrl: `https://web.archive.org/web/${childKey.slice(0, childKey.indexOf('/'))}/${childKey.slice(childKey.indexOf('/') + 1)}`
-        };
+        // Fetch-URL resolution: PREFER the stored dynamic flag (authoritative;
+        // never re-extracted), then the requisite re-extraction, then a flagless
+        // theoretical fallback. A key in both requisites and dynamic resolves to
+        // the dynamic URL — the flags agree, so it is equivalent, and this makes
+        // the "stored flag wins" rule hold uniformly.
+        const ref = dynamicByKey.get(childKey) ??
+          byKey.get(childKey) ?? {
+            // Theoretical fallback (a requisite key's edge list and stored body
+            // always agree — same bytes, same extraction; a dynamic key always
+            // has a dynamicByKey entry): flagless replay URL.
+            key: childKey,
+            flag: null,
+            waybackUrl: `https://web.archive.org/web/${childKey.slice(0, childKey.indexOf('/'))}/${childKey.slice(childKey.indexOf('/') + 1)}`
+          };
         const { hash } = await entryPaths(root, childKey);
         try {
           const res = await fetchImpl(ref.waybackUrl);

@@ -49,11 +49,14 @@ import type { Capture, CaptureMeta, CaptureStatus, Store } from './store.ts';
 
 /**
  * The sidecar schema versions this reader accepts (CACHE.md). v2 (#363) added
- * the `interstitial` status; a v2 sidecar is a backward-compatible superset, so
- * both v1 (the existing corpus) and v2 roots read here. A version outside the
- * set is genuinely unknown and fails loud — never a silent miss.
+ * the `interstitial` status; v3 added the optional `dynamic[]` array (browser-
+ * discovered requisites). Each is a backward-compatible superset, so v1 (the
+ * existing corpus), v2, and v3 roots all read here. The serve reader does NOT
+ * consume `dynamic` — it is a fetch/verify fact, not a serve fact — but must
+ * accept v3 roots rather than fail loud on them. A version outside the set is
+ * genuinely unknown and fails loud — never a silent miss.
  */
-const SUPPORTED_SIDECAR_VERSIONS = new Set([1, 2]);
+const SUPPORTED_SIDECAR_VERSIONS = new Set([1, 2, 3]);
 
 /** The slice of a v1 sidecar this store consumes. */
 interface Sidecar {

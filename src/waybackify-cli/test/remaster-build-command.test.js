@@ -1,4 +1,4 @@
-// `waybackify cache remaster` handler — thin-wrapper wiring test. The build
+// `waybackify remaster build` handler — thin-wrapper wiring test. The build
 // engine (spv/waybackify/remaster.js) is covered by its own suite; here we
 // prove the handler maps the two positional roots → remaster(), prints the
 // summary (--json for the raw record), and lets a build throw become exit 1.
@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { EXIT, run } from '../src/cli.js';
-import { cacheRemasterHandler } from '../src/commands/cache-remaster.js';
+import { remasterBuildHandler } from '../src/commands/remaster-build.js';
 
 const reportOf = () => ({
   hermeticRoot: path.resolve('/h'),
@@ -21,7 +21,7 @@ const reportOf = () => ({
 function handlerFor(report) {
   const calls = [];
   const out = [];
-  const handler = cacheRemasterHandler({
+  const handler = remasterBuildHandler({
     remaster: async (h, r) => { calls.push({ h, r }); return report; },
     log: l => out.push(l)
   });
@@ -30,14 +30,14 @@ function handlerFor(report) {
 
 test('maps the two positional roots → remaster(), resolved to absolute', async () => {
   const { handler, calls } = handlerFor(reportOf());
-  assert.equal(await run(['cache', 'remaster', '/h', '/o'], { handlers: { cacheRemaster: handler }, error: () => {} }), EXIT.OK);
+  assert.equal(await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, error: () => {} }), EXIT.OK);
   assert.equal(calls[0].h, path.resolve('/h'));
   assert.equal(calls[0].r, path.resolve('/o'));
 });
 
 test('prints a human summary line by default', async () => {
   const { handler, out } = handlerFor(reportOf());
-  await run(['cache', 'remaster', '/h', '/o'], { handlers: { cacheRemaster: handler }, error: () => {} });
+  await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, error: () => {} });
   assert.ok(out.some(l => l.includes('7 sidecars')));
   assert.ok(out.some(l => l.includes('remaster.build.json')));
 });
@@ -45,15 +45,15 @@ test('prints a human summary line by default', async () => {
 test('--json emits the raw run record', async () => {
   const report = reportOf();
   const { handler, out } = handlerFor(report);
-  await run(['cache', 'remaster', '/h', '/o', '--json'], { handlers: { cacheRemaster: handler }, error: () => {} });
+  await run(['remaster', 'build', '/h', '/o', '--json'], { handlers: { remasterBuild: handler }, error: () => {} });
   assert.equal(out.length, 1);
   assert.deepEqual(JSON.parse(out[0]), report);
 });
 
 test('a build throw → domain exit 1', async () => {
-  const handler = cacheRemasterHandler({
+  const handler = remasterBuildHandler({
     remaster: async () => { throw new Error('remaster: unsupported sidecar version 99'); },
     log: () => {}
   });
-  assert.equal(await run(['cache', 'remaster', '/h', '/o'], { handlers: { cacheRemaster: handler }, error: () => {} }), EXIT.DOMAIN);
+  assert.equal(await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, error: () => {} }), EXIT.DOMAIN);
 });

@@ -1,7 +1,7 @@
 # The remaster build — hermetic in, remastered out
 
-Living documentation for `waybackify cache remaster <hermetic-root> <remastered-root>`
-(handler: [`spv/waybackify-cli/src/commands/cache-remaster.js`](../src/commands/cache-remaster.js);
+Living documentation for `waybackify remaster build <hermetic-root> <remastered-root>`
+(handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/commands/remaster-build.js);
 engine: [`spv/waybackify/rewrite.js`](../../waybackify/rewrite.js);
 build: [`spv/waybackify/remaster.js`](../../waybackify/remaster.js)).
 
@@ -24,7 +24,7 @@ pages. Remaster closes that gap by producing a tier that stands alone.
 Storage is cheap; serve-time compute is the expensive, latency-adding,
 forever-verified path. So the rewrite is a **build**, not a per-request
 transform. The rules stay pure functions, so the same rules can also run
-per-request in a `serve.js --root` dev mode (iterating on a rule never needs a
+per-request in a `waybackify-serve --root` dev mode (iterating on a rule never needs a
 rebuild) — but production serves pre-rewritten bytes.
 
 Rewriting the *hermetic* bytes is rejected on purpose: the record stays
@@ -57,7 +57,7 @@ the one shape that resolves against any host, because the serving path parser
 ([`render/wayback/src/path.ts`](../../../render/wayback/src/path.ts)) accepts
 the optional `/web` prefix as a first-class capture request. A reference is
 rewritten **only when its capture exists in the corpus**; anything
-unsatisfiable is left byte-for-byte **foreign**, so a strict serve or rmfsck
+unsatisfiable is left byte-for-byte **foreign**, so a strict serve or remaster verify
 can surface it.
 
 The **corpus map** is `captureKey → true`, keyed exactly as the sidecar stores
@@ -114,7 +114,7 @@ collides with the capture namespace. It is a build artifact:
 Entries are sorted by key; body hashes are `null` for bodiless entries; no
 absolute paths ever enter the record (the tree is portable). `ruleVersion`
 tracks the reference-rewriting behavior; `engineVersion` tracks the build's
-output contract. rmfsck reads this record to prove a remastered tree is a
+output contract. remaster verify reads this record to prove a remastered tree is a
 current, faithful derivation of its hermetic source. (It is deliberately not
 called a "manifest": in waybackify a
 [Manifest](../../waybackify/README.md#manifest--universe--ledger) is a
@@ -144,5 +144,5 @@ the deterministic rewrite engine, the build record sorts its entries. Proven in
 - Engine: [`spv/waybackify/rewrite.js`](../../waybackify/rewrite.js),
   strip port: [`spv/waybackify/strip.js`](../../waybackify/strip.js)
 - Build: [`spv/waybackify/remaster.js`](../../waybackify/remaster.js),
-  handler: [`spv/waybackify-cli/src/commands/cache-remaster.js`](../src/commands/cache-remaster.js)
+  handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/commands/remaster-build.js)
 - Serving contract: [SERVE.md](./SERVE.md) · store: [CACHE.md](./CACHE.md)

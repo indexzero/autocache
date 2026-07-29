@@ -136,7 +136,7 @@ export class S3Store implements Store {
       // payloadHash defaults to UNSIGNED-PAYLOAD — the reads carry no body.
     });
     // The store calls the PLATFORM `fetch` directly — retry, when wanted, is
-    // composed at the global dispatcher (bin/bkfsck.js), never injected here.
+    // composed at the global dispatcher (the `bucket verify` handler), never injected here.
     // fetchOptions first so the signed method/headers can't be clobbered; the
     // merged init rides through the open-bag cast so Fastly's `backend` survives.
     const init: S3FetchInit = { ...this.#config.fetchOptions, method, headers };

@@ -27,13 +27,13 @@ waybackify search   <original-url> [--near <ts>] [--limit <n>]
 waybackify cache add      <wayback-url> --root <root> [--no-requisites]
 waybackify cache fill     <dir> --root <root> [--delay-ms N] [--abort-after N] [--max N] [--refresh] [--dry-run]
 waybackify cache verify   --root <root> [--fix] [--json] [--quiet]
-waybackify cache remaster <hermetic-root> <remastered-root> [--json]
-waybackify cache sync     --root <root> --bucket <name> [--empty-file <path>] [--dry-run]
+waybackify remaster build <hermetic-root> <remastered-root> [--json]
+waybackify bucket push      --root <root> --bucket <name> [--empty-file <path>] [--dry-run]
 ```
 
 `waybackify cache` with no verb prints the group's help. The cache root is
 spelled `--root|-r` on every command that reads or writes one (`cache add`,
-`cache fill`, `cache verify`, `cache sync`, `ledger`). `-o/--output` is reserved
+`cache fill`, `cache verify`, `bucket push`, `ledger`). `-o/--output` is reserved
 for commands that emit a single file (`manifest`, `rewrite`). The old spellings
 — `cache add -o` and `ledger --against` — still parse as deprecated aliases.
 
@@ -47,8 +47,8 @@ for commands that emit a single file (`manifest`, `rewrite`). The old spellings
 | `cache add` | Fetch ONE capture into a **local bucket image** at `<root>` — the wayback.charlie.dev mirror's population path. Syncing that dir to R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment. See [docs/CACHE.md](docs/CACHE.md) | files written under the shared key scheme; summary line on stdout |
 | `cache fill` | The **bulk, resumable** form of `cache add`: drive `<root>` to a COMPLETE asset closure of every capture the ledger under `<dir>` references (page + its requisites). A durable worklist is enumerated once and reused; transient trouble DEFERS, connection failures ABORT, a 404 is recorded gone. Killable + resumable. See [docs/BACKFILL.md](docs/BACKFILL.md) | progress on stderr; one JSON summary line on stdout; exit 1 on abort |
 | `cache verify` | **fsck** a cache root against its own sidecars: re-hash bodies, re-derive paths, and flag corruption, orphans, stale scratch, and any page whose **requisite closure is short** (a referenced `im_`/`cs_`/`js_`/`oe_` capture with no sidecar in the store — store-relative, no ledger, no network). Report-only unless `--fix` (reaps only orphan `cap/` + stale `tmp/`). See [docs/CACHE.md](docs/CACHE.md) | a per-category report on stdout (`--json` for the raw record); exit 1 while any discrepancy remains |
-| `cache remaster` | Build a **standalone remastered root** from a hermetic one — chrome stripped, wayback references localized, sidecars carried, a content-addressed build record written. Deterministic. See [docs/REMASTER.md](docs/REMASTER.md) | a summary line on stdout (`--json` for the run record) |
-| `cache sync` | Emit the **bucket-population batch** — one `s5cmd run` cp line per `cap/` object, ready to pipe into `s5cmd … run`. Never mutates, never talks to the network. See [docs/SYNC.md](docs/SYNC.md) | the batch on stdout (stderr under `--dry-run`); a summary on stderr |
+| `remaster build` | Build a **standalone remastered root** from a hermetic one — chrome stripped, wayback references localized, sidecars carried, a content-addressed build record written. Deterministic. See [docs/REMASTER.md](docs/REMASTER.md) | a summary line on stdout (`--json` for the run record) |
+| `bucket push` | Emit the **bucket-population batch** — one `s5cmd run` cp line per `cap/` object, ready to pipe into `s5cmd … run`. Never mutates, never talks to the network. See [docs/SYNC.md](docs/SYNC.md) | the batch on stdout (stderr under `--dry-run`); a summary on stderr |
 
 Composability is the design goal:
 

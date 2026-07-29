@@ -92,9 +92,13 @@ Verified docs are skipped entirely on re-run (no probe, no network) unless
 
 ## Usage
 
+This package is library-only (the standalone bin was dropped in #441); the
+completeness crawl is driven through the waybackify CLI as `cache crawl` (put all
+flags FIRST, before the positional URLs):
+
 ```sh
-waybackify-crawl --root <cache-root> <wayback-url> [<wayback-url> …]  # to fixpoint
-waybackify-crawl --root <cache-root> --ledger <dir>                   # every HTML doc in <dir>
+waybackify cache crawl --root <cache-root> <wayback-url> [<wayback-url> …]  # to fixpoint
+waybackify cache crawl --root <cache-root> --ledger <dir>                   # every HTML doc in <dir>
   --max-iterations N   (default 4)      --force
   --static-only        (loud warning)   --allow-escapes <file>
   --max N              (archive.org request cap)   --delay-ms N   --har
@@ -114,7 +118,7 @@ so.
 ## Programmatic
 
 ```js
-import { crawl } from 'waybackify-crawl';
+import { crawl } from '@charlie.dev/waybackify-crawl';
 await crawl(urls, { root, maxIterations, policy, maxRequests, deps });
 ```
 

@@ -1,4 +1,4 @@
-// `waybackify cache sync` handler — thin wiring over the library, per the
+// `waybackify bucket push` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing emitter (walk meta/, derive
 // object keys, shell-quote, carry status/content-type as native metadata) is
 // spv/waybackify/bucket-batch.js; this file translates the parsed argv payload
@@ -13,7 +13,7 @@
 // Full population runbook (both targets, creds, verification): docs/SYNC.md.
 
 /**
- * Build the `cache sync` handler. Dependency-injectable for tests; the bin
+ * Build the `bucket push` handler. Dependency-injectable for tests; the bin
  * wires the default.
  *
  * @param {Object} [deps]
@@ -22,7 +22,7 @@
  * @param {Function} [deps.error] - stderr line sink (the summary; batch under --dry-run)
  * @returns {Function} paparam runner: ({ flags }) => Promise<void>
  */
-export function cacheSyncHandler(deps = {}) {
+export function bucketPushHandler(deps = {}) {
   return async ({ flags }) => {
     const { log = console.log, error = console.error } = deps;
     const emitBucketBatch = deps.emitBucketBatch ?? (await import('@charlie.dev/waybackify/bucket-batch.js')).emitBucketBatch;
@@ -40,7 +40,7 @@ export function cacheSyncHandler(deps = {}) {
 
     // Summary ALWAYS on stderr — it must never contaminate the piped batch.
     error(
-      `cache sync: ${summary.total} objects (${summary.bodied} bodied, ${summary.bodiless} bodiless)` +
+      `bucket push: ${summary.total} objects (${summary.bodied} bodied, ${summary.bodiless} bodiless)` +
         `${flags.dryRun ? ' — dry-run, nothing written to stdout' : ''}`
     );
   };

@@ -20,7 +20,7 @@ import { RULE_VERSION } from '../rewrite.js';
 import { BUILD_NAME, ENGINE_VERSION, remaster } from '../remaster.js';
 
 // The `remaster <hermetic> <out>` bin smoke now lives in the CLI's
-// `cache remaster` command tests — the library ships no bin.
+// `remaster build` command tests — the library ships no bin.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.resolve(HERE, '../../../render/wayback/test/fixtures/cache-root');
 

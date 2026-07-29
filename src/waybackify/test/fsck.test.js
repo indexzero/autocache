@@ -251,9 +251,9 @@ describe('fsck — root contract (foreign entries)', () => {
     assert.equal(unresolvedFindings(report), 0, 'a fill-populated root verifies clean');
   });
 
-  it('does NOT flag remaster.build.json — it is `cache remaster`\'s sanctioned build record', async () => {
-    // Regression: `cache remaster` writes remaster.build.json at the remastered
-    // root; `cache verify` on that root must not report it foreign (exit 1).
+  it('does NOT flag remaster.build.json — it is `remaster build`\'s sanctioned build record', async () => {
+    // Regression: `remaster build` writes remaster.build.json at the remastered
+    // root; `remaster verify` on that root must not report it foreign (exit 1).
     const root = await mkroot();
     await commitBody(root, '2011/http://x.example/');
     await fsp.writeFile(path.join(root, 'remaster.build.json'), '{"schema":1}');

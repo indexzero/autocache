@@ -1,0 +1,20 @@
+waybackify remaster [flags] [command]
+
+Standalone-tier ops: build · verify
+
+The remastered standalone tier — the served form that carries NONE of
+archive.org and needs nothing off-host to render:
+
+  build     remaster a hermetic cache root into a standalone tree
+  verify    prove a remastered tree stands alone (static + dynamic)
+
+Run `waybackify remaster <verb> --help` for a verb's full surface.
+
+Flags:
+  --help|-h   Show help
+
+Commands:
+  build       Remaster a hermetic cache root into a standalone root
+  verify      Prove a remastered tree stands alone (no archive.org)
+
+part of the wayback.charlie.dev mirror tooling

@@ -101,4 +101,4 @@ waybackify cache fill path/to/your/posts --root /var/cache/wayback --refresh
 - [`ledger --root`](../README.md) — the audit join `cache fill` builds its
   worklist from (the same rows `ledger --root` prints).
 - [SYNC.md](SYNC.md) — projecting the populated cache root out to R2 / Fastly.
-  `cache sync` pushes the bucket *out*; `cache fill` pulls it *in* from the archive.
+  `bucket push` pushes the bucket *out*; `cache fill` pulls it *in* from the archive.

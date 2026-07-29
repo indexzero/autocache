@@ -5,12 +5,11 @@
  * `remaster verify`'s dynamic tier boots a strict server over a remastered root
  * and renders documents through the agent-browser CLI with the archive.org
  * family abort-routed, then classifies every request the page attempted. Crawl
- * DRIVES that engine — it does not reinvent it. Because a `spv/` package may
- * never import `render/wayback` (the decouple gate), and because the probe's
- * home MOVES into this package in T4 (where `remaster verify --tier dynamic`
- * lands under its §G name), the browser handling + request classifier live
- * HERE, ported faithfully from `render/wayback/src/rmfsck.ts`'s dynamic tier so
- * T4's re-home is import-path churn only. Two adaptations for the fixpoint:
+ * DRIVES that engine — it does not reinvent it. The browser handling + request
+ * classifier live HERE (and `remaster verify --tier dynamic`, in the sibling
+ * verify.js, reuses them): the crawl package owns the strict-serving browser
+ * probe under its §G name, so nothing imports it across the decouple gate. Two
+ * adaptations for the fixpoint:
  *
  *   1. the SERVER is supplied by the caller (crawl boots ONE localized,
  *      report-only `serveCacheRoot` and re-probes each iteration against it —
@@ -32,7 +31,7 @@ import { parseWaybackPath } from '@charlie.dev/waybackify-serve/path';
 const execFileAsync = promisify(execFile);
 
 /* ------------------------------------------------------------------------ *
- * Pure request classification (ported verbatim in spirit from rmfsck.ts,
+ * Pure request classification (the remaster-verify dynamic classifier,
  * enriched with resourceType)
  * ------------------------------------------------------------------------ */
 
@@ -120,7 +119,7 @@ export function isBrowserAvailable(browserCmd = 'agent-browser') {
 }
 
 /* ------------------------------------------------------------------------ *
- * agent-browser subprocess handling (ported from rmfsck.ts)
+ * agent-browser subprocess handling
  * ------------------------------------------------------------------------ */
 
 /**

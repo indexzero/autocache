@@ -33,8 +33,8 @@
 // ('text/html; charset=utf-8') are shell-quoted per POSIX single-quote rules,
 // which go-shellquote implements.
 //
-// LIBRARY-FIRST: all logic lives here; the CLI's `cache sync` handler
-// (spv/waybackify-cli/src/commands/cache-sync.js) is a thin argv+stdout
+// LIBRARY-FIRST: all logic lives here; the CLI's `bucket push` handler
+// (spv/waybackify-cli/src/commands/bucket-push.js) is a thin argv+stdout
 // wrapper. Object-key derivation is reused from key.js
 // (capturePath/metaPath), sidecar reading + its schema-version guard from
 // cache.js (readSidecar), and the CR/LF + ≤1000-byte metadata guard from

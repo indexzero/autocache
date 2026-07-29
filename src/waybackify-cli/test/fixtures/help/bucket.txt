@@ -1,0 +1,20 @@
+waybackify bucket [flags] [command]
+
+Bucket-projection ops: push · verify
+
+The object-store projection tier — project the cache root onto a remote
+R2 / Fastly bucket and prove the projection is faithful:
+
+  push      emit the bucket-population batch (cap/ objects) for a root
+  verify    prove a bucket is a byte-for-byte projection of a root
+
+Run `waybackify bucket <verb> --help` for a verb's full surface.
+
+Flags:
+  --help|-h   Show help
+
+Commands:
+  push        Emit the bucket-population batch for a cache root
+  verify      Verify a bucket is a byte-for-byte projection of a root
+
+part of the wayback.charlie.dev mirror tooling

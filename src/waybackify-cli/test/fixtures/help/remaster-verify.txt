@@ -1,0 +1,28 @@
+waybackify remaster verify [flags]
+
+Prove a remastered tree stands alone (no archive.org)
+
+Validate a remastered root, read-only, in two tiers. STATIC (always):
+scan every text body for web.archive.org / archive.org / absolute
+wayback-shaped escapes (zero allowlist), and check determinism — every
+body hashes to its build-record outputHash, and (given --hermetic) a
+fresh rebuild reproduces the committed build record byte-for-byte.
+DYNAMIC (--tier dynamic, requires agent-browser): render documents
+through a strict server with non-local origins abort-routed — a
+document passes iff it made zero non-local requests, raised zero CSP
+violations, and every local ref resolves in the corpus.
+
+Output: a per-tier report on stdout (--json for the raw report). Exit
+0 clean, 1 on any finding.
+
+Flags:
+  --root|-r <root>    the remastered tree to validate (cap/ + meta/ + remaster.build.json) — required
+  --hermetic <root>   the sealed source, for the determinism rebuild (else reproducibility is skipped)
+  --tier <list>       comma list of {static,dynamic}; default static
+  --sample <n>        dynamic tier: render only the first N HTML documents
+  --no-determinism    skip the rebuild half of the static determinism check
+  --json              emit the raw report as JSON
+  --out <path>        also write the report to this file
+  --help|-h           Show help
+
+part of the wayback.charlie.dev mirror tooling

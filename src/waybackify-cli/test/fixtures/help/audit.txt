@@ -1,0 +1,26 @@
+waybackify audit [flags] <dir>
+
+Checkpointed wayback-404 audit of a ledger
+
+Audit every capture the ledger under <dir> references — a checkpointed,
+resumable wayback-404 sweep. Captures are discovered via generic ledger
+discovery (the same corpus-agnostic frontier `cache fill` uses), then
+each UNIQUE capture is run through the verdict engine and its result
+appended to a JSONL checkpoint. Re-running skips checkpointed captures,
+so an interrupted run (archive.org throttling, ^C) resumes.
+
+Slow, network-heavy, human-supervised: it refuses to run under CI.
+Output: progress on stderr, a verdict summary on stdout.
+
+Arguments:
+  <dir>                 root to discover wayback.json manifests under
+
+Flags:
+  --checkpoint <file>   JSONL checkpoint file (resume/skip) — default <dir>/.audit/checkpoint.jsonl
+  --limit <n>           audit only the FIRST n unique captures, sorted by capture key
+  --delay-ms <n>        pause between captures (default 500)
+  --timeout <n>         per-request timeout in ms (default 60000)
+  --report <file>       also write the summary as JSON
+  --help|-h             Show help
+
+part of the wayback.charlie.dev mirror tooling

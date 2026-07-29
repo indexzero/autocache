@@ -2,16 +2,20 @@
 //
 // This module pins the ENTIRE command/option contract — names, args, flags,
 // help text, exit codes — with ZERO implementation. The command handlers
-// (manifest, rewrite, ledger, check, search, and the `cache` group's five
-// subcommands: add · fill · verify · remaster · sync) are injected by the bin;
-// a missing handler throws Not implemented (exit 70) as a defensive path.
-// Implementations never touch argv parsing.
+// (manifest, rewrite, ledger, check, search, audit, plus the three tier
+// groups: `cache` add · fill · crawl · verify, `remaster` build · verify, and
+// `bucket` push · verify) are injected by the bin; a missing handler throws Not
+// implemented (exit 70) as a defensive path. Implementations never touch argv
+// parsing.
 //
-// `cache` is a GROUP command (paparam nests: a command() may take child
-// command()s as args, and `cmd.help('cache','add')` yields the nested help).
-// It carries no runner of its own — every cache-store operation is a verb
-// under it, so `waybackify cache` with no verb prints the group's help (run()
-// mirrors bare `waybackify`).
+// §G noun-per-tier surface: each store tier is a GROUP command with a
+// {produce, verify} pair — cache {add/fill, crawl, verify}, remaster {build, verify},
+// bucket {push, verify}. `cache`/`remaster`/`bucket` are GROUP commands
+// (paparam nests: a command() may take child command()s as args, and
+// `cmd.help('remaster','verify')` yields the nested help). A group carries no
+// runner of its own — every operation is a verb under it, so `waybackify
+// remaster` with no verb prints the group's help (run() mirrors bare
+// `waybackify`).
 //
 // SURFACE v2 (#386): `manifest` means GENERATION (source + universe [+ seen]
 // → wayback.json), `rewrite` means APPLICATION (source + manifest → the
@@ -90,7 +94,7 @@
 //       70 is BSD sysexits EX_SOFTWARE ("internal software error") — see
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
 
-import { arg, bail, command, description, flag, footer, summary, validate } from 'paparam';
+import { arg, bail, command, description, flag, footer, rest, summary, validate } from 'paparam';
 
 export const EXIT = {
   OK: 0,
@@ -255,8 +259,8 @@ export function createCLI({ handlers = {}, onBail } = {}) {
   );
 
   // ---- cache: the cache-store command group --------------------------------
-  // add · fill · verify · remaster · sync. Each subcommand enforces its own
-  // required args/flags via validate() (MISSING_ARG is root-only — note 4).
+  // add · fill · verify. Each subcommand enforces its own required args/flags
+  // via validate() (MISSING_ARG is root-only — note 4).
 
   const cacheAdd = command(
     'add',
@@ -327,6 +331,56 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     handlers.cacheFill ?? notImplemented('cache fill')
   );
 
+  const cacheCrawl = command(
+    'crawl',
+    summary('Crawl documents to a dynamic-completeness fixpoint'),
+    description(
+      'Drive the `remaster verify` DYNAMIC probe to a fixpoint over documents in\n' +
+        'a cache root: render each through a strict server with non-local origins\n' +
+        'abort-routed, record the browser-discovered dynamic[] requisites it still\n' +
+        'reaches for, fetch them, and re-render — until a render makes zero\n' +
+        'unexpected web.archive.org requests (or --max-iterations is hit). The\n' +
+        'completeness pass behind the standalone tier.\n' +
+        '\n' +
+        'Pass replay URLs as trailing positionals (give FLAGS FIRST; a flag after\n' +
+        'a URL is rejected, never swallowed) and/or --ledger <dir> to crawl every\n' +
+        'HTML document under it. Needs agent-browser only when there is uncached\n' +
+        'work to probe (the verified fast-path is free); --static-only skips the\n' +
+        'browser entirely (LOUD: completeness is NOT verified).\n' +
+        '\n' +
+        'Output: a JSON run summary on stdout, progress on stderr. Exit 0 = every\n' +
+        'doc verified (or nothing to do), 1 = any flaky/unconverged/errored.'
+    ),
+    arg('[wayback-url]', 'a web.archive.org/web/<ts>/<orig> replay URL to crawl (repeatable — put all flags first)'),
+    rest('[wayback-url...]', 'additional replay URLs (every trailing positional)'),
+    flag('--root|-r <root>', 'cache root to crawl (already holds the docs) — required'),
+    flag('--output|-o <root>', 'deprecated alias of --root|-r'),
+    flag('--ledger <dir>', 'corpus batch: also crawl every HTML document under <dir>'),
+    flag('--max-iterations <n>', 'reference-depth cap per doc (default 4)'),
+    flag('--force', 're-probe docs already stamped verified'),
+    flag('--static-only', 'skip the browser probe; close ALREADY-recorded dynamic[] only (LOUD: completeness NOT verified)'),
+    flag('--allow-escapes <file>', 'allowed-escapes policy override (default: the committed policy)'),
+    flag('--max <n>', 'archive.org request cap for this run (default: unlimited)'),
+    flag('--delay-ms <n>', 'pacing between captures (default 1500)'),
+    flag('--har', 'write per-doc request logs to <root>/.crawl/har/'),
+    flag('--browser-cmd <cmd>', 'the agent-browser executable (default: agent-browser)'),
+    validate(({ flags }) => Boolean(flags.root || flags.output), 'missing required flag: --root|-r <root>'),
+    // paparam does not type flags — they arrive as strings. Reject a non-integer,
+    // negative, or Infinity-shaped value here (usage error, exit 2). Number('Infinity')
+    // is finite-LOOKING, so isSafeInteger (not a bare NaN check) is what keeps
+    // `--max Infinity` from removing the only termination bound.
+    validate(
+      ({ flags }) =>
+        ['maxIterations', 'delayMs', 'max'].every(k => {
+          if (flags[k] === undefined) return true;
+          const n = Number(flags[k]);
+          return Number.isSafeInteger(n) && n >= 0;
+        }),
+      '--max-iterations, --delay-ms, and --max must be non-negative integers'
+    ),
+    handlers.cacheCrawl ?? notImplemented('cache crawl')
+  );
+
   const cacheVerify = command(
     'verify',
     summary('Verify a cache root against its own sidecars'),
@@ -349,8 +403,41 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     handlers.cacheVerify ?? notImplemented('cache verify')
   );
 
-  const cacheRemaster = command(
-    'remaster',
+  const cache = command(
+    'cache',
+    summary('Cache-store ops: add · fill · crawl · verify'),
+    description(
+      'The cache-store command group — populate, complete, and verify the\n' +
+        'hermetic wayback.charlie.dev cache image (the archive of record):\n' +
+        '\n' +
+        '  add       fetch ONE capture (+ its requisites) into a cache root\n' +
+        '  fill      drive a whole ledger to full asset closure (bulk, resumable)\n' +
+        '  crawl     drive documents to a dynamic-completeness fixpoint (browser)\n' +
+        '  verify    check a cache root against its own sidecars (fsck)\n' +
+        '\n' +
+        'The remastered standalone tier lives under `remaster` and the bucket\n' +
+        'projection under `bucket`.\n' +
+        '\n' +
+        'Run `waybackify cache <verb> --help` for a verb\'s full surface.'
+    ),
+    // Footer BEFORE the subcommands: paparam's _addCommand copies the parent's
+    // footer onto a child only if the child has none YET, and root's footer
+    // never re-propagates down to the group's children. Set it here so each
+    // `cache <verb> --help` prints the same footer the flat verbs do — and so
+    // the live output matches root.help('cache', verb).
+    footer('part of the wayback.charlie.dev mirror tooling'),
+    cacheAdd,
+    cacheFill,
+    cacheCrawl,
+    cacheVerify
+  );
+
+  // ---- remaster: the standalone-tier command group -------------------------
+  // build · verify. `build` produces a standalone remastered root; `verify`
+  // proves it stands alone (delegating to spv/waybackify-crawl).
+
+  const remasterBuild = command(
+    'build',
     summary('Remaster a hermetic cache root into a standalone root'),
     description(
       'Remaster a hermetic cache root into a standalone remastered root —\n' +
@@ -360,23 +447,72 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'remastered tree.\n' +
         '\n' +
         'Output: a summary line on stdout (--json for the run record). The\n' +
-        'remastered root drops straight under a serve --root.'
+        'remastered root drops straight under a waybackify-serve --root.'
     ),
     arg('<hermetic-root>', 'sealed cache root to read (contains cap/ meta/)'),
     arg('<remastered-root>', 'output root to write (created; supply a fresh dir)'),
     flag('--json', 'emit the run summary as JSON'),
     validate(({ args }) => Boolean(args.hermeticRoot), 'missing required argument: <hermetic-root>'),
     validate(({ args }) => Boolean(args.remasteredRoot), 'missing required argument: <remastered-root>'),
-    handlers.cacheRemaster ?? notImplemented('cache remaster')
+    handlers.remasterBuild ?? notImplemented('remaster build')
   );
 
-  const cacheSync = command(
-    'sync',
+  const remasterVerify = command(
+    'verify',
+    summary('Prove a remastered tree stands alone (no archive.org)'),
+    description(
+      'Validate a remastered root, read-only, in two tiers. STATIC (always):\n' +
+        'scan every text body for web.archive.org / archive.org / absolute\n' +
+        'wayback-shaped escapes (zero allowlist), and check determinism — every\n' +
+        'body hashes to its build-record outputHash, and (given --hermetic) a\n' +
+        'fresh rebuild reproduces the committed build record byte-for-byte.\n' +
+        'DYNAMIC (--tier dynamic, requires agent-browser): render documents\n' +
+        'through a strict server with non-local origins abort-routed — a\n' +
+        'document passes iff it made zero non-local requests, raised zero CSP\n' +
+        'violations, and every local ref resolves in the corpus.\n' +
+        '\n' +
+        'Output: a per-tier report on stdout (--json for the raw report). Exit\n' +
+        '0 clean, 1 on any finding.'
+    ),
+    flag('--root|-r <root>', 'the remastered tree to validate (cap/ + meta/ + remaster.build.json) — required'),
+    flag('--hermetic <root>', 'the sealed source, for the determinism rebuild (else reproducibility is skipped)'),
+    flag('--tier <list>', 'comma list of {static,dynamic}; default static'),
+    flag('--sample <n>', 'dynamic tier: render only the first N HTML documents'),
+    flag('--no-determinism', 'skip the rebuild half of the static determinism check'),
+    flag('--json', 'emit the raw report as JSON'),
+    flag('--out <path>', 'also write the report to this file'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    handlers.remasterVerify ?? notImplemented('remaster verify')
+  );
+
+  const remaster = command(
+    'remaster',
+    summary('Standalone-tier ops: build · verify'),
+    description(
+      'The remastered standalone tier — the served form that carries NONE of\n' +
+        'archive.org and needs nothing off-host to render:\n' +
+        '\n' +
+        '  build     remaster a hermetic cache root into a standalone tree\n' +
+        '  verify    prove a remastered tree stands alone (static + dynamic)\n' +
+        '\n' +
+        'Run `waybackify remaster <verb> --help` for a verb\'s full surface.'
+    ),
+    footer('part of the wayback.charlie.dev mirror tooling'),
+    remasterBuild,
+    remasterVerify
+  );
+
+  // ---- bucket: the object-store projection command group -------------------
+  // push · verify. `push` emits the population batch; `verify` proves a remote
+  // bucket is a byte-for-byte projection of a cache root (over waybackify-serve).
+
+  const bucketPush = command(
+    'push',
     summary('Emit the bucket-population batch for a cache root'),
     description(
       'Walk a cache root and emit one `s5cmd run` cp line per entry — the\n' +
         'cap/ half of projecting the store onto an R2 / Fastly bucket, ready\n' +
-        'to pipe: `waybackify cache sync … | s5cmd --endpoint-url <ep> run`.\n' +
+        'to pipe: `waybackify bucket push … | s5cmd --endpoint-url <ep> run`.\n' +
         'Never mutates anything, never talks to the network.\n' +
         '\n' +
         'Output: the batch lines on stdout, a summary on stderr. --dry-run\n' +
@@ -389,47 +525,99 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     flag('--dry-run', 'write the batch to stderr; emit NOTHING to stdout'),
     validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
     validate(({ flags }) => Boolean(flags.bucket), 'missing required flag: --bucket <name>'),
-    handlers.cacheSync ?? notImplemented('cache sync')
+    handlers.bucketPush ?? notImplemented('bucket push')
   );
 
-  const cache = command(
-    'cache',
-    summary('Cache-store ops: add · fill · verify · remaster · sync'),
+  const bucketVerify = command(
+    'verify',
+    summary('Verify a bucket is a byte-for-byte projection of a root'),
     description(
-      'The cache-store command group — populate, verify, remaster, and\n' +
-        'project the wayback.charlie.dev mirror image:\n' +
+      'Prove a remote S3-compatible bucket serves identical content to a local\n' +
+        'cache root, in up to four layers: count parity per prefix, a full\n' +
+        'metadata sweep (HEAD every cap/), full body verification (GET + rehash\n' +
+        'every status:body), and serving parity sampled through the serve\n' +
+        'router. Reads through the same store the server serves from.\n' +
         '\n' +
-        '  add       fetch ONE capture (+ its requisites) into a cache root\n' +
-        '  fill      drive a whole ledger to full asset closure (bulk, resumable)\n' +
-        '  verify    check a cache root against its own sidecars (fsck)\n' +
-        '  remaster  build a standalone remastered root from a hermetic one\n' +
-        '  sync      emit the bucket-population batch (cap/ objects) for a root\n' +
-        '\n' +
-        'Run `waybackify cache <verb> --help` for a verb\'s full surface.'
+        'Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the\n' +
+        'environment, never flags. Output: a per-layer report on stdout (--json\n' +
+        'for the raw report). Exit 0 all layers pass, 1 on any mismatch.'
     ),
-    // Footer BEFORE the subcommands: paparam's _addCommand copies the parent's
-    // footer onto a child only if the child has none YET, and root's footer
-    // never re-propagates down to the group's children. Set it here so each
-    // `cache <verb> --help` prints the same footer the flat verbs do — and so
-    // the live output matches root.help('cache', verb).
+    flag('--root|-r <root>', 'local cache root — the archive of record — required'),
+    flag('--bucket <name>', 'target bucket name — required'),
+    flag('--endpoint <url>', 'S3-compatible base endpoint (e.g. https://<acct>.r2.cloudflarestorage.com) — required'),
+    flag('--region <r>', 'signing region (default auto — right for R2)'),
+    flag('--prefix <p>', 'key prefix within the bucket'),
+    flag('--sample <n>', 'Layer 4 sample size per status class (default 3)'),
+    flag('--layer <list>', 'comma list of layers 1–4 to run (default all)'),
+    flag('--concurrency <n>', 'in-flight HEAD/GET cap for Layers 2–3 (default 16)'),
+    flag('--json', 'emit the raw report as JSON'),
+    flag('--out <path>', 'also write the report to this file'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    validate(({ flags }) => Boolean(flags.bucket), 'missing required flag: --bucket <name>'),
+    validate(({ flags }) => Boolean(flags.endpoint), 'missing required flag: --endpoint <url>'),
+    handlers.bucketVerify ?? notImplemented('bucket verify')
+  );
+
+  const bucket = command(
+    'bucket',
+    summary('Bucket-projection ops: push · verify'),
+    description(
+      'The object-store projection tier — project the cache root onto a remote\n' +
+        'R2 / Fastly bucket and prove the projection is faithful:\n' +
+        '\n' +
+        '  push      emit the bucket-population batch (cap/ objects) for a root\n' +
+        '  verify    prove a bucket is a byte-for-byte projection of a root\n' +
+        '\n' +
+        'Run `waybackify bucket <verb> --help` for a verb\'s full surface.'
+    ),
     footer('part of the wayback.charlie.dev mirror tooling'),
-    cacheAdd,
-    cacheFill,
-    cacheVerify,
-    cacheRemaster,
-    cacheSync
+    bucketPush,
+    bucketVerify
+  );
+
+  const audit = command(
+    'audit',
+    summary('Checkpointed wayback-404 audit of a ledger'),
+    description(
+      'Audit every capture the ledger under <dir> references — a checkpointed,\n' +
+        'resumable wayback-404 sweep. Captures are discovered via generic ledger\n' +
+        'discovery (the same corpus-agnostic frontier `cache fill` uses), then\n' +
+        'each UNIQUE capture is run through the verdict engine and its result\n' +
+        'appended to a JSONL checkpoint. Re-running skips checkpointed captures,\n' +
+        'so an interrupted run (archive.org throttling, ^C) resumes.\n' +
+        '\n' +
+        'Slow, network-heavy, human-supervised: it refuses to run under CI.\n' +
+        'Output: progress on stderr, a verdict summary on stdout.'
+    ),
+    arg('<dir>', 'root to discover wayback.json manifests under'),
+    flag('--checkpoint <file>', 'JSONL checkpoint file (resume/skip) — default <dir>/.audit/checkpoint.jsonl'),
+    flag('--limit <n>', 'audit only the FIRST n unique captures, sorted by capture key'),
+    flag('--delay-ms <n>', 'pause between captures (default 500)'),
+    flag('--timeout <n>', 'per-request timeout in ms (default 60000)'),
+    flag('--report <file>', 'also write the summary as JSON'),
+    validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
+    validate(
+      ({ flags }) =>
+        ['limit', 'delayMs', 'timeout'].every(k => {
+          if (flags[k] === undefined) return true;
+          const n = Number(flags[k]);
+          return Number.isFinite(n) && n >= 0;
+        }),
+      '--limit, --delay-ms, and --timeout must be non-negative numbers'
+    ),
+    handlers.audit ?? notImplemented('audit')
   );
 
   const root = command(
     'waybackify',
-    summary('manifest / rewrite / ledger / check / search + the cache store group over the spv/waybackify library'),
+    summary('manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the spv/waybackify library'),
     description(
       'Human-operable, xargs-composable front door over spv/waybackify:\n' +
         'generate a manifest for a source file, rewrite it to its published\n' +
         'form, survey the ledger of manifests under a tree, hand-check a\n' +
-        'capture, re-pick a better one, and — under the `cache` group —\n' +
-        'populate, verify, remaster, and project the wayback.charlie.dev\n' +
-        'mirror image.\n' +
+        'capture, re-pick a better one, run a checkpointed corpus audit, and —\n' +
+        'under the `cache` / `remaster` / `bucket` groups — populate, verify,\n' +
+        'remaster, and project the wayback.charlie.dev mirror image.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
         '2 usage error · 3 suspect verdict (check only).'
@@ -440,7 +628,10 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     ledger,
     check,
     search,
-    cache
+    audit,
+    cache,
+    remaster,
+    bucket
   );
 
   // One bail handler at the root covers every subcommand (source-driven

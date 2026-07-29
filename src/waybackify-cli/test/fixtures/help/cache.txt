@@ -1,15 +1,17 @@
 waybackify cache [flags] [command]
 
-Cache-store ops: add · fill · verify · remaster · sync
+Cache-store ops: add · fill · crawl · verify
 
-The cache-store command group — populate, verify, remaster, and
-project the wayback.charlie.dev mirror image:
+The cache-store command group — populate, complete, and verify the
+hermetic wayback.charlie.dev cache image (the archive of record):
 
   add       fetch ONE capture (+ its requisites) into a cache root
   fill      drive a whole ledger to full asset closure (bulk, resumable)
+  crawl     drive documents to a dynamic-completeness fixpoint (browser)
   verify    check a cache root against its own sidecars (fsck)
-  remaster  build a standalone remastered root from a hermetic one
-  sync      emit the bucket-population batch (cap/ objects) for a root
+
+The remastered standalone tier lives under `remaster` and the bucket
+projection under `bucket`.
 
 Run `waybackify cache <verb> --help` for a verb's full surface.
 
@@ -19,8 +21,7 @@ Flags:
 Commands:
   add         Fetch one capture into a local bucket image
   fill        Fetch every capture a ledger references into a cache root
+  crawl       Crawl documents to a dynamic-completeness fixpoint
   verify      Verify a cache root against its own sidecars
-  remaster    Remaster a hermetic cache root into a standalone root
-  sync        Emit the bucket-population batch for a cache root
 
 part of the wayback.charlie.dev mirror tooling

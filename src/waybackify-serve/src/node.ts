@@ -130,7 +130,7 @@ export function serveBucket(options: ServeBucketOptions): Promise<RunningServer>
 }
 
 const USAGE = [
-  'usage: serve.js (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback]',
+  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback]',
   '  --root   <dir>   serve a local waybackify cache-root (FsStore)',
   '  --bucket <name>  serve a remote S3-compatible bucket (S3Store); --endpoint required,',
   '                   credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env',
@@ -153,6 +153,14 @@ function fail(message: string): void {
  * needed for a handful of flags.
  */
 export async function main(argv: string[]): Promise<void> {
+  // `--help` / `-h` is a request, not a bad invocation: print the usage banner
+  // and exit 0 (before parseArgs, which is strict and would reject the unknown
+  // flag with exit 2). The exit-2 path stays reserved for genuine usage errors.
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(USAGE);
+    return;
+  }
+
   let values;
   try {
     ({ values } = parseArgs({

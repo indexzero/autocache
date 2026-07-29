@@ -166,10 +166,10 @@ export async function fsck(root, options = {}) {
   // files are sanctioned exceptions, written INTO the root by design:
   //   .refetch/            `cache fill`'s durable worklist + gone ledger
   //                        (backfill.js) — a resumable bulk fetch's memory.
-  //   remaster.build.json  `cache remaster`'s build record (remaster.js
+  //   remaster.build.json  `remaster build`'s build record (remaster.js
   //                        BUILD_NAME) at a remastered root.
   // fsck must not flag its own sibling commands' state as foreign — else
-  // `cache fill`/`cache remaster` then `cache verify` on that root would report
+  // `cache fill`/`remaster build` then `cache verify` on that root would report
   // unclean forever (a non-reapable advisory). (Filenames are a deliberate
   // local copy, per this file's layout-knowledge note.)
   const allowed = new Set(['cap', 'meta', 'tmp', '.refetch', 'remaster.build.json']);

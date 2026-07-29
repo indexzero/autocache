@@ -1,0 +1,28 @@
+waybackify bucket verify [flags]
+
+Verify a bucket is a byte-for-byte projection of a root
+
+Prove a remote S3-compatible bucket serves identical content to a local
+cache root, in up to four layers: count parity per prefix, a full
+metadata sweep (HEAD every cap/), full body verification (GET + rehash
+every status:body), and serving parity sampled through the serve
+router. Reads through the same store the server serves from.
+
+Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the
+environment, never flags. Output: a per-layer report on stdout (--json
+for the raw report). Exit 0 all layers pass, 1 on any mismatch.
+
+Flags:
+  --root|-r <root>    local cache root — the archive of record — required
+  --bucket <name>     target bucket name — required
+  --endpoint <url>    S3-compatible base endpoint (e.g. https://<acct>.r2.cloudflarestorage.com) — required
+  --region <r>        signing region (default auto — right for R2)
+  --prefix <p>        key prefix within the bucket
+  --sample <n>        Layer 4 sample size per status class (default 3)
+  --layer <list>      comma list of layers 1–4 to run (default all)
+  --concurrency <n>   in-flight HEAD/GET cap for Layers 2–3 (default 16)
+  --json              emit the raw report as JSON
+  --out <path>        also write the report to this file
+  --help|-h           Show help
+
+part of the wayback.charlie.dev mirror tooling

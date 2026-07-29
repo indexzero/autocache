@@ -1,4 +1,4 @@
-waybackify cache remaster [flags] <hermetic-root> <remastered-root>
+waybackify remaster build [flags] <hermetic-root> <remastered-root>
 
 Remaster a hermetic cache root into a standalone root
 
@@ -9,7 +9,7 @@ root. Deterministic: the same hermetic tree yields a byte-identical
 remastered tree.
 
 Output: a summary line on stdout (--json for the run record). The
-remastered root drops straight under a serve --root.
+remastered root drops straight under a waybackify-serve --root.
 
 Arguments:
   <hermetic-root>     sealed cache root to read (contains cap/ meta/)

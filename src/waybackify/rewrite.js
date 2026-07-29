@@ -46,7 +46,7 @@ export { stripWaybackChrome } from './strip.js';
  * Rewrite-rule version. Bump when the MATCHING or REWRITING behavior changes
  * (a new reference class, a different target form, a strip-pattern change) so
  * a remastered tree's build record notes which rules produced it and
- * rmfsck can detect a stale rebuild.
+ * remaster verify can detect a stale rebuild.
  */
 export const RULE_VERSION = 1;
 

@@ -16,7 +16,7 @@ import { capturePath, metaPath } from '../key.js';
 import { emitBucketBatch, emitLine, shellQuote } from '../bucket-batch.js';
 
 // The stdout/stderr + --dry-run behavior formerly smoke-tested through the
-// library bin now lives in the CLI's `cache sync` command tests — the library
+// library bin now lives in the CLI's `bucket push` command tests — the library
 // ships no bin.
 const FIXTURE_ROOT = fileURLToPath(new URL('../../../render/wayback/test/fixtures/cache-root', import.meta.url));
 

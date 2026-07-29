@@ -86,6 +86,15 @@ describe('main — mode dispatch & validation', () => {
     assert.equal(process.exitCode, 2);
     assert.match(errors.join('\n'), /invalid --port/);
   });
+
+  it('--help prints the usage banner to stdout and exits 0 (a request, not a bad invocation)', async () => {
+    const logs: string[] = [];
+    mock.method(console, 'log', (msg: unknown) => void logs.push(String(msg)));
+    await main(['--help']);
+    assert.equal(process.exitCode, undefined); // never set the failing code
+    assert.equal(errors.length, 0); // no error banner
+    assert.match(logs.join('\n'), /usage: waybackify-serve/);
+  });
 });
 
 describe('serveBucket — remote S3 mode over a stubbed endpoint', () => {

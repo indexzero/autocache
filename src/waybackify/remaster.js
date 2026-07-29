@@ -9,7 +9,7 @@
 // chrome stripped, wayback references localized to the root-relative
 // `/web/<ts><flag>/<orig>` form. Everything an FsStore needs to serve —
 // `cap/<aa>/<hash>` + `meta/<aa>/<hash>.json` — comes out the far side, so a
-// remastered root drops straight under `serve.js --root`.
+// remastered root drops straight under `waybackify-serve --root`.
 //
 // WHY A BUILD, NOT SERVE-TIME (issue #362): storage is cheap; serve-time
 // compute is the expensive, latency-adding, forever-verified path. The
@@ -189,7 +189,7 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
 
       // A rewritten body changes its own hash + length; the carried sidecar
       // must tell the truth about the bytes it now sits beside (FsStore serves
-      // contentLength as the Content-Length header, and rmfsck re-verifies
+      // contentLength as the Content-Length header, and remaster verify re-verifies
       // contentHash against the body). Unchanged bodies keep the sidecar
       // byte-identical. Every other field — including the v3 `dynamic[]` array
       // — carries through verbatim via the spread: it is a doc-level fact,
@@ -219,7 +219,7 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   // reads cap/<aa>/<hash> and meta/<aa>/<hash>.json, so a root-level file is
   // invisible to serving — it never collides with the capture namespace. It
   // is a build artifact (rule + engine version, per-entry input/output body
-  // hashes) that rmfsck reads to prove a remastered tree is a current,
+  // hashes) that remaster verify reads to prove a remastered tree is a current,
   // faithful derivation of its hermetic source.
   // No absolute paths ever enter the build record — the remastered tree is
   // portable, and a machine-specific root would break the determinism check.

@@ -1,10 +1,10 @@
-waybackify cache sync [flags]
+waybackify bucket push [flags]
 
 Emit the bucket-population batch for a cache root
 
 Walk a cache root and emit one `s5cmd run` cp line per entry — the
 cap/ half of projecting the store onto an R2 / Fastly bucket, ready
-to pipe: `waybackify cache sync … | s5cmd --endpoint-url <ep> run`.
+to pipe: `waybackify bucket push … | s5cmd --endpoint-url <ep> run`.
 Never mutates anything, never talks to the network.
 
 Output: the batch lines on stdout, a summary on stderr. --dry-run

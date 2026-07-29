@@ -1,4 +1,4 @@
-// `waybackify cache remaster` handler — thin wiring over the library, per the
+// `waybackify remaster build` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing build (walk meta/, strip
 // chrome, localize wayback references, carry sidecars, write a
 // content-addressed build record — deterministically) is
@@ -13,7 +13,7 @@
 import path from 'node:path';
 
 /**
- * Build the `cache remaster` handler. Dependency-injectable for tests; the bin
+ * Build the `remaster build` handler. Dependency-injectable for tests; the bin
  * wires the default.
  *
  * @param {Object} [deps]
@@ -21,7 +21,7 @@ import path from 'node:path';
  * @param {Function} [deps.log] - stdout line sink (the summary / JSON)
  * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
  */
-export function cacheRemasterHandler(deps = {}) {
+export function remasterBuildHandler(deps = {}) {
   return async ({ args, flags }) => {
     const { log = console.log } = deps;
     const remaster = deps.remaster ?? (await import('@charlie.dev/waybackify/remaster.js')).remaster;

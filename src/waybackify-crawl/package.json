@@ -10,7 +10,8 @@
     "./probe": "./src/probe.js",
     "./mapkeys": "./src/mapkeys.js",
     "./policy": "./src/policy.js",
-    "./ledger": "./src/ledger.js"
+    "./ledger": "./src/ledger.js",
+    "./verify": "./src/verify.js"
   },
   "scripts": {
     "test": "node --test ./test/*.test.js"

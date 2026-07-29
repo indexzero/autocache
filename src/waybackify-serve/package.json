@@ -1,0 +1,40 @@
+{
+  "name": "@charlie.dev/waybackify-serve",
+  "version": "0.0.0",
+  "description": "The wayback.charlie.dev serving core \u2014 one Hono app (/web/<ts><flag?>/<url> router + chrome strip + standalone CSP), the Store abstraction (FsStore/S3Store/R2Store/MemoryStore), and the Node listener (serveCacheRoot/serveBucket). Extracted from render/wayback so production and the crawl probe serve the identical router.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "waybackify-serve": "./bin/serve.js"
+  },
+  "main": "src/app.ts",
+  "exports": {
+    ".": "./src/app.ts",
+    "./path": "./src/path.ts",
+    "./store": "./src/store.ts",
+    "./fsstore": "./src/fsstore.ts",
+    "./s3store": "./src/s3store.ts",
+    "./sigv4": "./src/sigv4.ts",
+    "./node": "./src/node.ts",
+    "./html": "./src/html.ts",
+    "./corpus": "./src/corpus.ts",
+    "./cloudflare": "./src/cloudflare.ts",
+    "./fastly": "./src/fastly.ts"
+  },
+  "scripts": {
+    "test": "node --test ./test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.fastly.json"
+  },
+  "author": "Charlie Robbins <npm@charlie.dev>",
+  "license": "MIT",
+  "dependencies": {
+    "@hono/node-server": "^2.0.8",
+    "hono": "^4.12.29",
+    "@charlie.dev/waybackify": "workspace:*"
+  },
+  "devDependencies": {
+    "@fastly/js-compute": "^3.43.1",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.2"
+  }
+}

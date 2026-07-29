@@ -25,7 +25,7 @@
 export function cacheAddHandler(deps = {}) {
   return async ({ args, flags }) => {
     const { log = console.log, error = console.error } = deps;
-    const cacheCapture = deps.cacheCapture ?? (await import('waybackify/cache.js')).cacheCapture;
+    const cacheCapture = deps.cacheCapture ?? (await import('@charlie.dev/waybackify/cache.js')).cacheCapture;
 
     const summary = await cacheCapture(args.waybackUrl, {
       // --root|-r is canonical; --output|-o is the deprecated alias (cli.js).

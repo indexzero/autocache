@@ -1,7 +1,7 @@
 {
   "name": "@charlie.dev/waybackify-cli",
   "version": "0.0.0",
-  "description": "waybackify — manifest / rewrite / ledger / check / search / cache over the spv/waybackify library. Surface v2: manifest = generation, rewrite = application, ledger = the collection.",
+  "description": "waybackify \u2014 manifest / rewrite / ledger / check / search / cache over the spv/waybackify library. Surface v2: manifest = generation, rewrite = application, ledger = the collection.",
   "private": true,
   "type": "module",
   "bin": {
@@ -20,6 +20,6 @@
   "license": "MIT",
   "dependencies": {
     "paparam": "^1.10.1",
-    "waybackify": "workspace:*"
+    "@charlie.dev/waybackify": "workspace:*"
   }
 }

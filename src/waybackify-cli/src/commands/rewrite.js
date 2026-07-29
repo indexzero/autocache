@@ -36,8 +36,8 @@ import fs from 'node:fs';
 export function rewriteHandler(deps = {}) {
   return async ({ args, flags }) => {
     const { error = console.error } = deps;
-    const apply = deps.apply ?? (await import('waybackify/manifest.js')).apply;
-    const readManifest = deps.readManifest ?? (await import('waybackify/manifest.js')).readManifest;
+    const apply = deps.apply ?? (await import('@charlie.dev/waybackify/manifest.js')).apply;
+    const readManifest = deps.readManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).readManifest;
 
     const source = fs.readFileSync(args.source, 'utf8');
     const { content, warnings } = apply(source, readManifest(flags.manifest));

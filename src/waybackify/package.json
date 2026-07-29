@@ -1,10 +1,28 @@
 {
-  "name": "waybackify",
+  "name": "@charlie.dev/waybackify",
   "version": "0.0.0",
   "description": "Transform dead links into Internet Archive Wayback Machine permalinks",
   "private": true,
   "type": "module",
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./audit.js": "./audit.js",
+    "./backfill.js": "./backfill.js",
+    "./bucket-batch.js": "./bucket-batch.js",
+    "./cache.js": "./cache.js",
+    "./fsck.js": "./fsck.js",
+    "./interstitial.js": "./interstitial.js",
+    "./key.js": "./key.js",
+    "./ledger.js": "./ledger.js",
+    "./manifest.js": "./manifest.js",
+    "./remaster.js": "./remaster.js",
+    "./requisites.js": "./requisites.js",
+    "./rewrite.js": "./rewrite.js",
+    "./strip.js": "./strip.js",
+    "./universe.js": "./universe.js",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "test": "node --test ./test/*.test.js",
     "test:live": "WAYBACK_LIVE=1 node --test ./test/*.test.js"

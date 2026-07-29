@@ -103,7 +103,7 @@ export function cacheVerifyHandler(deps = {}) {
     const { log = console.log } = deps;
     // If fsck is injected, every helper comes off deps (no library load);
     // otherwise lazily import the module for all four members.
-    const mod = deps.fsck ? deps : await import('waybackify/fsck.js');
+    const mod = deps.fsck ? deps : await import('@charlie.dev/waybackify/fsck.js');
     const { fsck, CATEGORIES, totalFindings, unresolvedFindings } = mod;
 
     // --root|-r is canonical (cli.js). --fix reaps ONLY orphan cap/ + stale

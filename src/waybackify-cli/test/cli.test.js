@@ -479,6 +479,6 @@ test('thin-CLI rule: the parsing layer imports nothing from spv/waybackify', () 
   for (const code of [src, bin]) {
     assert.doesNotMatch(code, /import\s*\(?\s*['"][^'"]*\/waybackify\//);
     assert.doesNotMatch(code, /from\s+['"][^'"]*\/waybackify\//);
-    assert.doesNotMatch(code, /from\s+['"]waybackify['"]/);
+    assert.doesNotMatch(code, /from\s+['"](@charlie\.dev\/)?waybackify['"]/);
   }
 });

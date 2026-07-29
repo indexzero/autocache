@@ -27,7 +27,7 @@
 export function cacheFillHandler(deps = {}) {
   return async ({ args, flags }) => {
     const { log = console.log, error = console.error } = deps;
-    const backfill = deps.backfill ?? (await import('waybackify/backfill.js')).backfill;
+    const backfill = deps.backfill ?? (await import('@charlie.dev/waybackify/backfill.js')).backfill;
 
     // paparam does not coerce flag values — they arrive as strings. Number()
     // the numeric knobs; an absent flag keeps the library default.

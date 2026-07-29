@@ -25,7 +25,7 @@
 export function cacheSyncHandler(deps = {}) {
   return async ({ flags }) => {
     const { log = console.log, error = console.error } = deps;
-    const emitBucketBatch = deps.emitBucketBatch ?? (await import('waybackify/bucket-batch.js')).emitBucketBatch;
+    const emitBucketBatch = deps.emitBucketBatch ?? (await import('@charlie.dev/waybackify/bucket-batch.js')).emitBucketBatch;
 
     const { lines, summary } = await emitBucketBatch(flags.root, {
       bucket: flags.bucket,

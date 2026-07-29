@@ -1,0 +1,24 @@
+{
+  // Fastly-flavored typecheck for the Compute entry (src/fastly.ts) and the
+  // shared remote-store path it drives. src/fastly.ts references
+  // @fastly/js-compute's ambient types, which collide with @types/node — so
+  // the Compute adapter gets Fastly's world and nobody else's. src/s3store.ts +
+  // src/sigv4.ts are the WebCrypto SigV4 remote read path that must run on
+  // Compute unchanged (#286): pinning them here too (types:
+  // ["@fastly/js-compute"], no @types/node) makes a stray `node:` import or
+  // Node-only global in that path fail the build in THIS package.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["@fastly/js-compute"]
+  },
+  "files": ["src/fastly.ts", "src/s3store.ts", "src/sigv4.ts"]
+}

@@ -1,0 +1,28 @@
+{
+  // Node-flavored typecheck for the whole serving core: the app/parser/store
+  // sources plus the tests (Node-native — fs walking, node:test). Web-standard
+  // globals (Response, ReadableStream, fetch) come from @types/node 24's undici
+  // surface, which matches what both edge runtimes provide closely enough for
+  // this package's structural style. src/fastly.ts is EXCLUDED — Fastly's
+  // ambient globals (@fastly/js-compute) conflict with Node's, so the Compute
+  // adapter (and the S3 remote path it shares) typecheck under their own
+  // tsconfig.fastly.json.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // Sources import each other (and the sibling waybackify package's .js
+    // modules against their .d.ts) with explicit extensions; noEmit makes the
+    // .ts extensions legal under Node's extensionless type stripping.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test"],
+  "exclude": ["src/fastly.ts"]
+}

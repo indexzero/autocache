@@ -24,7 +24,7 @@ import path from 'node:path';
 export function cacheRemasterHandler(deps = {}) {
   return async ({ args, flags }) => {
     const { log = console.log } = deps;
-    const remaster = deps.remaster ?? (await import('waybackify/remaster.js')).remaster;
+    const remaster = deps.remaster ?? (await import('@charlie.dev/waybackify/remaster.js')).remaster;
 
     const hermeticRoot = path.resolve(args.hermeticRoot);
     const remasteredRoot = path.resolve(args.remasteredRoot);

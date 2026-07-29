@@ -305,3 +305,75 @@ describe('auditCapture', () => {
     assert.match(v.reason, /near-empty/);
   });
 });
+
+// Signal 1.5: the corpus audit is a client of the canonical interstitial
+// detector (#363), so captures that are archive.org talking ABOUT content —
+// wrapper stubs, redirect interstitials, extension mismatches — are named
+// wayback404 instead of slipping through as good/suspect. These fixtures are the
+// exact ones interstitial.test.js uses (the #292 sweep's two species), reused
+// here so audit-time and cache-time detection are pinned to the same bytes.
+const INTERSTITIAL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/interstitial');
+const interstitial = name => fs.readFileSync(path.join(INTERSTITIAL, name), 'utf8');
+
+describe('auditCapture — interstitial species (#363 wired into #248)', () => {
+  it('wrapper stub → wayback404 with signature (was: suspect near-empty)', async () => {
+    const v = await auditCapture(GOOD_URL, {
+      wayback: fakeWayback(cdx200),
+      fetch: fakeFetch({ body: interstitial('wrapper-stub.html') })
+    });
+    assert.equal(v.verdict, 'wayback404');
+    assert.equal(v.signature, 'wrapper-stub');
+    assert.match(v.reason, /interstitial: wrapper-stub/);
+    assert.equal(v.target, undefined, 'wrapper stub carries no redirect target');
+    // The body snippet must ride along for the human pass (#248's FP guard).
+    assert.match(v.evidence, /title:|text:/, 'interstitial evidence keeps a body snippet');
+  });
+
+  it('redirect interstitial → wayback404 with the DECODED target (the re-point pass needs it)', async () => {
+    const v = await auditCapture(GOOD_URL, {
+      wayback: fakeWayback(cdx200),
+      fetch: fakeFetch({ body: interstitial('redirect-interstitial.html') })
+    });
+    assert.equal(v.verdict, 'wayback404');
+    assert.equal(v.signature, 'redirect-interstitial');
+    assert.match(v.reason, /interstitial: redirect-interstitial/);
+    assert.deepEqual(v.target, { url: 'http://example.com/moved-here', timestamp: '20140403040000' });
+    assert.match(v.evidence, /→ 20140403040000\/http:\/\/example\.com\/moved-here/);
+  });
+
+  it('interstitial verdict wins over the soft-404 marker path (precise name, not coincidence)', async () => {
+    // The redirect fixture also carries a "Got an HTTP 302 … at crawl time"
+    // phrase the soft-404 heuristics would match; Signal 1.5 runs FIRST, so the
+    // verdict names the species rather than the coincidental prose marker.
+    const v = await auditCapture(GOOD_URL, {
+      wayback: fakeWayback(cdx200),
+      fetch: fakeFetch({ body: interstitial('redirect-interstitial.html') })
+    });
+    assert.equal(v.signature, 'redirect-interstitial');
+    assert.doesNotMatch(v.reason, /soft-404/);
+  });
+
+  it('extension mismatch (.pdf served as text/html) → SUSPECT, not a confident wayback404', async () => {
+    // A .pdf/.txt URL can legitimately replay as HTML (vanity URLs, viewer/landing
+    // pages); extension-mismatch inspects no body and maps to none of #248's
+    // dead-link classes, so the live audit surfaces it for a human as suspect
+    // rather than confidently condemning it (P3 remediation, both reviewers).
+    const PDF_URL = 'https://web.archive.org/web/20140403040000/http://example.com/report.pdf';
+    const v = await auditCapture(PDF_URL, {
+      wayback: fakeWayback({ timestamp: '20140403040000', original: 'http://example.com/report.pdf', statuscode: '200', mimetype: 'text/html' }),
+      fetch: fakeFetch({ contentType: 'text/html', body: '<html><body>An actual document lives here, not a wrapper.</body></html>' })
+    });
+    assert.equal(v.verdict, 'suspect');
+    assert.equal(v.signature, 'extension-mismatch');
+    assert.match(v.reason, /interstitial: extension-mismatch/);
+  });
+
+  it('a genuinely good HTML capture is untouched by Signal 1.5 (no false positive)', async () => {
+    const v = await auditCapture(GOOD_URL, {
+      wayback: fakeWayback(cdx200),
+      fetch: fakeFetch({ body: fixture('good-post.html') })
+    });
+    assert.equal(v.verdict, 'good');
+    assert.equal(v.signature, undefined);
+  });
+});

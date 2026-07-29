@@ -11,10 +11,14 @@
 //                 fetch failures). NEVER silently good: when the signals don't
 //                 agree, a human looks.
 //
-// Two signals, in order:
+// Signals, in order:
 //   1. CDX exact-capture lookup (WaybackMachine#getCapture) — the capture's own
 //      archived `statuscode`. 4xx/5xx captures are wayback404 without touching
 //      the replay.
+//   1.5 Named interstitial species (#363) on the RAW replay body — wrapper stubs
+//      and redirect interstitials (the archive talking ABOUT content, not
+//      serving it) → wayback404 with a `signature` and a decoded `target`; the
+//      weaker extension-mismatch signature → suspect. See Signal 1.5 below.
 //   2. Soft-404 content heuristics on the replay body — wayback toolbar chrome
 //      stripped first so markers match the CAPTURED page, not archive.org's UI.
 //
@@ -25,6 +29,11 @@
 // spv/waybackify-cli `check` command is a thin wrapper over `auditCapture`.
 
 import { WaybackMachine } from './index.js';
+// Import cycle (safe): interstitial.js imports parseWaybackUrl from THIS module.
+// Both bindings are referenced only at call-time (inside function bodies), never
+// at module-evaluation time, so ESM resolves the live bindings before either is
+// invoked. The offline suite loading audit.js is the standing proof.
+import { detectInterstitial, INTERSTITIAL_SIGNATURES } from './interstitial.js';
 
 /**
  * Parse a wayback replay URL into its parts. Tolerates replay flags on the
@@ -234,7 +243,10 @@ const isHtmlish = ct => !ct || /html|xhtml|^text\/plain/i.test(ct);
  *   (defaults to the wayback instance's impit fetch)
  * @returns {Promise<{ verdict: 'good'|'wayback404'|'suspect', statuscode: string|null,
  *   reason: string, checkedAt: string, evidence: string,
- *   url: string, timestamp: string, original: string }>}
+ *   url: string, timestamp: string, original: string,
+ *   signature?: string, target?: { url: string, timestamp: string } }>}
+ *   `signature`/`target` are present only when Signal 1.5 (interstitial
+ *   detection, #363) fired — `target` only for a redirect interstitial.
  */
 export async function auditCapture(waybackUrl, options = {}) {
   const parsed = parseWaybackUrl(waybackUrl);
@@ -290,7 +302,44 @@ export async function auditCapture(waybackUrl, options = {}) {
   }
 
   const body = await res.text();
+
   const { verdict, reason, evidence } = classifyReplayHtml(body);
+
+  // Signal 1.5: named interstitial species (#363) — the archive talking ABOUT
+  // content rather than serving it. Runs on the RAW body: the distinctive
+  // markers (webComponentLoaderConfig, setTimeout(go,5000), the id="playback"
+  // viewer iframe) live in <script> bodies and tag attributes that
+  // classifyReplayHtml's chrome-strip + text projection erases, so a redirect
+  // interstitial lacking a prose crawl-time phrase would otherwise slip through
+  // as good/suspect. Severity follows the strength of the signature:
+  //   - wrapper-stub (≈ #248's "empty shell") and redirect-interstitial
+  //     (#248's "redirect-to-garbage") each need TWO co-occurring archive-owned
+  //     markers → confidently not-content → wayback404. Redirect interstitials
+  //     carry the decoded `target` the #248 re-point pass needs. (Caveat: the
+  //     target is best-effort — decodeRedirectTarget scans the raw body, where a
+  //     toolbar link could in principle be latched; the human reviews it.)
+  //   - extension-mismatch inspects NO body (extension vs content-type alone),
+  //     maps to none of #248's dead-link classes, and a `.pdf`/`.txt` URL can
+  //     legitimately replay as HTML — so it is only SUSPECT here, surfaced for a
+  //     human, never a confident wayback404. (At cache-commit time, #363 still
+  //     refuses it; the live audit is deliberately more conservative.)
+  // cdxStatus is NOT passed: the archived-error signature is already covered by
+  // Signal 1's CDX statuscode check above. The classifyReplayHtml evidence rides
+  // along so the human pass keeps a body snippet (#248's false-positive guard).
+  const species = detectInterstitial({ key: `${timestamp}/${original}`, contentType, body });
+  if (species) {
+    const interstitialVerdict =
+      species.signature === INTERSTITIAL_SIGNATURES.extensionMismatch ? 'suspect' : 'wayback404';
+    const ev = species.target
+      ? `interstitial ${species.signature} → ${species.target.timestamp}/${species.target.url} | ${evidence}`
+      : `interstitial ${species.signature} | ${evidence}`;
+    return {
+      ...done(interstitialVerdict, statuscode, `interstitial: ${species.signature}`, ev),
+      signature: species.signature,
+      ...(species.target ? { target: species.target } : {})
+    };
+  }
+
   const notes = [];
   if (statuscode && isRedirectStatus(statuscode)) notes.push(`capture archived as HTTP ${statuscode} redirect; judged its destination`);
   if (cdxFailed) notes.push(`cdx lookup failed (${cdxFailed}); verdict is content-only`);

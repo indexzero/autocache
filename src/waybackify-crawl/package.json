@@ -1,0 +1,30 @@
+{
+  "name": "@charlie.dev/waybackify-crawl",
+  "version": "0.0.0",
+  "description": "The wayback.charlie.dev completeness crawler — drives the `remaster verify` dynamic probe (strict-serving browser render, archive.org abort-routed) to a fixpoint, recording browser-discovered dynamic[] requisites until a render makes zero unexpected web.archive.org requests. Depends down on waybackify (facts) + waybackify-serve (the shared serving core); never on render/wayback.",
+  "private": true,
+  "type": "module",
+  "main": "src/crawl.js",
+  "exports": {
+    ".": "./src/crawl.js",
+    "./probe": "./src/probe.js",
+    "./mapkeys": "./src/mapkeys.js",
+    "./policy": "./src/policy.js",
+    "./ledger": "./src/ledger.js"
+  },
+  "scripts": {
+    "test": "node --test ./test/*.test.js"
+  },
+  "keywords": [
+    "wayback",
+    "internet-archive",
+    "crawl",
+    "completeness"
+  ],
+  "author": "Charlie Robbins <npm@charlie.dev>",
+  "license": "MIT",
+  "dependencies": {
+    "@charlie.dev/waybackify": "workspace:*",
+    "@charlie.dev/waybackify-serve": "workspace:*"
+  }
+}

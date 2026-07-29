@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "_comment": "Allowed-escapes policy (design Q-004). Third-party hosts a rendered mirror doc may request that the deployed strict CSP is SUPPOSED to block — analytics/trackers/ad-tags/parked-domain widgets. A matched request is reported as an `allowed-escape` (visible, non-failing); an UNMATCHED non-local request still fails the doc. Host matching is suffix-aware (an entry matches the host and its subdomains). Seeded from the non-local-request findings a read-only dynamic probe surfaced over the cache-2026-07-27-remastered baseline (localize + report-only, 20-doc sample, 2026-07-29). Missing wayback captures are NOT escapes — they are the fetch worklist (src/mapkeys.js).",
+  "escapes": [
+    { "host": "pagead2.googlesyndication.com", "reason": "Google AdSense ad-tag script; a tracker the strict CSP blocks by design" },
+    { "host": "m.webtrends.com", "reason": "Webtrends analytics beacon; a tracker the strict CSP blocks by design" },
+    { "host": "csp.godaddy.com", "reason": "GoDaddy parked-domain content-serving platform asset; off-host, CSP-blocked by design" },
+    { "host": "parked-content.godaddy.com", "reason": "GoDaddy parked-domain placeholder content; off-host, CSP-blocked by design" },
+    { "host": "img6.wsimg.com", "reason": "GoDaddy/wsimg parked-domain image CDN; off-host, CSP-blocked by design" }
+  ]
+}

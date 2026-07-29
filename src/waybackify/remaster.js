@@ -33,14 +33,12 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { RULE_VERSION, classifyContentType, rewrite } from './rewrite.js';
+import { SUPPORTED_SIDECAR_VERSIONS } from './cache.js';
 
 /** Remaster tool version. Bump on a change to the build's OUTPUT contract
  *  (build-record shape, sidecar carry-over rules, tree layout) — distinct from
  *  rewrite.js's RULE_VERSION (the reference-rewriting behavior). */
 export const ENGINE_VERSION = 1;
-
-/** The v1 sidecar schema this build understands (mirrors cache.js). */
-const SIDECAR_VERSION = 1;
 
 /** Build-record schema version + filename. NOT a "manifest": in waybackify a
  *  Manifest is a wayback.json rewrite program (manifest.js) — this file is
@@ -142,7 +140,10 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const sidecars = [];
   for (const entry of found) {
     const sidecar = JSON.parse(await fsp.readFile(entry.metaPath, 'utf8'));
-    if (sidecar.v !== SIDECAR_VERSION) {
+    // Accept every sidecar version cache.js currently writes (v1 + v2 today) —
+    // not a hard-pinned 1, which silently rejected the v2 sidecars cacheCapture
+    // has written since the schema bump.
+    if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
       throw new Error(`remaster: unsupported sidecar version ${sidecar.v} at ${entry.metaPath}`);
     }
     if (typeof sidecar.key !== 'string') {

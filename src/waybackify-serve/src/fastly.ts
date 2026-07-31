@@ -32,7 +32,7 @@
  */
 
 import { SecretStore } from 'fastly:secret-store';
-import { createApp } from './app.ts';
+import { createApp, type SplitOptions } from './app.ts';
 import { S3Store } from './s3store.ts';
 
 /** Deployment coordinates — all required except the strict-serving switch. */
@@ -67,6 +67,15 @@ export interface FastlyHandlerConfig {
    * corpus miss answers a local 404, never a 302 to live web.archive.org.
    */
   liveFallback?: boolean;
+  /**
+   * The chrome/content split (#320): chrome host (attribution shell, no bytes)
+   * and content host (capture bytes + `frame-ancestors`), the Fastly analogue
+   * of the Cloudflare `CHROME_HOST`/`CONTENT_HOST` vars. Fastly has no runtime
+   * `[vars]`, so a deployment supplies this as an owner-side config constant.
+   * Absent = split off (single-host), the default until the content zone is
+   * onboarded. A malformed split fails loud (createApp validates).
+   */
+  split?: SplitOptions;
 }
 
 async function handle(request: Request, config: FastlyHandlerConfig): Promise<Response> {
@@ -88,7 +97,7 @@ async function handle(request: Request, config: FastlyHandlerConfig): Promise<Re
     fetchOptions: { backend: config.backend }
   });
 
-  return createApp(store, { liveFallback: config.liveFallback ?? false }).fetch(request);
+  return createApp(store, { liveFallback: config.liveFallback ?? false, split: config.split }).fetch(request);
 }
 
 /**

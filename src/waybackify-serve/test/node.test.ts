@@ -87,6 +87,14 @@ describe('main — mode dispatch & validation', () => {
     assert.match(errors.join('\n'), /invalid --port/);
   });
 
+  it('rejects a present-but-blank --split-scheme (never a silent https drop)', async () => {
+    // resolveSplit runs before any store is opened, so this fails fast with no
+    // server booted. A DEFINED but empty scheme is a mistake, not the default.
+    await main(['--root', '/some/root', '--chrome-host', 'a.example', '--content-host', 'b.example', '--split-scheme', '']);
+    assert.equal(process.exitCode, 2);
+    assert.match(errors.join('\n'), /--split-scheme must be non-empty/);
+  });
+
   it('--help prints the usage banner to stdout and exits 0 (a request, not a bad invocation)', async () => {
     const logs: string[] = [];
     mock.method(console, 'log', (msg: unknown) => void logs.push(String(msg)));

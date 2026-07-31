@@ -20,7 +20,7 @@ const ARCHIVE = `https://web.archive.org/web/${TS}/${ORIGINAL}`;
 /** The standalone CSP served on HTML document responses (src/app.ts). */
 const DOCUMENT_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-src 'self'";
+  "img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-src 'self'; form-action 'self'";
 
 describe('createApp', () => {
   let store: MemoryStore;

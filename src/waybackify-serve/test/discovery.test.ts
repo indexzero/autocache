@@ -29,7 +29,7 @@ const TS = '20140403040000';
 /** The standalone CSP, spelled once for the header-posture assertions. */
 const DOCUMENT_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-src 'self'";
+  "img-src 'self' data:; font-src 'self'; media-src 'self'; connect-src 'self'; frame-src 'self'; form-action 'self'";
 
 const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
 

@@ -38,10 +38,20 @@
 
 import { serve, type ServerType } from '@hono/node-server';
 import { parseArgs } from 'node:util';
-import { createApp } from './app.ts';
+import { createApp, validateSplit, type SplitOptions } from './app.ts';
 import { FsStore } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import type { SigV4Credentials } from './sigv4.ts';
+
+/**
+ * Production hostnames for the chrome/content split (#320), the defaults the
+ * `--split` shorthand selects. Local dev overrides both with any hostnames it
+ * sends via the `Host:` header (see `--chrome-host`/`--content-host`).
+ */
+const PROD_SPLIT: SplitOptions = {
+  chromeHost: 'wayback.charlie.dev',
+  contentHost: 'wayback.charlie.webring.delivery'
+};
 
 export interface ServeOptions {
   /** Cache-root directory (the `waybackify cache -o` target). Required. */
@@ -62,6 +72,8 @@ export interface ServeOptions {
   localize?: { has(key: string): boolean };
   /** CSP header posture (design §D3); `'enforce'` (default) or `'report-only'`. */
   cspMode?: 'enforce' | 'report-only';
+  /** The chrome/content split (#320); off by default (single-host serving). */
+  split?: SplitOptions;
 }
 
 /** Remote-bucket serving config — the S3Store leg of the two modes. */
@@ -82,6 +94,8 @@ export interface ServeBucketOptions {
   hostname?: string;
   /** Restore the miss→302-to-live fallback (`--live-fallback`); off by default. */
   liveFallback?: boolean;
+  /** The chrome/content split (#320); off by default (single-host serving). */
+  split?: SplitOptions;
 }
 
 export interface RunningServer {
@@ -114,8 +128,8 @@ function listen(app: ReturnType<typeof createApp>, port: number, hostname: strin
  * server is listening, with the actual bound address.
  */
 export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
-  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode } = options;
-  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode }), port, hostname);
+  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split } = options;
+  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split }), port, hostname);
 }
 
 /**
@@ -124,24 +138,71 @@ export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
  * server is listening, with the actual bound address.
  */
 export function serveBucket(options: ServeBucketOptions): Promise<RunningServer> {
-  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false } = options;
+  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split } = options;
   const store = new S3Store({ endpoint, bucket, region, prefix, credentials });
-  return listen(createApp(store, { liveFallback }), port, hostname);
+  return listen(createApp(store, { liveFallback, split }), port, hostname);
 }
 
 const USAGE = [
-  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback]',
+  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback] [--split | --chrome-host H --content-host H [--split-scheme S]]',
   '  --root   <dir>   serve a local waybackify cache-root (FsStore)',
   '  --bucket <name>  serve a remote S3-compatible bucket (S3Store); --endpoint required,',
   '                   credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env',
   '  --live-fallback  answer a corpus miss with a 302 to live web.archive.org instead of a',
-  '                   local 404 (off by default — strict serving never leaves this server)'
+  '                   local 404 (off by default — strict serving never leaves this server)',
+  '  --split          enable the #320 chrome/content split with the production hostnames',
+  '                   (chrome wayback.charlie.dev, content wayback.charlie.webring.delivery)',
+  '  --chrome-host H  chrome-origin host for the split (attribution UI + iframe shell; no bytes)',
+  '  --content-host H content-origin host for the split (serves capture bytes cross-origin);',
+  '                   --chrome-host and --content-host are given together and override --split',
+  '  --split-scheme S scheme for the split cross-origin refs (default https; use http for local dev)'
 ].join('\n');
 
 /** console.error the message above the usage banner, and set a failing exit. */
 function fail(message: string): void {
   console.error(`${message}\n${USAGE}`);
   process.exitCode = 2;
+}
+
+/**
+ * Resolve the chrome/content split (#320) from CLI flags. Returns the
+ * SplitOptions, `undefined` (split off — single-host serving), or an Error
+ * message string when the flags are inconsistent (exactly one of
+ * --chrome-host/--content-host given). `--chrome-host`+`--content-host`
+ * override `--split`; `--split` alone selects the production hostnames.
+ */
+function resolveSplit(values: {
+  split?: boolean;
+  'chrome-host'?: string;
+  'content-host'?: string;
+  'split-scheme'?: string;
+}): SplitOptions | undefined | { error: string } {
+  const chromeHost = values['chrome-host'];
+  const contentHost = values['content-host'];
+  const scheme = values['split-scheme'];
+  // A DEFINED but blank `--split-scheme` is a mistake, not the https default —
+  // fail loud rather than silently drop it to https (the Node analogue of the
+  // Cloudflare SPLIT_SCHEME fix). An ABSENT scheme keeps the https default.
+  const schemeBlank = scheme !== undefined && scheme.trim() === '';
+  let split: SplitOptions | undefined;
+  // Presence, not truthiness: `--chrome-host ''` is a mistake, not "unset".
+  if (chromeHost !== undefined || contentHost !== undefined) {
+    if (!chromeHost || !contentHost) {
+      return { error: '--chrome-host and --content-host must be given together (non-empty)' };
+    }
+    if (schemeBlank) return { error: '--split-scheme must be non-empty ("http" or "https") when given' };
+    split = { chromeHost, contentHost, ...(scheme ? { scheme } : {}) };
+  } else if (values.split) {
+    if (schemeBlank) return { error: '--split-scheme must be non-empty ("http" or "https") when given' };
+    split = { ...PROD_SPLIT, ...(scheme ? { scheme } : {}) };
+  } else {
+    // --split-scheme alone (no hosts, no --split) is a mistake, not a no-op.
+    if (scheme !== undefined) return { error: '--split-scheme needs --split or --chrome-host/--content-host' };
+    return undefined;
+  }
+  const err = validateSplit(split);
+  if (err) return { error: err };
+  return split;
 }
 
 /**
@@ -173,7 +234,11 @@ export async function main(argv: string[]): Promise<void> {
         prefix: { type: 'string' },
         port: { type: 'string' },
         host: { type: 'string' },
-        'live-fallback': { type: 'boolean' }
+        'live-fallback': { type: 'boolean' },
+        split: { type: 'boolean' },
+        'chrome-host': { type: 'string' },
+        'content-host': { type: 'string' },
+        'split-scheme': { type: 'string' }
       }
     }));
   } catch (error) {
@@ -188,6 +253,12 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  const split = resolveSplit(values);
+  if (split && 'error' in split) {
+    fail(split.error);
+    return;
+  }
+
   // Exactly one mode: --root or --bucket, never both, never neither.
   if (root && bucket) {
     fail('--root and --bucket are mutually exclusive — pick one mode');
@@ -199,8 +270,8 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   if (root) {
-    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback });
-    console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}`);
+    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split });
+    console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
     return;
   }
 
@@ -221,6 +292,6 @@ export async function main(argv: string[]): Promise<void> {
     ? { accessKeyId, secretAccessKey, sessionToken }
     : { accessKeyId, secretAccessKey };
 
-  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback });
-  console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}`);
+  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split });
+  console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
 }

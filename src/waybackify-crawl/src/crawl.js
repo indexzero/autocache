@@ -40,7 +40,7 @@ import { WaybackMachine } from '@charlie.dev/waybackify';
 import { serveCacheRoot } from '@charlie.dev/waybackify-serve/node';
 import { loadCorpusKeySet } from '@charlie.dev/waybackify-serve/corpus';
 import { compilePolicy } from './policy.js';
-import { mapFindings } from './mapkeys.js';
+import { isTrackingBeacon, mapFindings } from './mapkeys.js';
 import { createBrowserProbe } from './probe.js';
 import { ensureCrawlDir, verifiedKeys, stampVerified, invalidateVerified, recordFlaky, writeHar } from './ledger.js';
 
@@ -366,7 +366,18 @@ async function crawlDoc(doc, ctx) {
   const recordedKeys = new Set();
   const docSidecar = await readSidecar(root, doc.key);
   for (const d of Array.isArray(docSidecar?.dynamic) ? docSidecar.dynamic : []) {
-    if (d && typeof d.key === 'string') recordedKeys.add(d.key);
+    if (!d || typeof d.key !== 'string') continue;
+    // A recorded tracking-beacon key is un-fetchable by construction: a prior
+    // run recorded a per-render-random GA/ad pixel (e.g. `.../__utm.gif?utmn=…`)
+    // that no capture exists for, so it never gets a sidecar → it would strand
+    // this doc as permanently `unresolved` (blocking completeness) even though
+    // the browser has since stopped requesting it. The persisted entry shape is
+    // `{ key, flag, via, firstSeen? }` — no original-url field — so recover the
+    // original from the key (`<ts>/<original>`, the ts having no slash) and skip
+    // beacons HERE at the seed, before they can enter recordedKeys → unresolved
+    // (mirrors the mapFindings drop that keeps NEW beacons off the frontier).
+    if (isTrackingBeacon(d.key.slice(d.key.indexOf('/') + 1))) continue;
+    recordedKeys.add(d.key);
   }
 
   let dynamicCount = 0;

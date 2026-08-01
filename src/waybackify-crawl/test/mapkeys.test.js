@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { inferFlag, mapFindings } from '../src/mapkeys.js';
+import { inferFlag, isTrackingBeacon, mapFindings } from '../src/mapkeys.js';
 
 const now = () => '2026-07-29T00:00:00.000Z';
 
@@ -110,6 +110,90 @@ test('unparseable local path is dropped and logged, never a key', () => {
   assert.equal(entries.length, 0);
   assert.equal(unparseable.length, 1);
   assert.ok(dropped.some(l => l.includes('unparseable')));
+});
+
+test('non-local: a foreign wayback GA __utm.gif beacon is DROPPED (tracking beacon), not a key', () => {
+  const dropped = [];
+  const { entries, escapes, beacons } = mapFindings(
+    {
+      nonLocal: [
+        {
+          // A real IA replay of a GA pixel — a `/web/` URL whose per-render
+          // random utmn/utmhid means every render mints a fresh, unconvergeable key.
+          url: 'https://web.archive.org/web/20120515000000im_/http://www.google-analytics.com/__utm.gif?utmwv=5.3.7&utmn=1734829201&utmhid=482910473&utmt=event',
+          resourceType: 'image'
+        }
+      ]
+    },
+    { now, log: l => dropped.push(l) }
+  );
+  assert.equal(entries.length, 0); // never recorded as a captureKey
+  assert.equal(escapes.length, 0); // not a policy escape either
+  assert.equal(beacons.length, 1);
+  assert.ok(dropped.some(l => l.includes('tracking beacon') && l.includes('__utm.gif')));
+});
+
+test('non-local: a foreign wayback content asset is KEPT (the beacon drop does not over-reach)', () => {
+  const { entries, beacons } = mapFindings(
+    { nonLocal: [{ url: 'https://web.archive.org/web/20200101000000cs_/https://content.example/style.css', resourceType: 'stylesheet' }] },
+    { now }
+  );
+  assert.equal(beacons.length, 0);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].key, '20200101000000/https://content.example/style.css');
+});
+
+test('non-local: fonts and video behind a foreign wayback URL are CONTENT, not beacons — KEPT', () => {
+  const { entries, beacons } = mapFindings(
+    {
+      nonLocal: [
+        { url: 'https://web.archive.org/web/20200101000000cs_/https://fonts.googleapis.com/css?family=Lato', resourceType: 'stylesheet' },
+        { url: 'https://web.archive.org/web/20200101000000/https://r1---sn-abc.googlevideo.com/videoplayback?id=42', resourceType: 'media' },
+        { url: 'https://web.archive.org/web/20200101000000im_/https://0.gravatar.com/avatar/deadbeef?s=64', resourceType: 'image' }
+      ]
+    },
+    { now }
+  );
+  assert.equal(beacons.length, 0);
+  assert.equal(entries.length, 3); // all three stay real findings
+});
+
+test('non-local: the IA-chrome drop still works alongside the beacon drop', () => {
+  const dropped = [];
+  const { entries, escapes, chrome, beacons } = mapFindings(
+    { nonLocal: [{ url: 'https://web.archive.org/_static/js/bundle.js', resourceType: 'script' }] },
+    { now, log: l => dropped.push(l) }
+  );
+  assert.equal(entries.length, 0);
+  assert.equal(escapes.length, 0);
+  assert.equal(chrome.length, 1);
+  assert.equal(beacons.length, 0);
+  assert.ok(dropped.some(l => l.includes('chrome')));
+});
+
+test('isTrackingBeacon: matches the documented denylist and spares content', () => {
+  // Beacons (dropped).
+  assert.ok(isTrackingBeacon('http://www.google-analytics.com/__utm.gif?utmn=99'));
+  assert.ok(isTrackingBeacon('https://ssl.google-analytics.com/collect?v=1'));
+  assert.ok(isTrackingBeacon('http://google-analytics.com/collect'));
+  assert.ok(isTrackingBeacon('http://192.168.112.2o7.net/b/ss/x'));
+  assert.ok(isTrackingBeacon('https://cnn.112.2o7.net/b/ss/y'));
+  assert.ok(isTrackingBeacon('https://metrics.example.omtrdc.net/b/ss/z'));
+  assert.ok(isTrackingBeacon('http://ad.doubleclick.net/adj/site'));
+  assert.ok(isTrackingBeacon('http://ib.adnxs.com/pixel'));
+  assert.ok(isTrackingBeacon('https://csi.gstatic.com/csi?v=3'));
+  assert.ok(isTrackingBeacon('https://pixel.wp.com/g.gif?v=ext'));
+  assert.ok(isTrackingBeacon('https://stats.wp.com/e-201.js'));
+  assert.ok(isTrackingBeacon('https://www.facebook.com/tr?id=1&ev=PageView'));
+  // Content (spared) — the over-reach guard.
+  assert.equal(isTrackingBeacon('https://fonts.googleapis.com/css?family=Lato'), false);
+  assert.equal(isTrackingBeacon('https://r1.googlevideo.com/videoplayback?id=1'), false);
+  assert.equal(isTrackingBeacon('https://0.gravatar.com/avatar/abc'), false);
+  assert.equal(isTrackingBeacon('https://fonts.gstatic.com/s/lato/x.woff2'), false); // NOT csi.gstatic.com
+  assert.equal(isTrackingBeacon('https://i0.wp.com/example.com/img.png'), false); // NOT the stats pixel host
+  assert.equal(isTrackingBeacon('https://www.facebook.com/plugins/like.php'), false); // FB content, not /tr
+  assert.equal(isTrackingBeacon('https://www.google-analytics.com/analytics.js'), false); // the LIBRARY is content
+  assert.equal(isTrackingBeacon('not a url'), false);
 });
 
 test('every produced entry is well-formed for recordDynamic (via/flag/key)', async () => {

@@ -324,6 +324,36 @@ test('F1 disappearing failed key: a recorded-but-unfetched child blocks verifica
   await fsp.rm(root, { recursive: true, force: true });
 });
 
+test('F1b recorded tracking beacon (unfetchable, no sidecar) is filtered from the frontier → doc VERIFIES; a recorded content key still blocks', async () => {
+  const doc = K(0, 'https://ex.com/');
+  // A prior run recorded a GA `__utm.gif` pixel whose per-render-random query
+  // means no capture exists → it never gets a sidecar (unfetchable by
+  // construction). A recorded CONTENT css with no sidecar is the control.
+  const beacon = '20080925091045/http://www.google-analytics.com/__utm.gif?utmn=1734829201&utmhid=482910473';
+  const content = '20080925091045/https://ex.com/missing.css';
+
+  // Beacon-only sidecar: the render is now CLEAN (browser stopped asking). With
+  // the seed-filter the beacon leaves recordedKeys → not unresolved → VERIFIES.
+  const rootB = await tmpRoot();
+  const storeB = makeStore({ [doc]: { dynamic: [{ key: beacon, flag: 'im_', via: 'remaster-verify' }] } });
+  const worldB = { docs: { [doc]: {} }, fetchOutcome: { [beacon]: 'fail' } }; // never archivable → no sidecar
+  const rB = await crawl([doc], { root: rootB, deps: makeDeps(storeB, worldB, newCounters()), policy: noPolicy, delayMs: 0 });
+  assert.equal(rB.results[0].status, 'verified'); // reverting the seed-filter makes this 'flaky' (no-progress on the beacon)
+  await fsp.rm(rootB, { recursive: true, force: true });
+
+  // Control: a recorded CONTENT key with no sidecar is NOT a beacon, so it stays
+  // in recordedKeys → unresolved → still correctly blocks (flaky, no-progress).
+  const rootC = await tmpRoot();
+  const storeC = makeStore({ [doc]: { dynamic: [{ key: content, flag: 'cs_', via: 'remaster-verify' }] } });
+  const worldC = { docs: { [doc]: {} }, fetchOutcome: { [content]: 'fail' } };
+  const rC = await crawl([doc], { root: rootC, deps: makeDeps(storeC, worldC, newCounters()), policy: noPolicy, delayMs: 0 });
+  assert.equal(rC.results[0].status, 'flaky');
+  const flakyC = await readJsonl(path.join(rootC, '.crawl', 'flaky.jsonl'));
+  assert.equal(flakyC.at(-1).reason, 'no-progress');
+  assert.deepEqual(flakyC.at(-1).residualMissing, [content]);
+  await fsp.rm(rootC, { recursive: true, force: true });
+});
+
 test('F2 no-evidence render (zero observed requests) fails closed as probe-error, never verified', async () => {
   const root = await tmpRoot();
   const doc = K(0, 'https://ex.com/');

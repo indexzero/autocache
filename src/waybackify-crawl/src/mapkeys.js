@@ -39,6 +39,92 @@ import { captureKey } from '@charlie.dev/waybackify/key.js';
 const RAW_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);
 
 /**
+ * Tracking / analytics / ad beacon denylist, matched against the ORIGINAL url
+ * inside a `/web/<ts>/<original>` replay (host + path).
+ *
+ * WHY DROP THESE. The archived page fired these pixels at render. The replay
+ * serves them as legitimate `/web/<ts>/<original>` capture URLs, so the generic
+ * non-`/web/` archive.org chrome filter below does NOT catch them. Their query
+ * strings carry per-render-RANDOM params (GA's `utmn`/`utmhid`, session ids,
+ * cache busters), so every render mints a fresh URL → a fresh captureKey → the
+ * frontier can never mark them "already cached" and the document never
+ * converges. They are un-mirrorable by construction and carry zero page
+ * fidelity — fire-and-forget tracking. Dropping them here (mirroring the
+ * IA-chrome drop below) is the only way the fixpoint terminates on such docs.
+ *
+ * CONSERVATIVE by design. Match a specific host — or a host whose ENTIRE domain
+ * is a beacon collector — plus, where that host ALSO serves real content, an
+ * exact path. Never a broad host glob that could eat content: fonts
+ * (`fonts.googleapis.com`, Typekit), video (`googlevideo.com`), avatars
+ * (`gravatar.com`) and social widgets are CONTENT, not beacons, and stay real
+ * findings (see the over-reach test). Extend by appending a rule.
+ *
+ * Each rule: `host` (exact string, case-insensitive) or a `RegExp`, OR
+ * `hostSuffix` (whole-domain beacon collector); with an optional `path` (exact
+ * string or `RegExp`) required when the host also serves content.
+ * @type {Array<{host?: string|RegExp, hostSuffix?: string, path?: string|RegExp}>}
+ */
+const TRACKING_BEACONS = [
+  // Google Analytics — the classic `__utm.gif` pixel (utmn/utmhid randomized)
+  // and the Universal Analytics `/collect` endpoint.
+  { host: /^(?:www\.|ssl\.)?google-analytics\.com$/, path: /^\/(?:__utm\.gif|collect)$/ },
+  // Adobe / Omniture SiteCatalyst — the entire *.2o7.net and *.omtrdc.net data
+  // domains are beacon collectors.
+  { hostSuffix: '.2o7.net' },
+  { hostSuffix: '.omtrdc.net' },
+  // DoubleClick ad beacons.
+  { hostSuffix: '.doubleclick.net' },
+  // AppNexus ad beacons.
+  { hostSuffix: '.adnxs.com' },
+  // Google CSI timing beacon — csi.gstatic.com ONLY; gstatic.com at large
+  // serves fonts/static content, so never suffix-match it.
+  { host: 'csi.gstatic.com' },
+  // WordPress.com stats pixels.
+  { host: 'pixel.wp.com' },
+  { host: 'stats.wp.com' },
+  // Facebook pixel — facebook.com serves real content, so scope to the exact
+  // `/tr` tracking path.
+  { host: /^(?:www\.)?facebook\.com$/, path: /^\/tr$/ }
+];
+
+/** Does `host` satisfy a beacon rule's host constraint? */
+function beaconHostMatches(host, rule) {
+  if (rule.hostSuffix) {
+    return host === rule.hostSuffix.replace(/^\./, '') || host.endsWith(rule.hostSuffix);
+  }
+  if (rule.host instanceof RegExp) return rule.host.test(host);
+  return host === rule.host;
+}
+
+/** Does `path` satisfy a beacon rule's (optional) path constraint? */
+function beaconPathMatches(path, rule) {
+  if (!rule.path) return true;
+  if (rule.path instanceof RegExp) return rule.path.test(path);
+  return path === rule.path;
+}
+
+/**
+ * Is `originalUrl` a known non-deterministic tracking/analytics/ad beacon?
+ * These are un-capturable by construction (per-render-random query params) and
+ * carry no page fidelity, so a beacon finding is DROPPED rather than recorded as
+ * a captureKey the frontier could never converge on. See `TRACKING_BEACONS`.
+ * @param {string} originalUrl - the `<original>` from a `/web/<ts>/<original>`.
+ * @returns {boolean}
+ */
+export function isTrackingBeacon(originalUrl) {
+  let host;
+  let path;
+  try {
+    const u = new URL(originalUrl);
+    host = u.hostname.toLowerCase();
+    path = u.pathname;
+  } catch {
+    return false; // unparseable → not our call to make; leave it a finding.
+  }
+  return TRACKING_BEACONS.some(rule => beaconHostMatches(host, rule) && beaconPathMatches(path, rule));
+}
+
+/**
  * The replay flag to record for a leaked child. A leaked request's OWN flag is
  * honored ONLY when it is a raw-byte flag (`im_|cs_|js_|oe_`); a FRAMING flag
  * (`if_`/`id_`) is not a raw-byte flag, so it — like an absent flag — falls to
@@ -84,11 +170,12 @@ function entryOf(key, flag, now) {
  * @param {(line: string) => void} [opts.log] - sink for dropped candidates.
  * @returns {{ entries: Array<{key: string, flag: string, via: string, firstSeen: string}>,
  *   escapes: Array<{url: string, resourceType?: string}>,
- *   unparseable: string[], chrome: string[] }}
+ *   unparseable: string[], chrome: string[], beacons: string[] }}
  *   `entries` — the worklist (missing wayback assets, local + foreign, deduped
  *   by key, first occurrence wins the flag). `escapes` — genuinely third-party
- *   non-local requests to weigh against the policy. `unparseable`/`chrome` —
- *   dropped candidates, surfaced for logging, never recorded.
+ *   non-local requests to weigh against the policy. `unparseable`/`chrome`/
+ *   `beacons` — dropped candidates, surfaced for logging, never recorded
+ *   (`beacons`: non-deterministic tracking pixels, see `isTrackingBeacon`).
  */
 export function mapFindings(leaks, opts = {}) {
   const now = opts.now ?? (() => new Date().toISOString());
@@ -97,6 +184,7 @@ export function mapFindings(leaks, opts = {}) {
   const escapes = [];
   const unparseable = [];
   const chrome = [];
+  const beacons = [];
 
   const add = (key, flag) => {
     if (!byKey.has(key)) byKey.set(key, entryOf(key, flag, now));
@@ -127,6 +215,14 @@ export function mapFindings(leaks, opts = {}) {
   for (const n of leaks.nonLocal ?? []) {
     const wb = parseWaybackUrl(n.url);
     if (wb) {
+      // A non-deterministic tracking beacon is a `/web/` URL too, so it slips
+      // past the archive.org-chrome filter below — drop it here on its ORIGINAL
+      // url, or its per-render-random query mints an unconvergeable key forever.
+      if (isTrackingBeacon(wb.original)) {
+        beacons.push(n.url);
+        log?.(`mapkeys: tracking beacon, dropped: ${n.url}`);
+        continue;
+      }
       add(captureKey(wb.timestamp, wb.original), inferFlag(wb.flags || null, n.resourceType));
       continue;
     }
@@ -146,5 +242,5 @@ export function mapFindings(leaks, opts = {}) {
     escapes.push(n);
   }
 
-  return { entries: [...byKey.values()], escapes, unparseable, chrome };
+  return { entries: [...byKey.values()], escapes, unparseable, chrome, beacons };
 }

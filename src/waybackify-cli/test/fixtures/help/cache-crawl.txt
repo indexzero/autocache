@@ -36,4 +36,4 @@ Flags:
   --browser-cmd <cmd>      the agent-browser executable (default: agent-browser)
   --help|-h                Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

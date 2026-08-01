@@ -1,6 +1,6 @@
 # waybackify-crawl
 
-The completeness crawler for the wayback.charlie.dev mirror. It closes the one
+The completeness crawler for a wayback mirror. It closes the one
 gap the static cache pipeline cannot: assets a **browser** discovers at runtime
 — `@font-face`/`url()` inside CSS bodies, `@import` chains, `srcset`,
 JS-initiated fetches — which never enter the statically-extracted `requisites[]`,

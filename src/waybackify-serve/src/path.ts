@@ -1,11 +1,11 @@
 /**
  * Wayback path parsing (#249).
  *
- * wayback.charlie.dev mirrors the Wayback Machine's replay path shape so that
+ * A wayback mirror mirrors the Wayback Machine's replay path shape so that
  * pointing a corpus link at the mirror is a pure host swap:
  *
  *   web.archive.org/web/20140403040000/http://sudomakethought.com/post/...
- *   wayback.charlie.dev/20140403040000/http://sudomakethought.com/post/...
+ *   wayback.example.com/20140403040000/http://sudomakethought.com/post/...
  *
  * Everything here is pure string work — no runtime globals — so the same
  * parser serves three masters: the edge handler (src/app.ts), the corpus

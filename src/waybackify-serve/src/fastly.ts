@@ -32,7 +32,7 @@
  */
 
 import { SecretStore } from 'fastly:secret-store';
-import { createApp, type SplitOptions } from './app.ts';
+import { createApp, type ServedCopy, type SplitOptions } from './app.ts';
 import { S3Store } from './s3store.ts';
 
 /** Deployment coordinates — all required except the strict-serving switch. */
@@ -76,6 +76,13 @@ export interface FastlyHandlerConfig {
    * onboarded. A malformed split fails loud (createApp validates).
    */
   split?: SplitOptions;
+  /**
+   * Per-deployment served-page description copy (#453) — the index and 404
+   * description paragraphs, supplied as an owner-side config constant (Fastly
+   * has no runtime `[vars]`). Absent, the generic site-agnostic defaults ship.
+   * TRUSTED, injected as RAW HTML (carries `<a>` links) — see {@link ServedCopy}.
+   */
+  copy?: ServedCopy;
 }
 
 async function handle(request: Request, config: FastlyHandlerConfig): Promise<Response> {
@@ -97,7 +104,7 @@ async function handle(request: Request, config: FastlyHandlerConfig): Promise<Re
     fetchOptions: { backend: config.backend }
   });
 
-  return createApp(store, { liveFallback: config.liveFallback ?? false, split: config.split }).fetch(request);
+  return createApp(store, { liveFallback: config.liveFallback ?? false, split: config.split, copy: config.copy }).fetch(request);
 }
 
 /**

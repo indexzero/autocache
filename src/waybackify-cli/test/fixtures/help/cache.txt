@@ -3,7 +3,7 @@ waybackify cache [flags] [command]
 Cache-store ops: add · fill · crawl · verify
 
 The cache-store command group — populate, complete, and verify the
-hermetic wayback.charlie.dev cache image (the archive of record):
+hermetic wayback cache image (the archive of record):
 
   add       fetch ONE capture (+ its requisites) into a cache root
   fill      drive a whole ledger to full asset closure (bulk, resumable)
@@ -24,4 +24,4 @@ Commands:
   crawl       Crawl documents to a dynamic-completeness fixpoint
   verify      Verify a cache root against its own sidecars
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

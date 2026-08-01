@@ -38,6 +38,17 @@ export interface SourceRef {
 /** The schema version new writes stamp. */
 export const MANIFEST_VERSION: number;
 
+/**
+ * The default chrome host `apply` points archived replay links at (#453) — a
+ * GENERIC PLACEHOLDER (`wayback.example.com`), not any real deployment's host.
+ * Callers publishing to a real mirror override it via `apply`'s `chromeHost`
+ * option; the concrete host lives in the site layer, never in this library.
+ */
+export const DEFAULT_CHROME_HOST: string;
+
+/** Swap a web.archive.org replay URL's host to the chrome host (#453). */
+export function toChromeHost(waybackUrl: string, chromeHost: string): string;
+
 /** Versions readers understand ({1, 2}). */
 export const SUPPORTED_MANIFEST_VERSIONS: ReadonlySet<number>;
 
@@ -63,4 +74,8 @@ export function extractArchiveUrls(markdown: string): string[];
 export function sourceRefs(filePath: string, options?: { manifest?: boolean }): SourceRef[];
 
 /** Apply a manifest to a source (exclude → rewrites → entries → warn). */
-export function apply(source: string, manifest: Manifest): { content: string; warnings: string[] };
+export function apply(
+  source: string,
+  manifest: Manifest,
+  options?: { chromeHost?: string }
+): { content: string; warnings: string[] };

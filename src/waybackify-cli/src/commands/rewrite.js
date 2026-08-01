@@ -40,7 +40,10 @@ export function rewriteHandler(deps = {}) {
     const readManifest = deps.readManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).readManifest;
 
     const source = fs.readFileSync(args.source, 'utf8');
-    const { content, warnings } = apply(source, readManifest(flags.manifest));
+    // --chrome-host threads the #453 host swap; omit it and apply defaults to
+    // DEFAULT_CHROME_HOST (a generic placeholder). paparam camelCases the flag.
+    const options = flags.chromeHost ? { chromeHost: flags.chromeHost } : undefined;
+    const { content, warnings } = apply(source, readManifest(flags.manifest), options);
 
     fs.writeFileSync(flags.output, content);
 

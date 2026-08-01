@@ -1,7 +1,7 @@
 # cache fill — drive a cache root to full asset closure
 
 `waybackify cache fill <dir> --root <root>` populates a local cache root (the
-wayback.charlie.dev bucket image, see [CACHE.md](CACHE.md)) with **every capture
+wayback mirror bucket image, see [CACHE.md](CACHE.md)) with **every capture
 the ledger under `<dir>` references** — each referenced page **and its
 requisites** (the `im_`/`cs_`/`js_`/`oe_` images, stylesheets, scripts), not just
 the HTML. It is the bulk, resumable form of [`cache add`](../README.md): where

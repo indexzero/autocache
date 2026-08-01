@@ -5,7 +5,9 @@ Apply a manifest to a markdown source
 Apply a manifest to a markdown source: rewrite each live link per
 the manifest, precedence exclude → rewrites → entries → untouched +
 warn. Fenced code and link text are never touched; already-archived
-links pass through.
+links pass through. A resolved archive link is pointed at the chrome
+host (default wayback.example.com, --chrome-host to override), never
+top-level at live web.archive.org.
 
 Output: the published form written to -o. A url the manifest holds
 no verdict for warns on stderr and exits 1 — surfaced, never
@@ -17,6 +19,7 @@ Arguments:
 Flags:
   --manifest|-m <file>   manifest to apply (wayback.json) — required
   --output|-o <file>     destination for the rewritten markdown — required
+  --chrome-host <host>   chrome FQDN archived links point at (default wayback.example.com)
   --help|-h              Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

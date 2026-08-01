@@ -1,7 +1,7 @@
 # Populating a bucket from the cache root
 
 The runbook for projecting a local cache root onto a remote bucket — the
-deploy step for wayback.charlie.dev's remote backends (Cloudflare R2 and
+deploy step for a wayback mirror's remote backends (Cloudflare R2 and
 Fastly Object Storage). The **projection contract** (what the object keys and
 metadata are, and why) lives in [CACHE.md](./CACHE.md#bucket-projection); this
 document is the **operational procedure** only.

@@ -2,7 +2,7 @@
  * Store conformance — the shared contract every `Store` (src/store.ts) must
  * honor, asserted identically against each backend (#285).
  *
- * The milestone requires wayback.charlie.dev to answer BYTE-FOR-DECISION
+ * The milestone requires the wayback mirror to answer BYTE-FOR-DECISION
  * identically whether it reads local disk, a Cloudflare R2 bucket, or Fastly
  * Object Storage. Cross-store divergence is the entire risk surface, so it gets
  * ONE suite, not per-store spot checks: same fixture in, same head()/get() out.

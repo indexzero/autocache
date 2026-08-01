@@ -17,4 +17,4 @@ Commands:
   push        Emit the bucket-population batch for a cache root
   verify      Verify a bucket is a byte-for-byte projection of a root
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

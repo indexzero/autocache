@@ -23,4 +23,4 @@ Flags:
   --near <ts>            preferred capture timestamp (YYYYMMDD[HHMMSS]) — resolve never-seen urls to the archive capture closest to it
   --help|-h              Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

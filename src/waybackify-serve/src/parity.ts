@@ -466,11 +466,32 @@ async function compareServed(root: RunningServer, bucket: RunningServer, key: st
   const mismatches: Mismatch[] = [];
   const note = (field: string, expected: string, actual: string) => mismatches.push({ key, field, expected, actual });
 
+  // The styled 404/index pages now render the mirror's OWN host (the request
+  // Host header, #453) into their title — so the two parity servers, which
+  // listen on different ephemeral ports, legitimately serve host-differing
+  // bytes for a miss. Parity is a LOGICAL equivalence over one mirror, so
+  // normalize each server's own authority to a constant before diffing bytes;
+  // capture-byte hits never contain the authority, so this is a no-op for them.
+  const aBody = normalizeMirrorHost(a.body, new URL(root.url).host);
+  const bBody = normalizeMirrorHost(b.body, new URL(bucket.url).host);
+
   if (a.status !== b.status) note('status', `root ${a.status}`, `bucket ${b.status}`);
   if (a.contentType !== b.contentType) note('content-type', `root ${a.contentType}`, `bucket ${b.contentType}`);
   if (a.location !== b.location) note('location', `root ${a.location}`, `bucket ${b.location}`);
-  if (!bytesEqual(a.body, b.body)) note('body', `root ${a.body.length}B`, `bucket ${b.body.length}B`);
+  if (!bytesEqual(aBody, bBody)) note('body', `root ${aBody.length}B`, `bucket ${bBody.length}B`);
   return mismatches;
+}
+
+/**
+ * Replace a server's own host authority (`host:port`) with a fixed placeholder
+ * so the host-in-title (#453) does not make two servers on different ports look
+ * divergent. latin1 is a lossless byte↔char map, so a binary capture body that
+ * never contains the authority round-trips byte-for-byte (a genuine no-op).
+ */
+function normalizeMirrorHost(body: Uint8Array, authority: string): Uint8Array {
+  const text = Buffer.from(body).toString('latin1');
+  if (!text.includes(authority)) return body;
+  return new Uint8Array(Buffer.from(text.replaceAll(authority, '<mirror-host>'), 'latin1'));
 }
 
 interface Served {

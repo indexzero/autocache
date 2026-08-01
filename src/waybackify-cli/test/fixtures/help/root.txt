@@ -7,7 +7,7 @@ generate a manifest for a source file, rewrite it to its published
 form, survey the ledger of manifests under a tree, hand-check a
 capture, re-pick a better one, run a checkpointed corpus audit, and —
 under the `cache` / `remaster` / `bucket` groups — populate, verify,
-remaster, and project the wayback.charlie.dev mirror image.
+remaster, and project the wayback mirror image.
 
 Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·
 2 usage error · 3 suspect verdict (check only).
@@ -26,4 +26,4 @@ Commands:
   remaster    Standalone-tier ops: build · verify
   bucket      Bucket-projection ops: push · verify
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

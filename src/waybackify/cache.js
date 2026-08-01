@@ -1,5 +1,5 @@
-// Local mirror-image cache store — the population path for the
-// wayback.charlie.dev capture mirror. `waybackify cache` is a thin
+// Local mirror-image cache store — the population path for a
+// wayback capture mirror. `waybackify cache` is a thin
 // wrapper over cacheCapture() below; everything load-bearing lives here.
 //
 // ON-DISK LAYOUT (normative — the design debate's position E;

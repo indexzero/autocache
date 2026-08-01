@@ -2,7 +2,7 @@
 
 Living documentation for the directory `waybackify cache add <wayback-url> --root <root>`
 (and its bulk sibling `waybackify cache fill`) writes. This root is not a scratch cache: it is the **local mirror image
-that IS the deploy artifact** for wayback.charlie.dev — syncing it to
+that IS the deploy artifact** for a wayback mirror — syncing it to
 S3-shaped Object Storage (Cloudflare R2, Fastly Object Storage) is deployment,
 and the mirror server reads it directly.
 

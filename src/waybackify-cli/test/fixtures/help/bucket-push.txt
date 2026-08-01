@@ -18,4 +18,4 @@ Flags:
   --dry-run             write the batch to stderr; emit NOTHING to stdout
   --help|-h             Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

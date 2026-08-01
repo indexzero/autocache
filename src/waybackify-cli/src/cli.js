@@ -220,7 +220,9 @@ export function createCLI({ handlers = {}, onBail } = {}) {
       'Apply a manifest to a markdown source: rewrite each live link per\n' +
         'the manifest, precedence exclude → rewrites → entries → untouched +\n' +
         'warn. Fenced code and link text are never touched; already-archived\n' +
-        'links pass through.\n' +
+        'links pass through. A resolved archive link is pointed at the chrome\n' +
+        'host (default wayback.example.com, --chrome-host to override), never\n' +
+        'top-level at live web.archive.org.\n' +
         '\n' +
         'Output: the published form written to -o. A url the manifest holds\n' +
         'no verdict for warns on stderr and exits 1 — surfaced, never\n' +
@@ -229,6 +231,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     arg('<source.md>', 'markdown source file (pristine, live-link form)'),
     flag('--manifest|-m <file>', 'manifest to apply (wayback.json) — required'),
     flag('--output|-o <file>', 'destination for the rewritten markdown — required'),
+    flag('--chrome-host <host>', 'chrome FQDN archived links point at (default wayback.example.com)'),
     validate(({ args }) => Boolean(args.source), 'missing required argument: <source.md>'),
     validate(({ flags }) => Boolean(flags.manifest), 'missing required flag: --manifest|-m <file>'),
     validate(({ flags }) => Boolean(flags.output), 'missing required flag: --output|-o <file>'),
@@ -267,7 +270,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     summary('Fetch one capture into a local bucket image'),
     description(
       'Fetch one capture into a local bucket image at <root> — the\n' +
-        "wayback.charlie.dev mirror's population path. Syncing that dir to\n" +
+        "wayback mirror's population path. Syncing that dir to\n" +
         'R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment.\n' +
         '\n' +
         'Output: files written under the shared key scheme; summary line on\n' +
@@ -408,7 +411,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     summary('Cache-store ops: add · fill · crawl · verify'),
     description(
       'The cache-store command group — populate, complete, and verify the\n' +
-        'hermetic wayback.charlie.dev cache image (the archive of record):\n' +
+        'hermetic wayback cache image (the archive of record):\n' +
         '\n' +
         '  add       fetch ONE capture (+ its requisites) into a cache root\n' +
         '  fill      drive a whole ledger to full asset closure (bulk, resumable)\n' +
@@ -425,7 +428,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     // never re-propagates down to the group's children. Set it here so each
     // `cache <verb> --help` prints the same footer the flat verbs do — and so
     // the live output matches root.help('cache', verb).
-    footer('part of the wayback.charlie.dev mirror tooling'),
+    footer('part of the wayback mirror tooling'),
     cacheAdd,
     cacheFill,
     cacheCrawl,
@@ -497,7 +500,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         '\n' +
         'Run `waybackify remaster <verb> --help` for a verb\'s full surface.'
     ),
-    footer('part of the wayback.charlie.dev mirror tooling'),
+    footer('part of the wayback mirror tooling'),
     remasterBuild,
     remasterVerify
   );
@@ -570,7 +573,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         '\n' +
         'Run `waybackify bucket <verb> --help` for a verb\'s full surface.'
     ),
-    footer('part of the wayback.charlie.dev mirror tooling'),
+    footer('part of the wayback mirror tooling'),
     bucketPush,
     bucketVerify
   );
@@ -617,12 +620,12 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'form, survey the ledger of manifests under a tree, hand-check a\n' +
         'capture, re-pick a better one, run a checkpointed corpus audit, and —\n' +
         'under the `cache` / `remaster` / `bucket` groups — populate, verify,\n' +
-        'remaster, and project the wayback.charlie.dev mirror image.\n' +
+        'remaster, and project the wayback mirror image.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
         '2 usage error · 3 suspect verdict (check only).'
     ),
-    footer('part of the wayback.charlie.dev mirror tooling'),
+    footer('part of the wayback mirror tooling'),
     manifest,
     rewrite,
     ledger,

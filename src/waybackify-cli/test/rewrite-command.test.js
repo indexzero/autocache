@@ -58,6 +58,27 @@ test('a url with no verdict: warned on stderr, exit 1, output still written unto
   assert.match(fs.readFileSync(outFile, 'utf8'), /\(http:\/\/unknown\.example\.com\/page\)/);
 });
 
+test('--chrome-host threads through to apply: the archived link points at the override host (#453)', async () => {
+  const outFile = path.join(tmp(), 'out.md');
+  const { code, stderr } = await rewrite([
+    path.join(APPLY, 'source.md'),
+    '-m',
+    path.join(APPLY, 'wayback.json'),
+    '-o',
+    outFile,
+    '--chrome-host',
+    'wb.example.test'
+  ]);
+  assert.equal(code, EXIT.OK);
+  assert.deepEqual(stderr, []);
+  const out = fs.readFileSync(outFile, 'utf8');
+  // The resolved entry lands on the override host, never live web.archive.org.
+  assert.match(out, /\(https:\/\/wb\.example\.test\/web\/20140403040000\/http:\/\/sudomakethought\.com\/post\/123\)/);
+  assert.ok(!out.includes('wayback.example.com'));
+  // An already-archived web.archive.org inline link is still left as-is.
+  assert.match(out, /\(https:\/\/web\.archive\.org\/web\/19990101000000\//);
+});
+
 test('a v1 manifest reads through: wayback:null means exclude, so the url stays live without warning', async () => {
   const dir = tmp();
   const sourceFile = path.join(dir, 'source.md');

@@ -5,9 +5,9 @@
  * never reaches storage) — so every #320 recipe claim this code depends on is
  * asserted locally, zero network, zero DNS.
  *
- * The two hostnames under test are the production ones from #320:
- *   chrome  → wayback.charlie.dev            (attribution UI + iframe shell)
- *   content → wayback.charlie.webring.delivery (sacrificial usercontent origin)
+ * The two hostnames under test are placeholder split hosts (#320):
+ *   chrome  → wayback.example.com   (attribution UI + iframe shell)
+ *   content → content.example.net   (sacrificial usercontent origin)
  */
 
 import { beforeEach, describe, it } from 'node:test';
@@ -18,8 +18,8 @@ import { captureKey } from '../src/path.ts';
 import { MemoryStore } from '../src/store.ts';
 import type { Capture, CaptureMeta, Store } from '../src/store.ts';
 
-const CHROME = 'wayback.charlie.dev';
-const CONTENT = 'wayback.charlie.webring.delivery';
+const CHROME = 'wayback.example.com';
+const CONTENT = 'content.example.net';
 const SPLIT: SplitOptions = { chromeHost: CHROME, contentHost: CONTENT };
 
 const TS = '20140403040000';
@@ -220,8 +220,32 @@ describe('chrome/content split (#320)', () => {
       const app = createApp(new ThrowingStore(), { split: SPLIT });
       const res = await app.request(`https://${CHROME}/`);
       assert.equal(res.status, 200);
-      assert.ok((await res.text()).includes('wayback.charlie.dev'));
+      assert.ok((await res.text()).includes('wayback.example.com'));
       assert.ok((res.headers.get('content-security-policy') ?? '').includes("script-src 'none'"));
+    });
+  });
+
+  describe('served pages name the configured chrome host, not a placeholder (#453)', () => {
+    it('the chrome index title + heading show the configured chrome host', async () => {
+      const app = createApp(new ThrowingStore(), { split: SPLIT });
+      const body = await (await app.request(`https://${CHROME}/`)).text();
+      assert.ok(body.includes(`<title>${CHROME} · web.archive.org mirror</title>`));
+      assert.ok(body.includes(`<h1>${CHROME}</h1>`));
+    });
+
+    it('the capture shell title names the chrome host', async () => {
+      const app = createApp(new ThrowingStore(), { split: SPLIT });
+      const body = await (await app.request(chromeUrl())).text();
+      assert.ok(body.includes(`· ${CHROME} · web.archive.org mirror</title>`));
+    });
+
+    it('a content-origin miss 404 still names the chrome host (the mirror identity)', async () => {
+      // Even a miss rendered in-frame on the content origin displays the mirror's
+      // canonical identity — the configured CHROME host, not the content host.
+      const app = createApp(new MemoryStore(), { split: SPLIT });
+      const body = await (await app.request(contentUrl())).text();
+      assert.ok(body.includes(`Not mirrored · ${CHROME} · web.archive.org mirror`));
+      assert.ok(!body.includes(CONTENT), 'the content host is NOT the displayed mirror identity');
     });
   });
 

@@ -30,4 +30,4 @@ Flags:
   --dry-run           build/show the worklist; fetch nothing
   --help|-h           Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

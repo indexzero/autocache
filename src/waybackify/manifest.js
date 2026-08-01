@@ -47,6 +47,48 @@ import { emptyUniverse, isExcluded, subset } from './universe.js';
 /** The schema version new writes stamp. */
 export const MANIFEST_VERSION = 2;
 
+/**
+ * The default chrome host `apply` points archived replay links at (#453).
+ *
+ * A GENERIC PLACEHOLDER, deliberately not any real deployment's host: this
+ * library names no specific site. A caller that publishes to a real mirror
+ * OVERRIDES it (`apply(source, manifest, { chromeHost })`); the concrete host
+ * belongs to the site layer, not here.
+ *
+ * A manifest `entry` resolves to a `web.archive.org/web/<ts><flag>/<orig>`
+ * replay URL. Emitting that host verbatim sends a reader who clicks an
+ * archived link OFF to the live archive — their browser then runs the
+ * 2008-era hostile capture on archive.org's terms, and the self-hosted,
+ * provably-complete mirror is never used. So `apply` swaps ONLY the host: the
+ * `/web/<ts><flag>/<orig>` path is preserved, `web.archive.org` becomes the
+ * CHROME host — a minimal trusted shell that frames the sacrificial content
+ * origin behind a sandbox + egress-lock CSP. A human always lands top-level
+ * on the chrome, NEVER directly on the raw content origin.
+ */
+export const DEFAULT_CHROME_HOST = 'wayback.example.com';
+
+// The archive origin prefix of a replay URL. Anchored, and gated on the
+// `/web/` path that ALWAYS follows in a validated entry's `wayback` (see
+// validateManifest → parseWaybackUrl), so the swap can never eat into a
+// same-named path segment. Only the scheme+host is replaced; the capture
+// path (timestamp, any `if_`/`im_`/… replay flag, and the original URL) is
+// carried through byte-for-byte.
+const WAYBACK_ORIGIN_RE = /^https?:\/\/web\.archive\.org(?=\/web\/)/i;
+
+/**
+ * Point a `web.archive.org` replay URL at the chrome host — the host
+ * swap (#453). `web.archive.org/web/<ts><flag>/<orig>` →
+ * `https://<chromeHost>/web/<ts><flag>/<orig>`. A URL that isn't a
+ * web.archive.org replay is returned unchanged.
+ *
+ * @param {string} waybackUrl - a validated entry's `wayback` replay URL
+ * @param {string} chromeHost - target chrome FQDN (no scheme)
+ * @returns {string}
+ */
+export function toChromeHost(waybackUrl, chromeHost) {
+  return waybackUrl.replace(WAYBACK_ORIGIN_RE, `https://${chromeHost}`);
+}
+
 /** Versions readers understand. Anything else is unknown → loud failure. */
 export const SUPPORTED_MANIFEST_VERSIONS = Object.freeze(new Set([1, 2]));
 
@@ -417,15 +459,26 @@ export async function generate(source, universe, seen, options = {}) {
  * matching extractLinks/extractArchiveUrls) and looked up by a
  * scheme/slash/port-insensitive key. Only link TARGETS rewrite — a URL
  * immediately followed by `]` is the visible text of `[http://x](…)` and
- * stays as-is. Already-archived URLs pass through untouched (and unwarned).
+ * stays as-is. Already-archived URLs pass through untouched (and unwarned) —
+ * both a raw `web.archive.org` replay URL and one already pointed at the
+ * chrome host, so re-applying a published source is idempotent (#453).
+ *
+ * An `entry`'s resolved replay URL is emitted at the CHROME host, not at
+ * `web.archive.org` — the host swap (#453; see toChromeHost /
+ * DEFAULT_CHROME_HOST). `rewrites` targets and `exclude`d live links are NOT
+ * touched by the swap: only manifest-resolved archive URLs are pointed at the
+ * mirror.
  *
  * @param {string} source - markdown text
  * @param {object} manifest - in-memory manifest (normalized on entry, so a
  *   freshly parsed v1 file works too)
+ * @param {Object} [options]
+ * @param {string} [options.chromeHost=DEFAULT_CHROME_HOST] - the chrome FQDN
+ *   (no scheme) archived links point at; threaded from the CLI's --chrome-host
  * @returns {{ content: string, warnings: string[] }} the rewritten source
  *   plus every distinct live URL the manifest had no verdict for
  */
-export function apply(source, manifest) {
+export function apply(source, manifest, { chromeHost = DEFAULT_CHROME_HOST } = {}) {
   const m = validateManifest(manifest, 'apply');
   const excludeKeys = new Set(m.exclude.map(matchKey));
   const rewriteByKey = new Map(Object.entries(m.rewrites).map(([u, t]) => [matchKey(u), t]));
@@ -435,11 +488,13 @@ export function apply(source, manifest) {
   const content = mapOutsideFences(source, prose =>
     prose.replace(/https?:\/\/(?:\([^()\s"'<>\]]*\)|[^\s"'<>()\]])+/g, (url, offset, str) => {
       if (str[offset + url.length] === ']') return url; // link text, not a target
-      if (url.includes('web.archive.org/web/')) return url; // already applied
+      // Already applied: a raw archive replay URL, or one already swapped to
+      // the chrome host — both pass through, keeping apply idempotent.
+      if (url.includes('web.archive.org/web/') || url.includes(`${chromeHost}/web/`)) return url;
       const key = matchKey(url);
       if (excludeKeys.has(key)) return url;
       if (rewriteByKey.has(key)) return rewriteByKey.get(key);
-      if (entryByKey.has(key)) return entryByKey.get(key);
+      if (entryByKey.has(key)) return toChromeHost(entryByKey.get(key), chromeHost);
       warned.add(url); // no verdict anywhere — surface it, don't guess
       return url;
     })

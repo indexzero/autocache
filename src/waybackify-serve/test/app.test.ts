@@ -33,12 +33,88 @@ describe('createApp', () => {
 
   describe('index page', () => {
     it('serves a small explainer at /', async () => {
-      const res = await app.request('/');
+      const res = await app.request('/', { headers: { host: 'my-mirror.test' } });
       assert.equal(res.status, 200);
       assert.match(res.headers.get('content-type') ?? '', /^text\/html/);
       const body = await res.text();
-      assert.ok(body.includes('wayback.charlie.dev'));
       assert.ok(body.includes('web.archive.org'));
+    });
+
+    it('renders the request Host (the mirror identity), not a hardcoded placeholder', async () => {
+      // Single-host mode: the displayed host is the request's own Host header —
+      // never the old `wayback.example.com` placeholder baked into the HTML.
+      const body = await (await app.request('/', { headers: { host: 'my-mirror.test' } })).text();
+      assert.ok(body.includes('<h1>my-mirror.test</h1>'));
+      assert.ok(body.includes('<title>my-mirror.test · web.archive.org mirror</title>'));
+      assert.ok(!body.includes('example.com'), 'no placeholder host may survive into the served page');
+    });
+
+    it('escapes a hostile Host header — no XSS from the attacker-controlled host (single-host)', async () => {
+      // The Host header is attacker-controllable; interpolating it raw would be
+      // reflected XSS. Prove escapeHtml neutralizes a breakout payload in BOTH
+      // the index and the 404 served pages.
+      const evilHost = 'evil"><script>alert(1)</script>';
+      const idx = await (await app.request('/', { headers: { host: evilHost } })).text();
+      assert.ok(!idx.includes('<script>alert(1)</script>'), 'hostile host must never render as live markup');
+      assert.ok(idx.includes('evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;'), 'the host must be HTML-escaped');
+
+      const miss = await (await app.request(PATH, { headers: { host: evilHost } })).text();
+      assert.ok(!miss.includes('<script>alert(1)</script>'), 'the 404 must also escape the hostile host');
+      assert.ok(miss.includes('evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;'));
+    });
+  });
+
+  describe('served-page copy (#453)', () => {
+    // The GENERIC, site-agnostic defaults baked into app.ts — the shipped base
+    // case, naming no deployment. Duplicated here so a change to the wording is
+    // a deliberate two-place edit.
+    const DEFAULT_INDEX =
+      'A self-hosted mirror of the <a href="https://web.archive.org/">Wayback Machine</a> ' +
+      'captures that its source pages reference — exactly those, nothing more.';
+    const DEFAULT_NOT_FOUND =
+      'This mirror serves exactly the <a href="https://web.archive.org/">Wayback Machine</a> ' +
+      'captures that its source pages reference. This capture is not among them.';
+
+    it('renders the generic site-agnostic default when no copy is configured', async () => {
+      // The default names NO specific deployment — "its source pages", not any
+      // site — so the positive match on the generic wording is itself the proof
+      // the base case is site-neutral (and this file names no deployment).
+      const idx = await (await app.request('/', { headers: { host: 'm.test' } })).text();
+      assert.ok(idx.includes(DEFAULT_INDEX), 'index carries the generic default about');
+
+      const miss = await (await app.request(PATH, { headers: { host: 'm.test' } })).text();
+      assert.ok(miss.includes(DEFAULT_NOT_FOUND), '404 carries the generic default about');
+    });
+
+    it('renders configured copy (raw HTML, links intact) on the index and 404', async () => {
+      const copy = {
+        index: 'A self-hosted mirror the <a href="https://example.test/">example</a> site keeps.',
+        notFound: 'The <a href="https://example.test/">example</a> mirror does not hold this one.'
+      };
+      const withCopy = createApp(new MemoryStore(), { copy });
+
+      const idx = await (await withCopy.request('/', { headers: { host: 'm.test' } })).text();
+      assert.ok(idx.includes(`<p>${copy.index}</p>`), 'configured index copy is injected raw');
+      assert.ok(!idx.includes(DEFAULT_INDEX), 'the default is replaced, not appended');
+
+      const miss = await (await withCopy.request(PATH, { headers: { host: 'm.test' } })).text();
+      assert.ok(miss.includes(`<p>${copy.notFound}</p>`), 'configured 404 copy is injected raw');
+      assert.ok(!miss.includes(DEFAULT_NOT_FOUND));
+    });
+
+    it('injects copy raw (TRUSTED site config) while the host stays escaped', async () => {
+      // copy is TRUSTED — its <a> markup renders live. The host is NOT — a
+      // hostile Host header is still escaped even alongside configured copy, so
+      // the raw-copy path never becomes an escaping bypass for the host.
+      const copy = { index: 'trusted <a href="https://ok.test/">link</a> lives' };
+      const withCopy = createApp(new MemoryStore(), { copy });
+      const evilHost = 'evil"><script>alert(1)</script>';
+      const idx = await (await withCopy.request('/', { headers: { host: evilHost } })).text();
+      // The copy's anchor survives as live markup...
+      assert.ok(idx.includes('trusted <a href="https://ok.test/">link</a> lives'));
+      // ...but the attacker-controlled host is still neutralized.
+      assert.ok(!idx.includes('<script>alert(1)</script>'), 'host must never render as live markup');
+      assert.ok(idx.includes('evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;'));
     });
   });
 

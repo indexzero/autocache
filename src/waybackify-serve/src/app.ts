@@ -1,5 +1,5 @@
 /**
- * The wayback.charlie.dev Hono app (#249).
+ * The wayback mirror Hono app (#249).
  *
  * Runtime-agnostic on purpose: this module is pure Hono + Web APIs and takes
  * its Store (src/store.ts) as an argument, so the SAME app deploys to
@@ -87,17 +87,65 @@ const DOCUMENT_CSP = [
 ].join('; ');
 
 /**
+ * The description paragraph each served page carries — the ONE fragment that
+ * varies per deployment (#453). Everything else on the index and 404 (title,
+ * styles, the "Not mirrored here" heading, the URL-shape explanation, the "No
+ * request left this server" line) is site-agnostic and stays baked into the
+ * template. A deployment threads its own copy through {@link AppOptions.copy};
+ * absent that, the generic defaults below ship.
+ *
+ * SECURITY: `index`/`notFound` are TRUSTED site configuration — they
+ * intentionally contain `<a>` links, so they are injected as RAW HTML, NOT
+ * escaped (the site owns its own copy's safety). This is the SOLE unescaped
+ * interpolation in a served page; the host (`mirrorHost`/`chromeHost`) can be
+ * the attacker-controlled request Host header and MUST stay `escapeHtml`'d.
+ */
+export interface ServedCopy {
+  /** Description paragraph on the index page (raw HTML fragment). */
+  index?: string;
+  /** Description sentence on the 404 page (raw HTML fragment). */
+  notFound?: string;
+}
+
+/**
+ * The GENERIC, site-agnostic index description — the shipped base case (#453).
+ * Names no specific deployment; a real mirror overrides it via
+ * {@link AppOptions.copy}. Raw HTML by contract (see {@link ServedCopy}).
+ */
+const DEFAULT_INDEX_ABOUT =
+  'A self-hosted mirror of the <a href="https://web.archive.org/">Wayback Machine</a> ' +
+  'captures that its source pages reference — exactly those, nothing more. It exists ' +
+  'because archive.org replay is slow and occasionally down, and these links are ' +
+  'load-bearing for old pages.';
+
+/**
+ * The GENERIC, site-agnostic 404 description — the shipped base case (#453).
+ * Names no specific deployment. Raw HTML by contract (see {@link ServedCopy}).
+ */
+const DEFAULT_NOT_FOUND_ABOUT =
+  'This mirror serves exactly the <a href="https://web.archive.org/">Wayback Machine</a> ' +
+  'captures that its source pages reference. This capture is not among them.';
+
+/**
  * The styled local 404. Small, self-contained, zero external references (so
  * it renders under its own CSP and leaks nothing), served `no-store`. This is
  * what a corpus miss looks like now — an honest local answer, not a bounce to
- * live web.archive.org.
+ * live web.archive.org. `about` is the (raw-HTML, TRUSTED) site description
+ * paragraph — see {@link ServedCopy}.
  */
-const NOT_FOUND_HTML = `<!doctype html>
+function notFoundHtml(mirrorHost: string, about: string): string {
+  // SECURITY: mirrorHost can be the attacker-controlled request Host header in
+  // single-host mode — escape it exactly like the chrome shell escapes the
+  // capture URL, or a hostile Host smuggles markup into the served page. NOTE:
+  // `about` is TRUSTED site config (it carries an <a> link) and is injected
+  // RAW on purpose — the site owns its safety; the host stays escaped.
+  const h = escapeHtml(mirrorHost);
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Not mirrored · wayback.charlie.dev</title>
+<title>Not mirrored · ${h} · web.archive.org mirror</title>
 <style>
   body { font: 16px/1.6 system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; color: #222; }
   h1 { font-size: 1.4rem; }
@@ -107,32 +155,33 @@ const NOT_FOUND_HTML = `<!doctype html>
 </head>
 <body>
 <h1>Not mirrored here</h1>
-<p>This mirror serves exactly the <a href="https://web.archive.org/">Wayback Machine</a>
-captures that <a href="https://charlie.dev/">charlie.dev</a> posts reference. This
-capture is not among them.</p>
+<p>${about}</p>
 <p class="muted">No request left this server for it. If you need the original,
 it lives at <code>web.archive.org</code>.</p>
 </body>
 </html>
 `;
+}
 
-const INDEX_HTML = `<!doctype html>
+function indexHtml(mirrorHost: string, about: string): string {
+  // SECURITY: see notFoundHtml — mirrorHost may be the attacker-controlled
+  // request Host header, so it MUST go through escapeHtml before interpolation.
+  // `about` is TRUSTED site config injected RAW (it carries <a> links).
+  const h = escapeHtml(mirrorHost);
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wayback.charlie.dev</title>
+<title>${h} · web.archive.org mirror</title>
 <style>
   body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
   code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
 </style>
 </head>
 <body>
-<h1>wayback.charlie.dev</h1>
-<p>A self-hosted mirror of the <a href="https://web.archive.org/">Wayback Machine</a>
-captures that <a href="https://charlie.dev/">charlie.dev</a> posts reference —
-exactly those, nothing more. It exists because archive.org replay is slow and
-occasionally down, and these links are load-bearing for decade-old posts.</p>
+<h1>${h}</h1>
+<p>${about}</p>
 <p>URLs mirror the wayback shape:
 <code>/&lt;timestamp&gt;/&lt;original-url&gt;</code>. Captures not mirrored here
 answer a local 404 — the mirror serves what it holds and nothing else.</p>
@@ -141,6 +190,7 @@ answer a local 404 — the mirror serves what it holds and nothing else.</p>
 </body>
 </html>
 `;
+}
 
 /**
  * The chrome/content split (#320). One deployed app, two hostnames routed by
@@ -153,12 +203,12 @@ answer a local 404 — the mirror serves what it holds and nothing else.</p>
  */
 export interface SplitOptions {
   /**
-   * Chrome origin host (e.g. `wayback.charlie.dev`) — attribution UI, routing,
+   * Chrome origin host (e.g. `mirror.example`) — attribution UI, routing,
    * the iframe shell. Requests here serve NO capture bytes, ever.
    */
   chromeHost: string;
   /**
-   * Content origin host (e.g. `wayback.charlie.webring.delivery`) — the
+   * Content origin host (e.g. `content.example.net`) — the
    * sacrificial usercontent zone that serves capture bytes, embedded
    * cross-origin. Only this host reaches the store.
    */
@@ -213,6 +263,16 @@ export interface AppOptions {
    * edge entries' env/config constants).
    */
   split?: SplitOptions;
+  /**
+   * Per-deployment served-page copy (#453): the description paragraph of the
+   * index and 404 pages. Absent (or a field absent), the generic site-agnostic
+   * defaults ship (DEFAULT_INDEX_ABOUT / DEFAULT_NOT_FOUND_ABOUT). TRUSTED site
+   * configuration — the fragments are injected as RAW HTML (they carry `<a>`
+   * links), so the site owns their safety; see {@link ServedCopy}. Threaded
+   * from each runtime entry (serve.js's node config, the edge handlers' config)
+   * and, in production, supplied by the site layer (render/wayback's COPY).
+   */
+  copy?: ServedCopy;
 }
 
 /**
@@ -346,18 +406,23 @@ function renderChromeShell(args: {
   originalUrl: string;
   timestamp: string;
   canonicalArchiveUrl: string;
+  chromeHost: string;
 }): string {
   const src = escapeHtml(args.iframeSrc);
   const original = escapeHtml(args.originalUrl);
   const ts = escapeHtml(args.timestamp);
   const archive = escapeHtml(args.canonicalArchiveUrl);
+  // The chrome shell is always served on the chrome host; escape it too (the
+  // caller passes the configured chromeHost, but every host interpolated into
+  // served HTML goes through escapeHtml, no exceptions).
+  const chromeHost = escapeHtml(args.chromeHost);
   const title = `${original} — archived ${ts}`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${original} · wayback.charlie.dev</title>
+<title>${original} · ${chromeHost} · web.archive.org mirror</title>
 <style>
   html, body { margin: 0; height: 100%; }
   body { display: flex; flex-direction: column; font: 14px/1.5 system-ui, sans-serif; color: #222; }
@@ -386,10 +451,10 @@ function renderChromeShell(args: {
  * sibling hits do; a top-level miss carries the plain document CSP. `cspMode`
  * selects the header name for that document policy (design §D3).
  */
-function notFound(c: Context, documentCsp: string = DOCUMENT_CSP, cspMode: CspMode = 'enforce'): Response {
+function notFound(c: Context, mirrorHost: string, about: string, documentCsp: string = DOCUMENT_CSP, cspMode: CspMode = 'enforce'): Response {
   c.header('Cache-Control', NO_STORE);
   setCsp(c, documentCsp, cspMode);
-  return c.html(NOT_FOUND_HTML, 404);
+  return c.html(notFoundHtml(mirrorHost, about), 404);
 }
 
 /**
@@ -402,6 +467,11 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   const cspMode = options.cspMode ?? 'enforce';
   const localize = options.localize;
   const split = options.split;
+  // The per-deployment served-page description copy (#453): resolve each
+  // fragment to its site value or the generic default ONCE. RAW HTML by
+  // contract (TRUSTED site config carrying <a> links) — see ServedCopy.
+  const indexAbout = options.copy?.index ?? DEFAULT_INDEX_ABOUT;
+  const notFoundAbout = options.copy?.notFound ?? DEFAULT_NOT_FOUND_ABOUT;
   const app = new Hono();
 
   // A misconfigured split must fail LOUD, never silently serve bytes on the
@@ -478,6 +548,16 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     return url.host.toLowerCase() === contentAuthority ? 'content' : 'chrome';
   };
 
+  // The host DISPLAYED in the served chrome pages (index, 404, capture shell) —
+  // the mirror's identity to the reader, distinct from routing (roleOf keys off
+  // the URL authority). Under the split it is ALWAYS the configured chrome host
+  // (the mirror's canonical identity — even a content-origin miss names it); in
+  // single-host mode it is the request's own Host header, which is
+  // ATTACKER-CONTROLLABLE, so EVERY interpolation of this value into served HTML
+  // MUST pass through escapeHtml (notFoundHtml/indexHtml/renderChromeShell do).
+  const mirrorHostOf = (c: Context): string =>
+    splitCfg ? splitCfg.chromeHost : (c.req.header('host') ?? '');
+
   // A capture we cannot serve locally (a store miss, or an archived-redirect
   // entry with no local body): strict answers a local 404, liveFallback bounces
   // to the archive's replay. The 302 is flag-preserving (archiveUrl, not
@@ -491,7 +571,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       c.header('Cache-Control', NO_STORE);
       return c.redirect(archiveUrl, 302);
     }
-    return notFound(c, documentCsp, mode);
+    return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, mode);
   };
 
   // The content-serving path: store lookup, status discrimination, the hit
@@ -544,7 +624,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       return liveOr404(c, parsed.archiveUrl, documentCsp, documentCspMode);
     }
     if (status === 'error') {
-      return notFound(c, documentCsp, documentCspMode);
+      return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, documentCspMode);
     }
 
     // Normalize the media type ONCE: trim leading/trailing HTTP optional
@@ -662,7 +742,10 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       iframeSrc,
       originalUrl: parsed.originalUrl,
       timestamp: parsed.timestamp,
-      canonicalArchiveUrl: parsed.canonicalArchiveUrl
+      canonicalArchiveUrl: parsed.canonicalArchiveUrl,
+      // The chrome shell is only reached on the chrome host (roleOf === 'chrome'),
+      // so mirrorHostOf(c) is the configured chrome host here.
+      chromeHost: mirrorHostOf(c)
     }));
   };
 
@@ -674,15 +757,16 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // before.
   app.on(['GET', 'HEAD'], '/', c => {
     const role = roleOf(new URL(c.req.url));
+    const mirrorHost = mirrorHostOf(c);
     // The content-host boundary policy is always enforced (see serveContent) —
     // never cspMode-governed report-only.
-    if (role === 'content') return notFound(c, contentDocumentCsp, 'enforce');
+    if (role === 'content') return notFound(c, mirrorHost, notFoundAbout, contentDocumentCsp, 'enforce');
     if (role === 'chrome') {
       // The chrome origin's lockdown CSP is always enforced (see chromeShell).
       c.header('Content-Security-Policy', chromeCspValue);
-      return c.html(INDEX_HTML);
+      return c.html(indexHtml(mirrorHost, indexAbout));
     }
-    return c.html(INDEX_HTML);
+    return c.html(indexHtml(mirrorHost, indexAbout));
   });
 
   app.on(['GET', 'HEAD'], '*', async c => {
@@ -704,11 +788,11 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       if (role === 'chrome') {
         c.header('Cache-Control', NO_STORE);
         c.header('Content-Security-Policy', chromeCspValue);
-        return c.html(NOT_FOUND_HTML, 404);
+        return c.html(notFoundHtml(mirrorHostOf(c), notFoundAbout), 404);
       }
       // The content-host boundary policy is always enforced (see serveContent);
       // the plain single-host document policy stays cspMode-governed.
-      return notFound(c, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content' ? 'enforce' : cspMode);
+      return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content' ? 'enforce' : cspMode);
     }
 
     // The chrome/content split (#320): capture bytes are served IFF the request

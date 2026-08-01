@@ -12,7 +12,7 @@
  * This is a cross-package contract, not an implementation detail: the
  * `waybackify cache` CLI populates the mirror by writing a local
  * bucket image (cache.js) that gets synced to R2 / Fastly Object Storage, so
- * the writer and the wayback.charlie.dev server MUST derive identical keys and
+ * the writer and the wayback mirror server MUST derive identical keys and
  * metadata from (timestamp, originalUrl, contentType).
  *
  * The layout:

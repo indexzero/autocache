@@ -3,7 +3,7 @@ waybackify cache add [flags] <wayback-url>
 Fetch one capture into a local bucket image
 
 Fetch one capture into a local bucket image at <root> — the
-wayback.charlie.dev mirror's population path. Syncing that dir to
+wayback mirror's population path. Syncing that dir to
 R2 / Fastly KV (rclone/wrangler/fastly tooling) IS deployment.
 
 Output: files written under the shared key scheme; summary line on
@@ -18,4 +18,4 @@ Flags:
   --no-requisites      store only the named capture; skip its im_/cs_/js_/oe_ page requisites
   --help|-h            Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

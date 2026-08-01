@@ -38,19 +38,20 @@
 
 import { serve, type ServerType } from '@hono/node-server';
 import { parseArgs } from 'node:util';
-import { createApp, validateSplit, type SplitOptions } from './app.ts';
+import { createApp, validateSplit, type ServedCopy, type SplitOptions } from './app.ts';
 import { FsStore } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import type { SigV4Credentials } from './sigv4.ts';
 
 /**
- * Production hostnames for the chrome/content split (#320), the defaults the
- * `--split` shorthand selects. Local dev overrides both with any hostnames it
- * sends via the `Host:` header (see `--chrome-host`/`--content-host`).
+ * Placeholder hostnames for the chrome/content split (#320), the defaults the
+ * `--split` shorthand selects. GENERIC — this package names no deployment; a
+ * real mirror passes its own hosts via `--chrome-host`/`--content-host` (or the
+ * `Host:` header in local dev). The concrete hosts live in the site layer.
  */
 const PROD_SPLIT: SplitOptions = {
-  chromeHost: 'wayback.charlie.dev',
-  contentHost: 'wayback.charlie.webring.delivery'
+  chromeHost: 'wayback.example.com',
+  contentHost: 'content.example.net'
 };
 
 export interface ServeOptions {
@@ -74,6 +75,12 @@ export interface ServeOptions {
   cspMode?: 'enforce' | 'report-only';
   /** The chrome/content split (#320); off by default (single-host serving). */
   split?: SplitOptions;
+  /**
+   * Per-deployment served-page description copy (#453). Absent, the generic
+   * site-agnostic defaults ship. Programmatic callers (render/wayback's local
+   * dev entry supplies the site COPY); not wired to a CLI flag.
+   */
+  copy?: ServedCopy;
 }
 
 /** Remote-bucket serving config — the S3Store leg of the two modes. */
@@ -96,6 +103,8 @@ export interface ServeBucketOptions {
   liveFallback?: boolean;
   /** The chrome/content split (#320); off by default (single-host serving). */
   split?: SplitOptions;
+  /** Per-deployment served-page description copy (#453); generic defaults absent. */
+  copy?: ServedCopy;
 }
 
 export interface RunningServer {
@@ -128,8 +137,8 @@ function listen(app: ReturnType<typeof createApp>, port: number, hostname: strin
  * server is listening, with the actual bound address.
  */
 export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
-  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split } = options;
-  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split }), port, hostname);
+  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy } = options;
+  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy }), port, hostname);
 }
 
 /**
@@ -138,9 +147,9 @@ export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
  * server is listening, with the actual bound address.
  */
 export function serveBucket(options: ServeBucketOptions): Promise<RunningServer> {
-  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split } = options;
+  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split, copy } = options;
   const store = new S3Store({ endpoint, bucket, region, prefix, credentials });
-  return listen(createApp(store, { liveFallback, split }), port, hostname);
+  return listen(createApp(store, { liveFallback, split, copy }), port, hostname);
 }
 
 const USAGE = [
@@ -150,8 +159,8 @@ const USAGE = [
   '                   credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env',
   '  --live-fallback  answer a corpus miss with a 302 to live web.archive.org instead of a',
   '                   local 404 (off by default — strict serving never leaves this server)',
-  '  --split          enable the #320 chrome/content split with the production hostnames',
-  '                   (chrome wayback.charlie.dev, content wayback.charlie.webring.delivery)',
+  '  --split          enable the #320 chrome/content split with the placeholder hostnames',
+  '                   (chrome wayback.example.com, content content.example.net)',
   '  --chrome-host H  chrome-origin host for the split (attribution UI + iframe shell; no bytes)',
   '  --content-host H content-origin host for the split (serves capture bytes cross-origin);',
   '                   --chrome-host and --content-host are given together and override --split',
@@ -212,8 +221,13 @@ function resolveSplit(values: {
  * parseArgs is Node's own stable argv parser
  * (https://nodejs.org/api/util.html#utilparseargsconfig) — no dependency
  * needed for a handful of flags.
+ *
+ * `defaults` carries deployment values that have no CLI flag (#453): the
+ * served-page `copy`. render/wayback's local-dev entry passes its site COPY
+ * here so `pnpm dev` renders the same description production does; a bare
+ * `waybackify-serve` invocation omits it and ships the generic defaults.
  */
-export async function main(argv: string[]): Promise<void> {
+export async function main(argv: string[], defaults: { copy?: ServedCopy } = {}): Promise<void> {
   // `--help` / `-h` is a request, not a bad invocation: print the usage banner
   // and exit 0 (before parseArgs, which is strict and would reject the unknown
   // flag with exit 2). The exit-2 path stays reserved for genuine usage errors.
@@ -270,7 +284,7 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   if (root) {
-    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split });
+    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy });
     console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
     return;
   }
@@ -292,6 +306,6 @@ export async function main(argv: string[]): Promise<void> {
     ? { accessKeyId, secretAccessKey, sessionToken }
     : { accessKeyId, secretAccessKey };
 
-  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split });
+  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split, copy: defaults.copy });
   console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
 }

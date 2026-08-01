@@ -22,7 +22,7 @@
  */
 
 import type { Hono } from 'hono';
-import { createApp, validateSplit, type SplitOptions } from './app.ts';
+import { createApp, validateSplit, type ServedCopy, type SplitOptions } from './app.ts';
 import { R2Store, type R2BucketLike } from './store.ts';
 
 /** Deployment coordinates, all defaulted to the documented convention. */
@@ -47,6 +47,15 @@ export interface CloudflareHandlerConfig {
   chromeHostVar?: string;
   contentHostVar?: string;
   splitSchemeVar?: string;
+  /**
+   * Per-deployment served-page description copy (#453) — the index and 404
+   * description paragraphs. A BUILD-TIME config value (not a `[vars]` binding):
+   * it is site prose supplied by the deploy entry, not operational config the
+   * dashboard toggles. Absent, the generic site-agnostic defaults ship. The
+   * fragments are TRUSTED, injected as RAW HTML (they carry `<a>` links) — see
+   * {@link ServedCopy}.
+   */
+  copy?: ServedCopy;
 }
 
 /** The export-default shape Cloudflare's module worker syntax expects. */
@@ -68,7 +77,7 @@ function envStr(value: unknown): string | undefined {
  * Build the chrome/content split (#320) from `[vars]` — BOTH hosts, or neither.
  * A PARTIAL config (one host set, the other absent/misspelled) must NOT silently
  * fall back to single-host serving: that would serve capture bytes first-party
- * on `wayback.charlie.dev`, the exact vulnerability #320 exists to close. So a
+ * on the trusted chrome host, the exact vulnerability #320 exists to close. So a
  * partial or invalid config THROWS — the isolate fails to build and the Worker
  * returns 500, fail-closed. Mirrors serve.js's all-or-nothing `--chrome-host`/
  * `--content-host`.
@@ -141,7 +150,9 @@ export function createCloudflareHandler(config: CloudflareHandlerConfig = {}): C
         // Pass the RAW bindings: presence must be decided on the binding, not a
         // string-coerced value, or a non-string var (Wrangler permits JSON
         // `[vars]`) would look ABSENT and silently disable the split.
-        split: envSplit(env[chromeHostVar], env[contentHostVar], env[splitSchemeVar])
+        split: envSplit(env[chromeHostVar], env[contentHostVar], env[splitSchemeVar]),
+        // Site prose from the deploy entry (build-time), not a runtime var.
+        copy: config.copy
       });
       return app.fetch(request);
     }

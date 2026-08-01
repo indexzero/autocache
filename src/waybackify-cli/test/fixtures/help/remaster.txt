@@ -17,4 +17,4 @@ Commands:
   build       Remaster a hermetic cache root into a standalone root
   verify      Prove a remastered tree stands alone (no archive.org)
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

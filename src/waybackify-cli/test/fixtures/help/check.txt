@@ -16,4 +16,4 @@ Arguments:
 Flags:
   --help|-h       Show help
 
-part of the wayback.charlie.dev mirror tooling
+part of the wayback mirror tooling

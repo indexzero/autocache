@@ -154,6 +154,9 @@ export function toDoc(input) {
  * @param {number} [options.maxRequests=Infinity] - archive.org request cap.
  * @param {number} [options.delayMs=1500] - pacing between captures.
  * @param {(e: object) => void} [options.onProgress]
+ * @param {object} [options.logger] - injected diagnostics logger, threaded into
+ *   cacheCapture so the §4 request/response firehose shows during a crawl (like
+ *   `cache add`/`cache fill`). Undefined → the library's no-op.
  * @param {() => string} [options.now] - ISO clock (deterministic tests).
  * @param {object} [options.deps] - injectable { serve, probe, cacheCapture,
  *   recordDynamic, readSidecar, loadCorpus }.
@@ -172,6 +175,12 @@ export async function crawl(urls, options = {}) {
     maxRequests = Infinity,
     delayMs = 1500,
     onProgress = () => {},
+    // The injected diagnostics logger, threaded straight into cacheCapture so the
+    // §4 request/response firehose (per requisite fetched) is visible during a
+    // crawl exactly as it is during `cache add`/`cache fill`. Undefined → the
+    // library defaults to its no-op. `onProgress` remains the crawl's OWN
+    // structured-event seam (capture/probe/drop); this is the per-fetch trace.
+    logger,
     now = () => new Date().toISOString(),
     browserCmd = 'agent-browser',
     har = false
@@ -277,7 +286,7 @@ export async function crawl(urls, options = {}) {
         continue;
       }
       try {
-        const summary = await cacheCapture(doc.url, { root, fetch: countingFetch, onEntry: addCommitted });
+        const summary = await cacheCapture(doc.url, { root, fetch: countingFetch, logger, onEntry: addCommitted });
         results.push({ key: doc.key, status: 'static', fetched: summary.fetched, failures: summary.failures.length });
       } catch (error) {
         if (error instanceof CapReachedError) results.push({ key: doc.key, status: 'cap-skipped', error: error.message });
@@ -336,6 +345,7 @@ export async function crawl(urls, options = {}) {
             countingFetch,
             addCommitted,
             delayMs,
+            logger,
             getCount: () => requestCount,
             maxRequests
           })
@@ -381,6 +391,7 @@ async function crawlDoc(doc, ctx) {
     countingFetch,
     addCommitted,
     delayMs,
+    logger,
     getCount,
     maxRequests
   } = ctx;
@@ -391,7 +402,7 @@ async function crawlDoc(doc, ctx) {
 
   // 1. Static bulk pass. On a cached doc this is local-only (closes any
   //    previously-recorded dynamic[] frontier); on a fresh doc it fetches.
-  const first = await cacheCapture(doc.url, { root, fetch: countingFetch, onEntry: addCommitted });
+  const first = await cacheCapture(doc.url, { root, fetch: countingFetch, logger, onEntry: addCommitted });
   onProgress({ type: 'capture', key: doc.key, fetched: first.fetched, iter: 0 });
 
   // Every dynamic child EVER recorded for this doc (prior runs + this run) that
@@ -579,7 +590,7 @@ async function crawlDoc(doc, ctx) {
     dynamicCount += worklist.length;
 
     capGuard();
-    const cap = await cacheCapture(doc.url, { root, fetch: ctx.countingFetch, onEntry: addCommitted });
+    const cap = await cacheCapture(doc.url, { root, fetch: ctx.countingFetch, logger, onEntry: addCommitted });
     onProgress({ type: 'capture', key: doc.key, fetched: cap.fetched, iter: iter + 1, recorded: worklist.length });
     iter++;
     if (delayMs) await sleep(delayMs);

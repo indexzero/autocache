@@ -171,6 +171,24 @@ test('--dry-run enumerates the recorded frontier (requisites ∪ dynamic) and fe
   assert.equal(store.sidecars.has(absentA), false, 'the store was not mutated');
 });
 
+test('threads the injected logger into cacheCapture (the §4 firehose is visible during a crawl)', async () => {
+  const root = await tmpRoot();
+  const doc = K(0, 'https://ex.com/');
+  const base = makeDeps(makeStore({ [doc]: {} }), { docs: {} }, newCounters());
+  let captured;
+  const deps = {
+    ...base,
+    cacheCapture: async (url, opts) => {
+      captured = opts.logger;
+      return { key: keyOf(url), hash: 'h', root: '', entries: [], fetched: 0, skipped: 0, failures: [] };
+    }
+  };
+  const marker = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {} };
+
+  await crawl([doc], { root, staticOnly: true, logger: marker, deps, policy: noPolicy, delayMs: 0 });
+  assert.equal(captured, marker, 'crawl passes its logger straight through to cacheCapture');
+});
+
 test('converges: leaked local children are recorded then fetched, then the render is clean', async () => {
   const root = await tmpRoot();
   const doc = K(0, 'https://ex.com/');

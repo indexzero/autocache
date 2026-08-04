@@ -128,6 +128,10 @@ export function cacheCrawlHandler(deps = {}) {
       delayMs,
       browserCmd,
       har: Boolean(flags.har),
+      // Thread the diagnostics logger so cacheCapture's §4 per-fetch firehose is
+      // visible during a crawl (esp. --static-only, whose loop emits no other
+      // progress); `onProgress` below stays the crawl's own event seam.
+      logger,
       onProgress: e => {
         if (e.type === 'capture') {
           logger.info({ evt: 'crawl-progress', type: 'capture', key: e.key, iter: e.iter, fetched: e.fetched }, `  capture ${e.key} iter=${e.iter} fetched=${e.fetched}`);

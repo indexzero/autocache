@@ -14,19 +14,18 @@
 //
 // Runbook: docs/BACKFILL.md. Cache-root structure: docs/CACHE.md.
 
+import { NOOP_LOGGER } from '../logger.js';
+
 /**
  * Build the `cache fill` handler. Dependency-injectable for tests; the bin wires
  * the default.
  *
  * @param {Object} [deps]
  * @param {Function} [deps.backfill] - the library entry point
- * @param {Function} [deps.log] - stdout line sink (the summary JSON)
- * @param {Function} [deps.error] - stderr line sink (progress)
- * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, logger, out }) => Promise<void>
  */
 export function cacheFillHandler(deps = {}) {
-  return async ({ args, flags }) => {
-    const { log = console.log, error = console.error } = deps;
+  return async ({ args, flags, logger = NOOP_LOGGER, out = console.log }) => {
     const backfill = deps.backfill ?? (await import('@charlie.dev/waybackify/backfill.js')).backfill;
 
     // paparam does not coerce flag values — they arrive as strings. Number()
@@ -43,38 +42,59 @@ export function cacheFillHandler(deps = {}) {
       max: num(flags.max, Infinity),
       refresh: Boolean(flags.refresh),
       dryRun: Boolean(flags.dryRun),
+      // §4 fetch trace (CDX retries + per-capture doc/requisite fetches).
+      logger,
       onProgress(ev) {
         switch (ev.type) {
           case 'worklist':
-            error(`worklist: ${ev.built ? 'built' : 'reused'} ${ev.count} — ${ev.path}`);
+            logger.info(
+              { evt: 'fill-progress', type: ev.type, built: ev.built, count: ev.count, path: ev.path },
+              `worklist: ${ev.built ? 'built' : 'reused'} ${ev.count} — ${ev.path}`
+            );
             break;
           case 'plan':
-            error(`plan: ${ev.pending} pending · ${ev.gone} gone · ${ev.total} total`);
+            logger.info(
+              { evt: 'fill-progress', type: ev.type, pending: ev.pending, gone: ev.gone, total: ev.total },
+              `plan: ${ev.pending} pending · ${ev.gone} gone · ${ev.total} total`
+            );
             break;
           case 'entry':
-            error(`${ev.outcome.padEnd(8)} ${ev.url}`);
+            logger.info(
+              { evt: 'fill-progress', type: ev.type, outcome: ev.outcome, url: ev.url },
+              `${ev.outcome.padEnd(8)} ${ev.url}`
+            );
             break;
           case 'connfail':
-            error(`connfail ${ev.streak}/${ev.abortAfter} — ${ev.url}`);
+            logger.warn(
+              { evt: 'fill-connfail', type: ev.type, streak: ev.streak, abortAfter: ev.abortAfter, url: ev.url },
+              `connfail ${ev.streak}/${ev.abortAfter} — ${ev.url}`
+            );
             break;
           case 'abort':
-            error(
+            logger.warn(
+              { evt: 'fill-progress', type: ev.type, streak: ev.streak, pending: ev.pending },
               `ABORT — ${ev.streak} consecutive connection failures; ${ev.pending} left. ` +
                 'Re-run when archive.org recovers.'
             );
             break;
           case 'max':
-            error(`--max ${ev.max} network attempts reached; re-run to continue.`);
+            logger.info(
+              { evt: 'fill-progress', type: ev.type, max: ev.max },
+              `--max ${ev.max} network attempts reached; re-run to continue.`
+            );
             break;
           case 'dry-run':
-            error(`--dry-run — ${ev.pending} would be fetched; no network touched.`);
+            logger.info(
+              { evt: 'fill-progress', type: ev.type, pending: ev.pending },
+              `--dry-run — ${ev.pending} would be fetched; no network touched.`
+            );
             break;
         }
       }
     });
 
     // ONE summary line on stdout (JSON, jq-friendly).
-    log(
+    out(
       JSON.stringify({
         root: flags.root,
         worklist: result.worklist.count,

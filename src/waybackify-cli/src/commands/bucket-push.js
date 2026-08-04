@@ -18,28 +18,42 @@
  *
  * @param {Object} [deps]
  * @param {Function} [deps.emitBucketBatch] - the library entry point
- * @param {Function} [deps.log] - stdout line sink (the batch)
- * @param {Function} [deps.error] - stderr line sink (the summary; batch under --dry-run)
- * @returns {Function} paparam runner: ({ flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ flags, logger, out }) => Promise<void>
+ *   `out` (run()-wired stdout sink) carries the batch; `logger` (run()-wired
+ *   stderr channel) carries progress + summary.
  */
 export function bucketPushHandler(deps = {}) {
-  return async ({ flags }) => {
-    const { log = console.log, error = console.error } = deps;
+  return async ({ flags, logger, progressEvery, out = console.log }) => {
     const emitBucketBatch = deps.emitBucketBatch ?? (await import('@charlie.dev/waybackify/bucket-batch.js')).emitBucketBatch;
 
     const { lines, summary } = await emitBucketBatch(flags.root, {
       bucket: flags.bucket,
-      emptyFile: flags.emptyFile ?? null
+      emptyFile: flags.emptyFile ?? null,
+      // Silent-loop progress (§6) → the logger (stderr). NEVER stdout: stdout is
+      // the s5cmd batch, and a progress line piped into `s5cmd run` is a command.
+      logger,
+      progressEvery
     });
 
     // The batch goes to stdout, one cp line per object, ready to pipe into
-    // `s5cmd run`. --dry-run diverts it to stderr so an accidental
+    // `s5cmd run`. --dry-run diverts it to the logger (stderr) so an accidental
     // `| s5cmd run` is a no-op.
-    const batchSink = flags.dryRun ? error : log;
-    for (const line of lines) batchSink(line);
+    if (flags.dryRun) {
+      for (const line of lines) logger.info({ evt: 'bucket-summary', dryRun: true }, line);
+    } else {
+      for (const line of lines) out(line);
+    }
 
-    // Summary ALWAYS on stderr — it must never contaminate the piped batch.
-    error(
+    // Summary ALWAYS on stderr (the logger) — it must never contaminate the
+    // piped batch on stdout.
+    logger.info(
+      {
+        evt: 'bucket-summary',
+        total: summary.total,
+        bodied: summary.bodied,
+        bodiless: summary.bodiless,
+        dryRun: Boolean(flags.dryRun)
+      },
       `bucket push: ${summary.total} objects (${summary.bodied} bodied, ${summary.bodiless} bodiless)` +
         `${flags.dryRun ? ' — dry-run, nothing written to stdout' : ''}`
     );

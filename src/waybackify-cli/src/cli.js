@@ -95,6 +95,11 @@
 //       https://man.freebsd.org/cgi/man.cgi?query=sysexits (EX_SOFTWARE 70).
 
 import { arg, bail, command, description, flag, footer, rest, summary, validate } from 'paparam';
+import { configureLogging } from './logger.js';
+
+// Logging-flag parsing + logger construction live together in ./logger.js
+// (parseLoggingFlags → configureLogging) so the whole flag/env→logger mapping
+// has one home; run() below makes a single configureLogging() call.
 
 export const EXIT = {
   OK: 0,
@@ -652,14 +657,42 @@ export function createCLI({ handlers = {}, onBail } = {}) {
  * @param {string[]} argv - e.g. process.argv.slice(2)
  * @param {Object} [options]
  * @param {Object} [options.handlers] - see createCLI
- * @param {Function} [options.error] - stderr line sink (default console.error)
+ * @param {Function} [options.error] - run()'s OWN stderr sink for usage/bail
+ *   messages (default console.error) — distinct from handler output.
+ * @param {Object} [options.logger] - injected logger (tests); default: built
+ *   from the argv logging flags (`-v`/`-vv`/`-q`/`--silent`/`--log-file`) +
+ *   LOG_LEVEL.
+ * @param {Function} [options.out] - injected STDOUT result sink (tests); default
+ *   writes the line to fd 1. run() owns both output seams — `out` (the result,
+ *   stdout) and `logger` (diagnostics, stderr) — and threads them into every
+ *   handler's runner payload, so a handler never touches a global fd itself.
  * @returns {Promise<number>} exit code per the convention above
  */
-export async function run(argv, { handlers = {}, error = console.error } = {}) {
+export async function run(argv, {
+  handlers = {},
+  error = console.error,
+  logger,
+  out = line => process.stdout.write(line + '\n')
+} = {}) {
   let exitCode = null;
 
+  // Extract the logging knobs, build the logger, and hand paparam the REST of
+  // argv (it is strict — an unknown `-v` would bail exit 2). configureLogging
+  // owns the whole flag/env→logger mapping; an injected logger short-circuits.
+  const { logger: diag, progressEvery, argv: commandArgv } = configureLogging(argv, { logger });
+
+  // Fold run()'s output seams into every handler's runner payload: `out` (the
+  // result → stdout) and `logger` (diagnostics → stderr / --log-file), plus the
+  // progress throttle. paparam supplies args/flags; run() adds these — so ONE
+  // injector owns where a command's output goes, and the handler just calls
+  // out()/logger.* with no global-fd knowledge.
+  const wiredHandlers = {};
+  for (const [name, handler] of Object.entries(handlers)) {
+    wiredHandlers[name] = payload => handler({ ...payload, logger: diag, out, progressEvery });
+  }
+
   const root = createCLI({
-    handlers,
+    handlers: wiredHandlers,
     onBail(bailed) {
       // Classification (source-driven notes 2/4/6):
       //   bail.err with code ERR_NOT_IMPLEMENTED  → scaffold handler   → 70
@@ -698,7 +731,7 @@ export async function run(argv, { handlers = {}, error = console.error } = {}) {
     }
   });
 
-  const parsed = root.parse(argv);
+  const parsed = root.parse(commandArgv);
 
   if (parsed === null) {
     // Either a usage bail (onBail fired, exitCode set) or --help was shown

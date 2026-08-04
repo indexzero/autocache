@@ -95,23 +95,23 @@ function printReport(report, { quiet, CATEGORIES, totalFindings, unresolvedFindi
  * @param {Array}    [deps.CATEGORIES] - fsck.js#CATEGORIES
  * @param {Function} [deps.totalFindings] - fsck.js#totalFindings
  * @param {Function} [deps.unresolvedFindings] - fsck.js#unresolvedFindings
- * @param {Function} [deps.log] - stdout line sink (the report / JSON)
- * @returns {Function} paparam runner: ({ flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ flags, out, logger }) => Promise<void>
+ *   — `out` (stdout result sink) and `logger` (stderr diagnostics) are run()-wired.
  */
 export function cacheVerifyHandler(deps = {}) {
-  return async ({ flags }) => {
-    const { log = console.log } = deps;
+  return async ({ flags, logger, progressEvery, out = console.log }) => {
     // If fsck is injected, every helper comes off deps (no library load);
     // otherwise lazily import the module for all four members.
     const mod = deps.fsck ? deps : await import('@charlie.dev/waybackify/fsck.js');
     const { fsck, CATEGORIES, totalFindings, unresolvedFindings } = mod;
 
     // --root|-r is canonical (cli.js). --fix reaps ONLY orphan cap/ + stale
-    // tmp/; corruption and a short closure are never touched.
-    const report = await fsck(flags.root, { fix: Boolean(flags.fix) });
+    // tmp/; corruption and a short closure are never touched. Silent-loop
+    // progress (§6): the re-hash sweep speaks every --progress-every.
+    const report = await fsck(flags.root, { fix: Boolean(flags.fix), logger, progressEvery });
 
-    if (flags.json) log(JSON.stringify(report, null, 2));
-    else printReport(report, { quiet: Boolean(flags.quiet), CATEGORIES, totalFindings, unresolvedFindings }, log);
+    if (flags.json) out(JSON.stringify(report, null, 2));
+    else printReport(report, { quiet: Boolean(flags.quiet), CATEGORIES, totalFindings, unresolvedFindings }, out);
 
     const unresolved = unresolvedFindings(report);
     if (unresolved > 0) {

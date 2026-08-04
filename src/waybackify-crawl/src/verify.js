@@ -43,6 +43,9 @@ import { BUILD_NAME, remaster } from '@charlie.dev/waybackify/remaster.js';
 import { classifyContentType } from '@charlie.dev/waybackify/rewrite.js';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
 
+// The library never constructs pino (design §1); default no-op.
+const NOOP_LOGGER = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {} };
+
 /* ------------------------------------------------------------------------ *
  * Report shape (the family's LayerReport/Finding vocabulary)
  * ------------------------------------------------------------------------ */
@@ -215,7 +218,7 @@ export function scanBody(key, text) {
 }
 
 /** Scan every text-bearing body in a remastered tree. */
-export async function scanEscapes(entries) {
+export async function scanEscapes(entries, { logger = NOOP_LOGGER, progressEvery = 0 } = {}) {
   const findings = [];
   let scanned = 0;
   for (const entry of entries) {
@@ -231,6 +234,10 @@ export async function scanEscapes(entries) {
       throw error;
     }
     scanned++;
+    // Silent-loop progress (design §6): the per-body scan had no hook.
+    if (progressEvery && scanned % progressEvery === 0) {
+      logger.info({ evt: 'verify-scan-progress', done: scanned }, `remaster verify: ${scanned} bodies scanned`);
+    }
     // latin1 is a lossless byte↔char map, so byte offset === string index.
     findings.push(...scanBody(entry.key, bytes.toString('latin1')));
   }
@@ -464,19 +471,39 @@ export async function runDynamic(root, options) {
  */
 export async function runRemasterVerify(options) {
   const tiers = options.tiers ?? ['static'];
+  const logger = options.logger ?? NOOP_LOGGER;
+  // The former already-formatted `onProgress(line)` string sink folds onto the
+  // logger (§2): the determinism-rebuild line and the browser probe's progress
+  // both flow through structured info records now.
+  const onProgress = line => logger.info({ evt: 'verify-progress' }, line);
+  const progressEvery = Number(options.progressEvery) > 0 ? Number(options.progressEvery) : 0;
   const layers = [];
 
   if (tiers.includes('static')) {
     const entries = await enumerateRemastered(options.root);
-    layers.push(await scanEscapes(entries));
-    layers.push(await checkDeterminism(options.root, entries, { hermetic: options.hermetic, skipReproduce: options.skipDeterminism, onProgress: options.onProgress }));
+    layers.push(await scanEscapes(entries, { logger, progressEvery }));
+    layers.push(await checkDeterminism(options.root, entries, { hermetic: options.hermetic, skipReproduce: options.skipDeterminism, onProgress }));
   }
 
   if (tiers.includes('dynamic')) {
     if (!isBrowserAvailable(options.browserCmd)) {
       layers.push({ tier: 'dynamic', layer: 'browser', name: 'strict-serving browser sweep', pass: true, checked: 0, findings: [], skipped: 'agent-browser not found on PATH' });
     } else {
-      layers.push(await runDynamic(options.root, options));
+      layers.push(await runDynamic(options.root, { ...options, onProgress }));
+    }
+  }
+
+  // Diagnostic fold (§5): each layer verdict at info, each finding at its level
+  // (dynamic browser findings warn, static escape/determinism error). Additive —
+  // the report stays the DATA the CLI renders.
+  for (const layer of layers) {
+    logger.info(
+      { evt: 'verify-layer', tier: layer.tier, layer: layer.layer, name: layer.name, pass: layer.pass, checked: layer.checked, findings: layer.findings?.length ?? 0 },
+      `${layer.tier}/${layer.layer} — ${layer.name}: ${layer.pass ? 'PASS' : `FAIL (${layer.findings?.length ?? 0})`}`
+    );
+    const emit = layer.tier === 'dynamic' ? logger.warn : logger.error;
+    for (const f of layer.findings ?? []) {
+      emit.call(logger, { evt: 'verify-finding', tier: f.tier, layer: f.layer, key: f.key, kind: f.kind, detail: f.detail, ...(f.expected !== undefined ? { expected: f.expected } : {}), ...(f.actual !== undefined ? { actual: f.actual } : {}) }, `${f.kind}: ${f.key} — ${f.detail}`);
     }
   }
 

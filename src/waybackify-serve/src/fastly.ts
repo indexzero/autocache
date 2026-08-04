@@ -32,7 +32,7 @@
  */
 
 import { SecretStore } from 'fastly:secret-store';
-import { createApp, type ServedCopy, type SplitOptions } from './app.ts';
+import { createApp, edgeConsoleLogger, type ServedCopy, type SplitOptions } from './app.ts';
 import { S3Store } from './s3store.ts';
 
 /** Deployment coordinates — all required except the strict-serving switch. */
@@ -83,6 +83,14 @@ export interface FastlyHandlerConfig {
    * TRUSTED, injected as RAW HTML (carries `<a>` links) — see {@link ServedCopy}.
    */
   copy?: ServedCopy;
+  /**
+   * Silence edge logging. Observable is the default posture (§9): a
+   * `console`-shim streams notable events to `fastly log-tail` for free. Set
+   * true to inject the no-op instead — the Fastly analogue of Cloudflare's
+   * `WAYBACK_LOG_SILENT` var (Compute has no per-request env, so it is a config
+   * boolean, exactly like `liveFallback`).
+   */
+  logSilent?: boolean;
 }
 
 async function handle(request: Request, config: FastlyHandlerConfig): Promise<Response> {
@@ -104,7 +112,16 @@ async function handle(request: Request, config: FastlyHandlerConfig): Promise<Re
     fetchOptions: { backend: config.backend }
   });
 
-  return createApp(store, { liveFallback: config.liveFallback ?? false, split: config.split, copy: config.copy }).fetch(request);
+  // Observable by default (§9): inject the console-shim (streamed free by
+  // `fastly log-tail`) unless the deploy opts into the quiet. Fastly has no
+  // per-request env, so the silence switch is a config boolean — exactly the
+  // shape `liveFallback` already uses.
+  return createApp(store, {
+    liveFallback: config.liveFallback ?? false,
+    split: config.split,
+    copy: config.copy,
+    logger: config.logSilent ? undefined : edgeConsoleLogger()
+  }).fetch(request);
 }
 
 /**

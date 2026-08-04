@@ -12,11 +12,11 @@ function run({ args, flags, result }) {
   const stdout = [];
   const stderr = [];
   const handler = cacheFillHandler({
-    backfill: async opts => { calls.push(opts); return result; },
-    log: l => stdout.push(l),
-    error: l => stderr.push(l)
+    backfill: async opts => { calls.push(opts); return result; }
   });
-  return { promise: handler({ args, flags }), calls, stdout, stderr };
+  const push = (o, m) => stderr.push(typeof o === 'string' ? o : m);
+  const logger = { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
+  return { promise: handler({ args, flags, logger, out: l => stdout.push(l) }), calls, stdout, stderr };
 }
 
 const okResult = {

@@ -10,6 +10,9 @@ import { bucketVerifyHandler } from '../src/commands/bucket-verify.js';
 
 const CREDS = { AWS_ACCESS_KEY_ID: 'AKID', AWS_SECRET_ACCESS_KEY: 'secret' };
 
+/** A no-op logger for tests that never assert on the stderr progress stream. */
+const NOOP_LOGGER = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+
 /** A fake parity module the handler treats as the engine (skips the dispatcher). */
 function fakeParity(report, calls = []) {
   return {
@@ -53,10 +56,10 @@ test('absent AWS creds are a usage error (exit 2), before any engine load', asyn
 test('a passing parity report exits 0 and prints the formatted report', async () => {
   const calls = [];
   const out = [];
-  const handler = bucketVerifyHandler({ env: CREDS, parity: fakeParity({ pass: true }, calls), log: l => out.push(l), error: () => {} });
+  const handler = bucketVerifyHandler({ env: CREDS, parity: fakeParity({ pass: true }, calls) });
   const code = await run(
     ['bucket', 'verify', '-r', '/c', '--bucket', 'b', '--endpoint', 'http://x', '--region', 'auto', '--layer', '1,2', '--sample', '5', '--concurrency', '8'],
-    { handlers: { bucketVerify: handler }, error: () => {} }
+    { handlers: { bucketVerify: handler }, logger: NOOP_LOGGER, out: l => out.push(l), error: () => {} }
   );
   assert.equal(code, EXIT.OK);
   assert.ok(out.includes('PARITY-REPORT'));
@@ -71,8 +74,8 @@ test('a passing parity report exits 0 and prints the formatted report', async ()
 });
 
 test('a failing parity report is a domain failure (exit 1)', async () => {
-  const handler = bucketVerifyHandler({ env: CREDS, parity: fakeParity({ pass: false }), log: () => {}, error: () => {} });
-  const code = await run(['bucket', 'verify', '-r', '/c', '--bucket', 'b', '--endpoint', 'http://x'], { handlers: { bucketVerify: handler }, error: () => {} });
+  const handler = bucketVerifyHandler({ env: CREDS, parity: fakeParity({ pass: false }) });
+  const code = await run(['bucket', 'verify', '-r', '/c', '--bucket', 'b', '--endpoint', 'http://x'], { handlers: { bucketVerify: handler }, logger: NOOP_LOGGER, out: () => {}, error: () => {} });
   assert.equal(code, EXIT.DOMAIN);
 });
 
@@ -80,11 +83,9 @@ test('--json emits the raw report', async () => {
   const out = [];
   const handler = bucketVerifyHandler({
     env: CREDS,
-    parity: { ...fakeParity({ pass: true, layers: [] }), formatReport: () => 'HUMAN' },
-    log: l => out.push(l),
-    error: () => {}
+    parity: { ...fakeParity({ pass: true, layers: [] }), formatReport: () => 'HUMAN' }
   });
-  await run(['bucket', 'verify', '-r', '/c', '--bucket', 'b', '--endpoint', 'http://x', '--json'], { handlers: { bucketVerify: handler }, error: () => {} });
+  await run(['bucket', 'verify', '-r', '/c', '--bucket', 'b', '--endpoint', 'http://x', '--json'], { handlers: { bucketVerify: handler }, logger: NOOP_LOGGER, out: l => out.push(l), error: () => {} });
   assert.deepEqual(JSON.parse(out[0]), { pass: true, layers: [] });
 });
 

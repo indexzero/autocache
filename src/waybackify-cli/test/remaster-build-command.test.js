@@ -22,22 +22,21 @@ function handlerFor(report) {
   const calls = [];
   const out = [];
   const handler = remasterBuildHandler({
-    remaster: async (h, r) => { calls.push({ h, r }); return report; },
-    log: l => out.push(l)
+    remaster: async (h, r) => { calls.push({ h, r }); return report; }
   });
   return { handler, calls, out };
 }
 
 test('maps the two positional roots → remaster(), resolved to absolute', async () => {
-  const { handler, calls } = handlerFor(reportOf());
-  assert.equal(await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, error: () => {} }), EXIT.OK);
+  const { handler, calls, out } = handlerFor(reportOf());
+  assert.equal(await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, out: l => out.push(l), error: () => {} }), EXIT.OK);
   assert.equal(calls[0].h, path.resolve('/h'));
   assert.equal(calls[0].r, path.resolve('/o'));
 });
 
 test('prints a human summary line by default', async () => {
   const { handler, out } = handlerFor(reportOf());
-  await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, error: () => {} });
+  await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, out: l => out.push(l), error: () => {} });
   assert.ok(out.some(l => l.includes('7 sidecars')));
   assert.ok(out.some(l => l.includes('remaster.build.json')));
 });
@@ -45,15 +44,14 @@ test('prints a human summary line by default', async () => {
 test('--json emits the raw run record', async () => {
   const report = reportOf();
   const { handler, out } = handlerFor(report);
-  await run(['remaster', 'build', '/h', '/o', '--json'], { handlers: { remasterBuild: handler }, error: () => {} });
+  await run(['remaster', 'build', '/h', '/o', '--json'], { handlers: { remasterBuild: handler }, out: l => out.push(l), error: () => {} });
   assert.equal(out.length, 1);
   assert.deepEqual(JSON.parse(out[0]), report);
 });
 
 test('a build throw → domain exit 1', async () => {
   const handler = remasterBuildHandler({
-    remaster: async () => { throw new Error('remaster: unsupported sidecar version 99'); },
-    log: () => {}
+    remaster: async () => { throw new Error('remaster: unsupported sidecar version 99'); }
   });
-  assert.equal(await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, error: () => {} }), EXIT.DOMAIN);
+  assert.equal(await run(['remaster', 'build', '/h', '/o'], { handlers: { remasterBuild: handler }, out: () => {}, error: () => {} }), EXIT.DOMAIN);
 });

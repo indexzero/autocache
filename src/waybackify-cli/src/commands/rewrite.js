@@ -30,12 +30,11 @@ import fs from 'node:fs';
  * @param {Object} [deps]
  * @param {Function} [deps.apply] - the library entry point (manifest.js#apply)
  * @param {Function} [deps.readManifest] - manifest reader
- * @param {Function} [deps.error] - stderr line sink (no-verdict warnings)
- * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, logger }) => Promise<void>
+ *   — `logger` (stderr diagnostics) is run()-wired; this command writes no stdout.
  */
 export function rewriteHandler(deps = {}) {
-  return async ({ args, flags }) => {
-    const { error = console.error } = deps;
+  return async ({ args, flags, logger }) => {
     const apply = deps.apply ?? (await import('@charlie.dev/waybackify/manifest.js')).apply;
     const readManifest = deps.readManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).readManifest;
 
@@ -48,7 +47,7 @@ export function rewriteHandler(deps = {}) {
     fs.writeFileSync(flags.output, content);
 
     if (warnings.length > 0) {
-      for (const url of warnings) error(`no verdict: ${url}`);
+      for (const url of warnings) logger.warn({ evt: 'no-verdict', url }, `no verdict: ${url}`);
       // Thrown runner errors route through the root bail handler → exit 1
       // (domain failure — the manifest does not cover this source).
       throw new Error(`rewrite incomplete: ${warnings.length} url(s) had no verdict — left untouched`);

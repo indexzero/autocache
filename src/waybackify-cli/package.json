@@ -19,10 +19,12 @@
   "author": "Charlie Robbins <npm@charlie.dev>",
   "license": "MIT",
   "dependencies": {
-    "paparam": "^1.10.1",
-    "undici": "^7.28.0",
     "@charlie.dev/waybackify": "workspace:*",
     "@charlie.dev/waybackify-crawl": "workspace:*",
-    "@charlie.dev/waybackify-serve": "workspace:*"
+    "@charlie.dev/waybackify-serve": "workspace:*",
+    "paparam": "^1.10.1",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "undici": "^7.28.0"
   }
 }

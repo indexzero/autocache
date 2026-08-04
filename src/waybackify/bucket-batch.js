@@ -44,6 +44,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { assertMetadataSafe, capturePath, metaPath } from './key.js';
 import { readSidecar } from './cache.js';
+import { NOOP_LOGGER } from './noop-logger.js';
+import { coerceEvery, emitProgress } from './progress.js';
 
 /** Statuses whose entry OWNS a local cap/<aa>/<hash> body file. */
 const BODIED = new Set(['body']);
@@ -146,12 +148,21 @@ export async function emitBucketBatch(root, options = {}) {
   const { bucket, emptyFile = null } = options;
   if (!bucket) throw new TypeError('emitBucketBatch: options.bucket is required');
   const base = bucketBase(bucket);
+  // Silent-loop progress (design §6): the walk had NO emission hook. The batch
+  // is STDOUT (piped into s5cmd) — progress MUST go through the logger, whose
+  // human stream is stderr, or it would corrupt the pipe. Streaming walk, so the
+  // aggregate is `done` (no known total). 0 = off.
+  const logger = options.logger ?? NOOP_LOGGER;
+  const progressEvery = coerceEvery(options.progressEvery);
 
   const rows = [];
   let bodied = 0;
   let bodiless = 0;
+  let scanned = 0;
 
   for await (const rel of walkMeta(root)) {
+    scanned++;
+    emitProgress(logger, progressEvery, scanned, 'bucket-progress', `bucket push: ${scanned} objects emitted`);
     // The sidecar's own `key` is the only recoverable identity (the filename is
     // the hash). Read it to learn the key, then re-read through cache.js's
     // readSidecar for the authoritative, VALIDATED record — it owns the

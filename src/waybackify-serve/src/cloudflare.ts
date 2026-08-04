@@ -22,7 +22,7 @@
  */
 
 import type { Hono } from 'hono';
-import { createApp, validateSplit, type ServedCopy, type SplitOptions } from './app.ts';
+import { createApp, edgeConsoleLogger, validateSplit, type ServedCopy, type SplitOptions } from './app.ts';
 import { R2Store, type R2BucketLike } from './store.ts';
 
 /** Deployment coordinates, all defaulted to the documented convention. */
@@ -56,6 +56,13 @@ export interface CloudflareHandlerConfig {
    * {@link ServedCopy}.
    */
   copy?: ServedCopy;
+  /**
+   * Name of the `[vars]` entry that SILENCES edge logging. Observable is the
+   * default posture (§9): a `console`-shim streams notable events to
+   * `wrangler tail` for free. Setting the var truthy ("1"/"true") injects the
+   * no-op instead — you opt INTO the quiet. Default `WAYBACK_LOG_SILENT`.
+   */
+  logSilentVar?: string;
 }
 
 /** The export-default shape Cloudflare's module worker syntax expects. */
@@ -142,9 +149,12 @@ export function createCloudflareHandler(config: CloudflareHandlerConfig = {}): C
   const chromeHostVar = config.chromeHostVar ?? 'CHROME_HOST';
   const contentHostVar = config.contentHostVar ?? 'CONTENT_HOST';
   const splitSchemeVar = config.splitSchemeVar ?? 'SPLIT_SCHEME';
+  const logSilentVar = config.logSilentVar ?? 'WAYBACK_LOG_SILENT';
   let app: Hono | undefined;
   return {
     fetch(request: Request, env: Record<string, unknown>): Response | Promise<Response> {
+      // Observable by default (§9): inject the console-shim unless the deploy
+      // var opts into the quiet, in which case leave it unset (app → no-op).
       app ??= createApp(new R2Store(env[capturesBinding] as R2BucketLike), {
         liveFallback: envFlag(env[liveFallbackVar]),
         // Pass the RAW bindings: presence must be decided on the binding, not a
@@ -152,7 +162,8 @@ export function createCloudflareHandler(config: CloudflareHandlerConfig = {}): C
         // `[vars]`) would look ABSENT and silently disable the split.
         split: envSplit(env[chromeHostVar], env[contentHostVar], env[splitSchemeVar]),
         // Site prose from the deploy entry (build-time), not a runtime var.
-        copy: config.copy
+        copy: config.copy,
+        logger: envFlag(env[logSilentVar]) ? undefined : edgeConsoleLogger()
       });
       return app.fetch(request);
     }

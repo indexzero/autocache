@@ -34,6 +34,8 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { RULE_VERSION, classifyContentType, rewrite } from './rewrite.js';
 import { SUPPORTED_SIDECAR_VERSIONS } from './cache.js';
+import { NOOP_LOGGER } from './noop-logger.js';
+import { coerceEvery, emitProgress } from './progress.js';
 
 /** Remaster tool version. Bump on a change to the build's OUTPUT contract
  *  (build-record shape, sidecar carry-over rules, tree layout) — distinct from
@@ -127,6 +129,11 @@ async function walkMeta(root) {
  */
 export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const engineVersion = options.engineVersion ?? ENGINE_VERSION;
+  // Silent-loop progress (design §6): a long rewrite had NO emission hook — a
+  // 12k-entry remaster ran dark until it finished. A counter + throttled
+  // aggregate every N (0 = off; the CLI passes --progress-every / env).
+  const logger = options.logger ?? NOOP_LOGGER;
+  const progressEvery = coerceEvery(options.progressEvery);
   const found = await walkMeta(hermeticRoot);
 
   // ---- pass 1: read every sidecar, build the corpus map --------------------
@@ -157,6 +164,7 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const buildEntries = [];
   let bodies = 0;
   let rewritten = 0;
+  let processed = 0;
 
   for (const { aa, hash, sidecar } of sidecars) {
     let outSidecar = sidecar;
@@ -212,6 +220,9 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
       rewritten: didRewrite,
       status: sidecar.status
     });
+
+    processed++;
+    emitProgress(logger, progressEvery, processed, 'remaster-progress', `remaster: ${processed}/${sidecars.length} entries`, { total: sidecars.length });
   }
 
   // ---- the content-addressed build record ----------------------------------

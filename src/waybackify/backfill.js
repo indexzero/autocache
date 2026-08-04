@@ -34,6 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { discover as defaultDiscover, against as defaultAgainst } from './ledger.js';
 import { WaybackMachine } from './index.js';
+import { NOOP_LOGGER } from './noop-logger.js';
 
 // A capture earns a worklist slot if refetching it can advance closure:
 //   unfetched — no document sidecar yet; must be fetched.
@@ -119,6 +120,8 @@ const refetchDir = root => path.join(root, '.refetch');
  * @param {boolean} [opts.refresh=false] - rebuild the worklist from a fresh enumerate
  * @param {boolean} [opts.dryRun=false] - build/return the worklist; fetch nothing
  * @param {(ev: object) => void} [opts.onProgress] - progress observer (see events below)
+ * @param {Object} [opts.logger] - injected diagnostic logger (default no-op);
+ *   threaded into the CDX client + every cacheCapture for the §4 fetch trace
  * @param {Object} [opts.deps] - test seams: { discover, against, cacheCapture, wayback, fetch, sleep }
  * @returns {Promise<{worklist: {built: boolean, count: number, path: string},
  *   pending: number, gone: number, stats: object|null, aborted: boolean, dryRun: boolean}>}
@@ -133,6 +136,7 @@ export async function backfill(opts = {}) {
     refresh = false,
     dryRun = false,
     onProgress = () => {},
+    logger = NOOP_LOGGER,
     deps = {}
   } = opts;
   if (!root) throw new TypeError('backfill: options.root is required');
@@ -142,7 +146,9 @@ export async function backfill(opts = {}) {
   const against = deps.against ?? defaultAgainst;
   const cacheCapture = deps.cacheCapture ?? (await import('./cache.js')).cacheCapture;
   const sleep = deps.sleep ?? (ms => new Promise(r => setTimeout(r, ms)));
-  const wayback = deps.wayback ?? new WaybackMachine({ timeout: 60000 });
+  // The injected logger flows into BOTH the CDX client (retry firehose) and each
+  // per-capture fetch (the doc + requisite trace) — the two halves of §4.
+  const wayback = deps.wayback ?? new WaybackMachine({ timeout: 60000, logger });
 
   const dir = refetchDir(root);
   const worklistPath = path.join(dir, 'worklist.jsonl');
@@ -193,7 +199,7 @@ export async function backfill(opts = {}) {
 
     let outcome; // 'fetched' | 'cached' | 'deferred' | 'gone' | 'connfail'
     try {
-      const summary = await cacheCapture(url, { root, wayback, fetch: deps.fetch });
+      const summary = await cacheCapture(url, { root, wayback, fetch: deps.fetch, logger });
       const failures = summary.failures ?? [];
       if (failures.length > 0) {
         // Requisites failed. If ANYTHING fetched this round the server was

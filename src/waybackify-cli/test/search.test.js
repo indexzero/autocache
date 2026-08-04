@@ -43,11 +43,14 @@ const CANNED = [
 test('emits one JSONL row per capture in the exact contract shape', async () => {
   const out = [];
   const handler = searchHandler({
-    getSnapshots: async () => CANNED.slice(0, 2),
-    log: line => out.push(line)
+    getSnapshots: async () => CANNED.slice(0, 2)
   });
 
-  const code = await run(['search', URL_UNDER_TEST], { handlers: { search: handler }, error: () => {} });
+  const code = await run(['search', URL_UNDER_TEST], {
+    handlers: { search: handler },
+    out: line => out.push(line),
+    error: () => {}
+  });
   assert.equal(code, EXIT.OK);
   assert.equal(out.length, 2);
   assert.deepEqual(JSON.parse(out[0]), {
@@ -65,11 +68,14 @@ test('--limit caps the emitted rows', async () => {
   const handler = searchHandler({
     // Return ALL five even though --limit 3 is asked, so the cap is proven to
     // be enforced by the wiring, not merely by the query.
-    getSnapshots: async () => CANNED,
-    log: line => out.push(line)
+    getSnapshots: async () => CANNED
   });
 
-  const code = await run(['search', URL_UNDER_TEST, '--limit', '3'], { handlers: { search: handler }, error: () => {} });
+  const code = await run(['search', URL_UNDER_TEST, '--limit', '3'], {
+    handlers: { search: handler },
+    out: line => out.push(line),
+    error: () => {}
+  });
   assert.equal(code, EXIT.OK);
   assert.equal(out.length, 3);
 });
@@ -81,12 +87,12 @@ test('--near is forwarded verbatim into the query options', async () => {
       seen.url = url;
       seen.opts = opts;
       return [];
-    },
-    log: () => {}
+    }
   });
 
   await run(['search', URL_UNDER_TEST, '--near', '20140403040000', '--limit', '5'], {
     handlers: { search: handler },
+    out: () => {},
     error: () => {}
   });
   assert.equal(seen.url, URL_UNDER_TEST);
@@ -97,11 +103,14 @@ test('--near is forwarded verbatim into the query options', async () => {
 test('zero captures → empty stdout, exit 0 (absence is an answer)', async () => {
   const out = [];
   const handler = searchHandler({
-    getSnapshots: async () => [],
-    log: line => out.push(line)
+    getSnapshots: async () => []
   });
 
-  const code = await run(['search', URL_UNDER_TEST], { handlers: { search: handler }, error: () => {} });
+  const code = await run(['search', URL_UNDER_TEST], {
+    handlers: { search: handler },
+    out: line => out.push(line),
+    error: () => {}
+  });
   assert.equal(code, EXIT.OK);
   assert.equal(out.length, 0);
 });
@@ -111,11 +120,14 @@ test('network/CDX failure → message on stderr, domain exit 1', async () => {
   const handler = searchHandler({
     getSnapshots: async () => {
       throw new Error('waybackify: lookup failed for http://example.com/');
-    },
-    log: () => {}
+    }
   });
 
-  const code = await run(['search', URL_UNDER_TEST], { handlers: { search: handler }, error: line => err.push(line) });
+  const code = await run(['search', URL_UNDER_TEST], {
+    handlers: { search: handler },
+    out: () => {},
+    error: line => err.push(line)
+  });
   assert.equal(code, EXIT.DOMAIN);
   assert.ok(err.some(l => l.includes('lookup failed')), 'failure message reached stderr');
 });

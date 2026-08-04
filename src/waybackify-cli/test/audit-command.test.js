@@ -48,9 +48,7 @@ function handlerFor(env = {}) {
   const handler = auditHandler({
     env,
     auditCapture: async (url, opts) => { calls.push(url); return fakeAuditCapture(url); },
-    WaybackMachine: FakeWaybackMachine,
-    log: l => out.push(l),
-    error: () => {}
+    WaybackMachine: FakeWaybackMachine
   });
   return { handler, out, calls };
 }
@@ -60,7 +58,7 @@ test('discovers ledger captures, audits, checkpoints, and summarizes', async () 
   const checkpoint = path.join(dir, 'cp.jsonl');
   const { handler, out, calls } = handlerFor();
 
-  const code = await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: handler }, error: () => {} });
+  const code = await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: handler }, out: l => out.push(l), error: () => {} });
   assert.equal(code, EXIT.OK);
 
   // Two unique captures discovered from the ledger (not a corpus-tree walk).
@@ -99,12 +97,10 @@ test('prints interstitial signature + redirect target for flagged captures (#431
             target: { timestamp: '20140101000000', url: 'http://example.com/elsewhere' },
             url
           },
-    WaybackMachine: FakeWaybackMachine,
-    log: l => out.push(l),
-    error: () => {}
+    WaybackMachine: FakeWaybackMachine
   });
 
-  const code = await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: handler }, error: () => {} });
+  const code = await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: handler }, out: l => out.push(l), error: () => {} });
   assert.equal(code, EXIT.OK);
 
   // The relocated printer surfaces #431's interstitial fields — ported from the
@@ -123,11 +119,11 @@ test('a re-run skips checkpointed captures (resumable)', async () => {
   const checkpoint = path.join(dir, 'cp.jsonl');
 
   const first = handlerFor();
-  await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: first.handler }, error: () => {} });
+  await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: first.handler }, out: l => first.out.push(l), error: () => {} });
   assert.equal(first.calls.length, 2);
 
   const second = handlerFor();
-  await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: second.handler }, error: () => {} });
+  await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: second.handler }, out: l => second.out.push(l), error: () => {} });
   assert.equal(second.calls.length, 0, 'both captures already checkpointed → nothing re-audited');
   assert.ok(second.out.some(l => l.includes('checkpointed: 2')));
 

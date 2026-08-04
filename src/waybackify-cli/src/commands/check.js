@@ -24,20 +24,18 @@ import { EXIT } from '../cli.js';
  *
  * @param {Object} [deps]
  * @param {Function} [deps.auditCapture] - the library entry point
- * @param {Function} [deps.log] - stdout line sink (the verdict JSON)
- * @param {Function} [deps.error] - stderr line sink (diagnostics)
- * @returns {Function} paparam runner: ({ args }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, logger, out }) => Promise<void>
+ *   — `out` (stdout result) and `logger` (stderr diagnostics) are run()-wired.
  */
 export function checkHandler(deps = {}) {
-  return async ({ args }) => {
-    const { log = console.log } = deps;
+  return async ({ args, logger, out = console.log }) => {
     const auditCapture = deps.auditCapture ?? (await import('@charlie.dev/waybackify/audit.js')).auditCapture;
 
     // The library's verdict object, printed VERBATIM — one JSON line on
     // stdout, jq/xargs-friendly. Do NOT reshape: `check | jq -r .verdict`
     // is the composability contract.
-    const verdict = await auditCapture(args.waybackUrl);
-    log(JSON.stringify(verdict));
+    const verdict = await auditCapture(args.waybackUrl, { logger });
+    out(JSON.stringify(verdict));
 
     if (verdict.verdict === 'good') return; // exit 0
 

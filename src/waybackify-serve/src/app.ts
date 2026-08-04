@@ -49,6 +49,40 @@ import type { Store } from './store.ts';
 /** The two header names the standalone CSP can ride, per `cspMode`. */
 type CspMode = 'enforce' | 'report-only';
 
+/**
+ * The MINIMAL logger the serving path emits through (design §9). Deliberately
+ * `warn`-only and object-first: pino, a `console`-shim, and a no-op ALL satisfy
+ * it, so the edge stays interchangeable. Node-free ON PURPOSE — this interface
+ * rides in the Fastly/Cloudflare bundle graph, so NO stream / `process` /
+ * `node:` may leak in (it typechecks under `tsconfig.fastly.json`). Call sites
+ * use ONLY `log.warn(obj, msg)` — never `.child()`, a serializer, or a stream.
+ */
+export interface EdgeLogger {
+  warn(obj?: object, msg?: string): void;
+}
+
+/**
+ * The no-op the app falls back to when no logger is injected. The runtime
+ * ENTRIES supply the observable default (a `console`-shim) or the no-op when
+ * `WAYBACK_LOG_SILENT` is set — see cloudflare.ts / fastly.ts / node.ts (§9).
+ */
+const NOOP_EDGE_LOGGER: EdgeLogger = { warn() {} };
+
+/**
+ * The observable-by-default `console`-shim the edge entries inject (§9). One
+ * line per event, edge-portable: `console` is a global on Workers AND Compute
+ * (and is declared in both type worlds, so this stays `node:`-free and
+ * typechecks under `tsconfig.fastly.json`). `wrangler tail` / `fastly log-tail`
+ * stream it for free; flip `WAYBACK_LOG_SILENT` to inject the no-op instead.
+ */
+export function edgeConsoleLogger(): EdgeLogger {
+  return {
+    warn(obj?: object, msg?: string): void {
+      console.warn(msg ? `${msg} ${JSON.stringify(obj ?? {})}` : JSON.stringify(obj ?? {}));
+    }
+  };
+}
+
 /** Captures are immutable; say so as loudly as HTTP allows. */
 const HIT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
@@ -273,6 +307,15 @@ export interface AppOptions {
    * and, in production, supplied by the site layer (render/wayback's COPY).
    */
   copy?: ServedCopy;
+  /**
+   * Diagnostic sink for the serving path (design §9), same injection pattern as
+   * `localize`/`cspMode`. The runtime entry supplies it: a `console`-shim by
+   * default (observable for free — `wrangler tail` / `fastly log-tail`), or the
+   * no-op when `WAYBACK_LOG_SILENT` is set. Absent → the no-op. Only notable
+   * events emit (a corpus miss, a bodiless capture with nothing to serve); the
+   * HIT happy path stays silent, so the hot path costs nothing.
+   */
+  logger?: EdgeLogger;
 }
 
 /**
@@ -472,6 +515,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // contract (TRUSTED site config carrying <a> links) — see ServedCopy.
   const indexAbout = options.copy?.index ?? DEFAULT_INDEX_ABOUT;
   const notFoundAbout = options.copy?.notFound ?? DEFAULT_NOT_FOUND_ABOUT;
+  const log = options.logger ?? NOOP_EDGE_LOGGER;
   const app = new Hono();
 
   // A misconfigured split must fail LOUD, never silently serve bytes on the
@@ -598,8 +642,10 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     const capture = c.req.method === 'HEAD'
       ? await store.head(parsed.key)
       : await store.get(parsed.key);
-    // MISS → strict local 404 (or the opt-in live fallback).
+    // MISS → strict local 404 (or the opt-in live fallback). Notable at the
+    // edge: it names a capture the mirror could not serve (§9).
     if (capture === null) {
+      log.warn({ evt: 'miss', key: parsed.key }, 'corpus miss');
       return liveOr404(c, parsed.archiveUrl, documentCsp, documentCspMode);
     }
 
@@ -621,9 +667,11 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     //                  too.
     const status = capture.status ?? 'body';
     if (status === 'redirect' || status === 'interstitial') {
+      log.warn({ evt: 'bodiless', key: parsed.key, status }, 'bodiless capture — no local body to serve');
       return liveOr404(c, parsed.archiveUrl, documentCsp, documentCspMode);
     }
     if (status === 'error') {
+      log.warn({ evt: 'bodiless', key: parsed.key, status: 'error' }, 'archived error capture — no body');
       return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, documentCspMode);
     }
 

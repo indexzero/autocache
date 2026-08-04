@@ -371,10 +371,10 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *   stats: { urls: number, fromUniverse: number, fromSeen: number, resolved: number } }>}
  */
 export async function generate(source, universe, seen, options = {}) {
-  const { near } = options;
+  const { near, logger } = options;
   const resolve =
     options.resolve ??
-    ((url, opts) => (options.wayback ?? (generate._wayback ??= new WaybackMachine())).getSnapshot(url, opts));
+    ((url, opts) => (options.wayback ?? (generate._wayback ??= new WaybackMachine({ logger }))).getSnapshot(url, opts));
 
   const uni = universe ?? emptyUniverse();
   const manifest = emptyManifest();

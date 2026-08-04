@@ -33,12 +33,12 @@ import fs from 'node:fs';
  * @param {Function} [deps.flatten] - ledger.js#flatten
  * @param {Function} [deps.against] - ledger.js#against
  * @param {Function} [deps.canonicalize] - manifest.js#canonicalize (--flatten output)
- * @param {Function} [deps.log] - stdout line sink
- * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, out }) => Promise<void>
+ *   — `out` (the stdout result sink) is run()-wired. This command emits no
+ *   diagnostics, so it takes no `logger`.
  */
 export function ledgerHandler(deps = {}) {
-  return async ({ args, flags }) => {
-    const { log = console.log } = deps;
+  return async ({ args, flags, out = console.log }) => {
     const discover = deps.discover ?? (await import('@charlie.dev/waybackify/ledger.js')).discover;
 
     if (!fs.existsSync(args.dir) || !fs.statSync(args.dir).isDirectory()) {
@@ -54,7 +54,7 @@ export function ledgerHandler(deps = {}) {
       // ONE canonical JSON document (not JSONL): the same serialization
       // writeManifest uses, so `ledger <dir> --flatten > seen.json` yields a
       // file byte-compatible with what `manifest -s` writes back.
-      log(JSON.stringify(canonicalize(flatten(discovered)), null, 2));
+      out(JSON.stringify(canonicalize(flatten(discovered)), null, 2));
       return;
     }
 
@@ -73,7 +73,7 @@ export function ledgerHandler(deps = {}) {
       // consumer's job: `… | jq -r 'select(.state=="unfetched")'`.
       rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
       for (const r of rows) {
-        log(
+        out(
           JSON.stringify({
             state: r.state,
             key: r.key,
@@ -89,7 +89,7 @@ export function ledgerHandler(deps = {}) {
     }
 
     for (const { file, manifest } of discovered) {
-      log(
+      out(
         JSON.stringify({
           file,
           entries: Object.keys(manifest.entries).length,

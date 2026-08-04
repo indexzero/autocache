@@ -33,25 +33,27 @@ const verdictOf = over => ({
   ...over
 });
 
-/** Injected handler over a canned verdict; captures stdout/stderr lines. */
+/** Injected handler over a canned verdict. Output seams are run()-wired now. */
 const harness = verdict => {
-  const out = [];
-  const err = [];
   const seen = {};
   const handler = checkHandler({
     auditCapture: async url => {
       seen.url = url;
       return verdict;
-    },
-    log: line => out.push(line),
-    error: line => err.push(line)
+    }
   });
-  return { handler, out, err, seen };
+  return { handler, seen };
 };
 
 const exitFor = async (verdict, extraArgv = []) => {
-  const { handler, out, err, seen } = harness(verdict);
-  const code = await run(['check', WB, ...extraArgv], { handlers: { check: handler }, error: l => err.push(l) });
+  const { handler, seen } = harness(verdict);
+  const out = []; // stdout result sink, injected at run()
+  const err = []; // run()'s bail/usage stderr sink
+  const code = await run(['check', WB, ...extraArgv], {
+    handlers: { check: handler },
+    out: l => out.push(l),
+    error: l => err.push(l)
+  });
   return { code, out, err, seen };
 };
 
@@ -81,8 +83,9 @@ test('suspect verdict → exit 3 (nonzero ON PURPOSE — distinct from 1)', asyn
 });
 
 test('missing <wayback-url> → usage exit 2, handler never runs', async () => {
-  const { handler, out, seen } = harness(verdictOf({}));
-  const code = await run(['check'], { handlers: { check: handler }, error: () => {} });
+  const { handler, seen } = harness(verdictOf({}));
+  const out = [];
+  const code = await run(['check'], { handlers: { check: handler }, out: l => out.push(l), error: () => {} });
   assert.equal(code, EXIT.USAGE);
   assert.equal(out.length, 0, 'nothing on stdout for a usage error');
   assert.equal(seen.url, undefined, 'auditCapture not called');
@@ -92,9 +95,7 @@ test('library throws (not a wayback replay URL) → domain exit 1', async () => 
   const handler = checkHandler({
     auditCapture: async () => {
       throw new TypeError('auditCapture: not a wayback replay URL: nope');
-    },
-    log: () => {},
-    error: () => {}
+    }
   });
   assert.equal(await run(['check', WB], { handlers: { check: handler }, error: () => {} }), EXIT.DOMAIN);
 });

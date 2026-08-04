@@ -1,4 +1,5 @@
 import { Impit } from 'impit';
+import { NOOP_LOGGER } from './noop-logger.js';
 
 /** CDX from/to (YYYYMMDD) spanning ±`months` around a YYYYMMDD[HHMMSS] date. */
 function window(near, months) {
@@ -34,13 +35,15 @@ class WaybackMachine {
     this.baseUrl = options.baseUrl || 'http://archive.org';
     this.maxAttempts = options.maxAttempts ?? 3;
     this.impit = options.impit || new Impit({ browser: 'firefox', timeout: options.timeout ?? 20000 });
-    // Optional observer, called with the LITERAL request just before each
-    // fetch: ({ method, url, attempt, maxAttempts }). Lets a caller log exactly
-    // what is hitting the wire (e.g. the manifest-writing CLI surfaces it via
-    // pino).
-    this.onRequest = options.onRequest;
-    // Optional observer of each response: ({ url, status, ms, attempt }).
-    this.onResponse = options.onResponse;
+    // The injected diagnostic logger (default no-op). This is the load-bearing
+    // request/response trace seam (design §4): every CDX request AND every retry
+    // attempt emits an `evt:'request'` on send and an `evt:'response'` on
+    // receive, curl-style. Levels: 2xx info (the firehose); 429/5xx mid-retry
+    // warn; final give-up error. The pretty rendering lives in the CLI; the
+    // library only emits the structured facts (§1: a library emits, the caller
+    // renders). (This subsumes the former onRequest/onResponse observers, which
+    // no caller consumed for data.)
+    this.logger = options.logger ?? NOOP_LOGGER;
   }
 
   /**
@@ -134,34 +137,46 @@ class WaybackMachine {
       if (attempt > 0) {
         await new Promise(r => setTimeout(r, 400 * 2 ** (attempt - 1))); // 400/800/1600ms
       }
-      this.onRequest?.({
-        method: 'GET',
-        url: requestUrl,
-        attempt: attempt + 1,
-        maxAttempts: this.maxAttempts
-      });
+      const willRetry = attempt < this.maxAttempts - 1;
+      this.logger.info({ evt: 'request', method: 'GET', url: requestUrl, attempt: attempt + 1, maxAttempts: this.maxAttempts });
       const started = Date.now();
       try {
         const res = await this.impit.fetch(requestUrl);
-        this.onResponse?.({ url: requestUrl, status: res.status, ms: Date.now() - started, attempt: attempt + 1 });
-        if (res.status !== 200) {
-          lastError = new Error(`HTTP ${res.status}`);
-          continue; // transient — back off and retry
+        const ms = Date.now() - started;
+        if (res.status === 200) {
+          const contentType = res.headers?.get?.('content-type') || '';
+          const data = await res.json();
+          // data[0] is the header; data rows are [timestamp, original].
+          const rows = Array.isArray(data) ? data.slice(1) : [];
+          this.logger.info({ evt: 'response', url: requestUrl, status: 200, ms, attempt: attempt + 1, contentType, rows: rows.length });
+          return rows;
         }
-        const data = await res.json();
-        // data[0] is the header; data rows are [timestamp, original].
-        return Array.isArray(data) ? data.slice(1) : [];
+        lastError = new Error(`HTTP ${res.status}`);
+        // transient — back off and retry. The give-up (final attempt) is logged
+        // ONCE below, at error level, so only actual retries speak here.
+        if (willRetry) {
+          const backoffMs = 400 * 2 ** attempt; // the sleep the NEXT iteration takes
+          this.logger.warn({ evt: 'response', url: requestUrl, status: res.status, ms, attempt: attempt + 1, backoffMs, note: `retry ${attempt + 1}/${this.maxAttempts}, backoff ${backoffMs}ms` });
+        }
       } catch (error) {
+        const ms = Date.now() - started;
         lastError = error;
-        this.onResponse?.({
-          url: requestUrl,
-          status: null,
-          ms: Date.now() - started,
-          attempt: attempt + 1,
-          error: error?.message
-        });
+        if (willRetry) {
+          const backoffMs = 400 * 2 ** attempt; // the sleep the NEXT iteration takes
+          this.logger.warn({ evt: 'response', url: requestUrl, status: null, ms, attempt: attempt + 1, error: error?.message, backoffMs, note: `retry ${attempt + 1}/${this.maxAttempts}, backoff ${backoffMs}ms` });
+        }
       }
     }
+    // Every attempt failed → give up (the §4 ERR row; error level, §5).
+    this.logger.error({
+      evt: 'response',
+      url: requestUrl,
+      status: null,
+      attempt: this.maxAttempts,
+      outcome: 'failed',
+      error: lastError?.message,
+      note: `${lastError?.message ?? 'error'} · gave up after ${this.maxAttempts} attempts`
+    });
     throw lastError ?? new Error(`waybackify: lookup failed for ${url}`);
   }
 
@@ -189,22 +204,30 @@ class WaybackMachine {
       apiUrl.searchParams.set('to', to);
     }
 
+    const requestUrl = apiUrl.toString();
+    this.logger.info({ evt: 'request', method: 'GET', url: requestUrl, attempt: 1, maxAttempts: 1 });
+    const started = Date.now();
     try {
-      const response = await this.impit.fetch(apiUrl.toString());
+      const response = await this.impit.fetch(requestUrl);
+      const ms = Date.now() - started;
 
       if (response.status !== 200) {
+        this.logger.warn({ evt: 'response', url: requestUrl, status: response.status, ms, attempt: 1 });
         return [];
       }
 
+      const contentType = response.headers?.get?.('content-type') || '';
       const data = await response.json();
+      const rows = data.length > 1 ? data.slice(1) : [];
+      this.logger.info({ evt: 'response', url: requestUrl, status: 200, ms, attempt: 1, contentType, rows: rows.length });
 
       // First row is headers, skip it
-      if (data.length <= 1) {
+      if (rows.length === 0) {
         return [];
       }
 
       // Convert to objects with proper field names
-      return data.slice(1).map(row => ({
+      return rows.map(row => ({
         timestamp: row[1],
         url: row[2],
         mimetype: row[3],
@@ -214,7 +237,10 @@ class WaybackMachine {
         waybackUrl: `${this.baseUrl}/web/${row[1]}/${row[2]}`
       }));
     } catch (error) {
-      console.error(`Error fetching snapshots for ${url}:`, error.message);
+      // Was a bare console.error that returned [] (a silent fault — a throttle
+      // read as "no snapshots"); now a structured warn (design §1 / blind
+      // spot #7). Still returns [] to preserve the legacy contract.
+      this.logger.warn({ evt: 'response', url: requestUrl, status: null, ms: Date.now() - started, attempt: 1, error: error?.message, note: error?.message });
       return [];
     }
   }

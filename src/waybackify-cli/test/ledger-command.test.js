@@ -20,8 +20,8 @@ const TREE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixture
 async function ledger(argv) {
   const stdout = [];
   const stderr = [];
-  const handler = ledgerHandler({ log: line => stdout.push(line) });
-  const code = await run(['ledger', ...argv], { handlers: { ledger: handler }, error: line => stderr.push(line) });
+  const handler = ledgerHandler({});
+  const code = await run(['ledger', ...argv], { handlers: { ledger: handler }, out: line => stdout.push(line), error: line => stderr.push(line) });
   return { code, stdout, stderr };
 }
 

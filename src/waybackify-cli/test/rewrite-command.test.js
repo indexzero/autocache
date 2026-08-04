@@ -19,11 +19,23 @@ const APPLY = path.join(FIXTURES, 'apply');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'waybackify-rewrite-'));
 
+// A logger whose diagnostics land in `sink` as their human message — so the
+// stderr assertions read the same lines the old deps.error sink captured.
+function mkLogger(sink) {
+  const push = (o, m) => sink.push(typeof o === 'string' ? o : m);
+  return { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
+}
+
 async function rewrite(argv) {
   const stdout = [];
   const stderr = [];
-  const handler = rewriteHandler({ log: line => stdout.push(line), error: line => stderr.push(line) });
-  const code = await run(['rewrite', ...argv], { handlers: { rewrite: handler }, error: line => stderr.push(line) });
+  const handler = rewriteHandler({});
+  const code = await run(['rewrite', ...argv], {
+    handlers: { rewrite: handler },
+    logger: mkLogger(stderr), // no-verdict warnings now ride the logger
+    out: line => stdout.push(line),
+    error: line => stderr.push(line) // run()'s bail message (rewrite incomplete)
+  });
   return { code, stdout, stderr };
 }
 

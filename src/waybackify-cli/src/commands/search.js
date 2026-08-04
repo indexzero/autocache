@@ -29,19 +29,19 @@
  *   the library's multi-row CDX face (WaybackMachine#getSnapshots). A rejected
  *   promise (network/CDX failure) propagates out and is turned into a domain
  *   exit (1) by the root bail handler.
- * @param {Function} [deps.log] - stdout line sink (one JSONL row per capture)
- * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, logger, out }) =>
+ *   Promise<void>. `out` (stdout line sink, one JSONL row per capture) and
+ *   `logger` are run()-wired into the payload.
  */
 export function searchHandler(deps = {}) {
-  return async ({ args, flags }) => {
-    const { log = console.log } = deps;
+  return async ({ args, flags, logger, out = console.log }) => {
     let { getSnapshots } = deps;
     if (!getSnapshots) {
       const { WaybackMachine } = await import('@charlie.dev/waybackify');
       // baseUrl only shapes the emitted waybackUrl (the CDX host itself is
       // fixed inside the library); pin it to the canonical replay origin so
       // every row is a URL `waybackify check` can consume directly.
-      const wayback = new WaybackMachine({ baseUrl: 'https://web.archive.org' });
+      const wayback = new WaybackMachine({ baseUrl: 'https://web.archive.org', logger });
       getSnapshots = (url, opts) => wayback.getSnapshots(url, opts);
     }
 
@@ -56,7 +56,7 @@ export function searchHandler(deps = {}) {
     const captures = await getSnapshots(args.originalUrl, { near: flags.near, limit });
 
     for (const c of captures.slice(0, limit)) {
-      log(
+      out(
         JSON.stringify({
           timestamp: c.timestamp,
           statuscode: c.statuscode,

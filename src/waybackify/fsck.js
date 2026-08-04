@@ -76,6 +76,8 @@ import path from 'node:path';
 import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS, dynamicEntryError } from './cache.js';
 import { captureHash } from './key.js';
 import { detectInterstitial } from './interstitial.js';
+import { NOOP_LOGGER } from './noop-logger.js';
+import { coerceEvery, emitProgress } from './progress.js';
 
 /**
  * Finding categories, in report order. `severity` drives both the printed
@@ -157,6 +159,10 @@ async function walkShards(root, sub) {
  */
 export async function fsck(root, options = {}) {
   const { fix = false } = options;
+  // Silent-loop progress (design §6): re-hashing every body over a 12k-entry
+  // corpus ran dark. A counter + throttled aggregate every N (0 = off).
+  const logger = options.logger ?? NOOP_LOGGER;
+  const progressEvery = coerceEvery(options.progressEvery);
   const findings = Object.fromEntries(CATEGORIES.map(c => [c.key, []]));
 
   // ---- foreign root entries -------------------------------------------------
@@ -195,10 +201,14 @@ export async function fsck(root, options = {}) {
   // filed under any shard, walked before or after its referrer).
   const bodyDocs = [];
   let bodies = 0;
+  let scanned = 0;
 
   for (const { aa, name, path: metaPath } of metaFiles) {
     const hash = name.slice(0, -'.json'.length);
     sidecarHashes.add(hash);
+
+    scanned++;
+    emitProgress(logger, progressEvery, scanned, 'fsck-progress', `cache verify: ${scanned}/${metaFiles.length} sidecars`, { total: metaFiles.length });
 
     let sidecar;
     try {

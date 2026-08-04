@@ -13,6 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { NOOP_LOGGER } from './logger.js';
 
 /**
  * Verdicts already in the checkpoint, keyed by capture key. Tolerates a torn
@@ -72,7 +73,8 @@ export function summarize(verdicts) {
  * @param {number}   [options.limit] - audit only the first N captures (key order)
  * @param {number}   [options.delayMs] - pause between captures (default 500)
  * @param {number}   [options.timeout] - per-request timeout ms (default 60000)
- * @param {(line: string) => void} [options.onProgress]
+ * @param {Object}   [options.logger] - injected diagnostic logger (default
+ *   no-op): structured per-capture progress + verdict + the CDX retry firehose
  * @returns {Promise<{ summary: ReturnType<typeof summarize>, scope: number, audited: number, total: number, checkpointed: number }>}
  */
 export async function runAudit(captures, options) {
@@ -83,7 +85,7 @@ export async function runAudit(captures, options) {
     limit = Infinity,
     delayMs = 500,
     timeout = 60000,
-    onProgress = () => {}
+    logger = NOOP_LOGGER
   } = options;
 
   const scope = captures.slice(0, Number.isFinite(limit) ? limit : captures.length);
@@ -91,15 +93,17 @@ export async function runAudit(captures, options) {
   const todo = scope.filter(c => !done.has(c.key));
 
   fs.mkdirSync(path.dirname(checkpointFile), { recursive: true });
-  const wayback = new WaybackMachine({ timeout, maxAttempts: 2 });
+  // The injected logger flows into the CDX client (the §4 retry firehose) too.
+  const wayback = new WaybackMachine({ timeout, maxAttempts: 2, logger });
 
   let n = 0;
   for (const cap of todo) {
     n++;
-    onProgress(`[${n}/${todo.length}] ${cap.waybackUrl}`);
+    // Structured progress (was a formatted `[n/total] url` string sink, §2).
+    logger.info({ evt: 'audit', done: n, total: todo.length, key: cap.key, url: cap.waybackUrl }, `[${n}/${todo.length}] ${cap.waybackUrl}`);
     let verdict;
     try {
-      verdict = await auditCapture(cap.waybackUrl, { wayback });
+      verdict = await auditCapture(cap.waybackUrl, { wayback, logger });
     } catch (error) {
       // Engine-level failure (not a fetch failure — those come back suspect):
       // record it as suspect so the run keeps moving and the capture is flagged.
@@ -115,6 +119,9 @@ export async function runAudit(captures, options) {
       };
     }
     const line = { key: cap.key, refCount: cap.refCount ?? 1, ...verdict };
+    // The verdict itself (design §5: audit verdicts → info; a bad one → warn).
+    const emit = verdict.verdict === 'good' ? logger.info : logger.warn;
+    emit.call(logger, { evt: 'audit-verdict', key: cap.key, verdict: verdict.verdict, statuscode: verdict.statuscode }, `[${verdict.verdict}] ${cap.waybackUrl}`);
     fs.appendFileSync(checkpointFile, JSON.stringify(line) + '\n');
     done.set(cap.key, line);
     if (delayMs > 0 && n < todo.length) await new Promise(r => setTimeout(r, delayMs));

@@ -36,11 +36,18 @@ async function generate(argv, { resolve } = {}) {
       (url => {
         calls.push(url);
         throw new Error('unexpected resolver call');
-      }),
-    log: line => stdout.push(line),
+      })
+  });
+  // Diagnostics (unresolved-url warnings) now ride the logger; land their human
+  // message in the same stderr array the old deps.error sink captured.
+  const push = (o, m) => stderr.push(typeof o === 'string' ? o : m);
+  const logger = { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
+  const code = await run(['manifest', ...argv], {
+    handlers: { manifest: handler },
+    logger,
+    out: line => stdout.push(line),
     error: line => stderr.push(line)
   });
-  const code = await run(['manifest', ...argv], { handlers: { manifest: handler }, error: line => stderr.push(line) });
   return { code, stdout, stderr, calls };
 }
 

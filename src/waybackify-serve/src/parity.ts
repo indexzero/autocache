@@ -64,9 +64,22 @@ export interface ParityOptions extends ParityConfig {
   concurrency?: number;
   /** Emit a progress line every `progressEvery` entries (Layers 2–3). */
   progressEvery?: number;
-  /** Human progress sink (a bin wires this to stderr). */
-  onProgress?: (line: string) => void;
+  /**
+   * Injected diagnostic logger (default no-op; a library never constructs pino,
+   * design §1). The throttled sweep progress and each Mismatch fold onto
+   * structured `logger.*` calls here (§2) — objects, not strings.
+   */
+  logger?: ParityLogger;
 }
+
+/** The minimal duck-typed logger parity emits through (pino / console / no-op all satisfy it). */
+export interface ParityLogger {
+  info(obj?: object, msg?: string): void;
+  warn(obj?: object, msg?: string): void;
+  error(obj?: object, msg?: string): void;
+}
+
+const NOOP_PARITY_LOGGER: ParityLogger = { info() {}, warn() {}, error() {} };
 
 /** In-flight HEAD/GET cap for Layers 2–3 — shared by the pool default and the bin's hint. */
 export const DEFAULT_CONCURRENCY = 16;
@@ -337,7 +350,7 @@ export async function checkMetadata(config: ParityConfig, entries: Entry[], opti
   const store = new S3Store(config);
   const mismatches: Mismatch[] = [];
 
-  await mapPool(entries, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, options.onProgress, 'layer 2 (metadata sweep)', entry => entry.capKey, async entry => {
+  await mapPool(entries, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, options.logger ?? NOOP_PARITY_LOGGER, 'layer 2 (metadata sweep)', entry => entry.capKey, async entry => {
     const meta = await store.head(entry.key);
     if (meta === null) {
       mismatches.push({ key: entry.capKey, field: 'presence', expected: 'present', actual: 'missing (404)' });
@@ -369,7 +382,7 @@ export async function checkBodies(config: ParityConfig, entries: Entry[], option
   const bodied = entries.filter(e => e.status === 'body');
   const mismatches: Mismatch[] = [];
 
-  await mapPool(bodied, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, options.onProgress, 'layer 3 (body verification)', entry => entry.capKey, async entry => {
+  await mapPool(bodied, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, options.logger ?? NOOP_PARITY_LOGGER, 'layer 3 (body verification)', entry => entry.capKey, async entry => {
     const capture = await store.get(entry.key);
     if (capture === null) {
       mismatches.push({ key: entry.capKey, field: 'presence', expected: 'present', actual: 'missing (404)' });
@@ -537,6 +550,7 @@ const LAYER_RUNNERS: Record<number, (config: ParityConfig, entries: Entry[], opt
  * report. The tool NEVER writes files — the caller owns persistence.
  */
 export async function runParityCheck(options: ParityOptions): Promise<ParityReport> {
+  const logger = options.logger ?? NOOP_PARITY_LOGGER;
   const layers = (options.layers ?? [1, 2, 3, 4]).slice().sort((a, b) => a - b);
   const entries = await enumerateRoot(options.root);
 
@@ -545,7 +559,21 @@ export async function runParityCheck(options: ParityOptions): Promise<ParityRepo
     const run = LAYER_RUNNERS[layer];
     if (!run) throw new Error(`parity: unknown layer ${layer} (expected 1–4)`);
     try {
-      reports.push(await run(options, entries, options));
+      const report = await run(options, entries, options);
+      reports.push(report);
+      // Diagnostic fold (§2/§5): the layer verdict at info, each Mismatch at
+      // error (a real divergence). The report itself stays the DATA the CLI
+      // renders — this is additive.
+      logger.info(
+        { evt: 'parity-layer', layer: report.layer, name: report.name, pass: report.pass, checked: report.checked, mismatches: report.mismatches.length },
+        `layer ${report.layer} — ${report.name}: ${report.pass ? 'PASS' : `FAIL (${report.mismatches.length})`}`
+      );
+      for (const m of report.mismatches) {
+        logger.error(
+          { evt: 'parity-mismatch', layer: report.layer, key: m.key, field: m.field, expected: m.expected, actual: m.actual },
+          `parity mismatch ${m.key} · ${m.field}: expected ${m.expected}, got ${m.actual}`
+        );
+      }
     } catch (error) {
       // A layer gave out mid-run. The layers that already finished hold real
       // verdicts (they passed, or found honest mismatches) — attach them to the
@@ -674,7 +702,7 @@ async function mapPool<T>(
   items: T[],
   limit: number,
   every: number,
-  onProgress: ((line: string) => void) | undefined,
+  logger: ParityLogger,
   label: string,
   key: (item: T) => string,
   worker: (item: T) => Promise<void>
@@ -696,7 +724,8 @@ async function mapPool<T>(
         throw new ParityTaskError(`${label} · ${key(items[i])}`, error);
       }
       done += 1;
-      if (onProgress && every > 0 && done % every === 0) onProgress(`${label}: ${done}/${total}`);
+      // Structured throttled progress (was an already-formatted string sink, §2).
+      if (every > 0 && done % every === 0) logger.info({ evt: 'parity-progress', label, done, total }, `${label}: ${done}/${total}`);
     }
   }
 

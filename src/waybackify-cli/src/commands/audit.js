@@ -56,13 +56,14 @@ function printSummary(result, log) {
  * @param {Function} [deps.WaybackMachine] - waybackify#WaybackMachine
  * @param {Function} [deps.runAudit] - audit-engine.js#runAudit
  * @param {Object}   [deps.env] - environment (default process.env; CI guard)
- * @param {Function} [deps.log] - stdout line sink
- * @param {Function} [deps.error] - stderr line sink (progress)
- * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, out, logger }) => Promise<void>
+ *   `out` (stdout result sink) and `logger` (stderr diagnostics) are run()-wired.
  */
 export function auditHandler(deps = {}) {
-  return async ({ args, flags }) => {
-    const { log = console.log, error = console.error, env = process.env } = deps;
+  return async ({ args, flags, logger, out = console.log }) => {
+    // Progress/verdicts fold onto the logger now (§2), so this handler no longer
+    // writes to a stderr `error` sink of its own — only the summary to stdout.
+    const { env = process.env } = deps;
 
     if (env.CI) {
       // Refusing hundreds of archive.org round-trips under CI — this is a
@@ -93,7 +94,7 @@ export function auditHandler(deps = {}) {
       }))
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
-    log(`enumerated ${captures.length} unique captures from the ledger under ${args.dir}`);
+    out(`enumerated ${captures.length} unique captures from the ledger under ${args.dir}`);
 
     const auditCapture = deps.auditCapture ?? (await import('@charlie.dev/waybackify')).auditCapture;
     const WaybackMachine = deps.WaybackMachine ?? (await import('@charlie.dev/waybackify')).WaybackMachine;
@@ -110,15 +111,17 @@ export function auditHandler(deps = {}) {
       limit: flags.limit !== undefined ? Number(flags.limit) : Infinity,
       delayMs: flags.delayMs !== undefined ? Number(flags.delayMs) : 500,
       timeout: flags.timeout !== undefined ? Number(flags.timeout) : 60000,
-      onProgress: line => error(line)
+      // Progress + verdicts + the CDX retry firehose fold onto the logger (§2);
+      // the logger's human stream is stderr, so progress still lands on stderr.
+      logger
     });
 
-    log(
+    out(
       `scope: ${result.scope} captures` +
         (Number.isFinite(flags.limit !== undefined ? Number(flags.limit) : Infinity) ? ` (--limit ${flags.limit}, first-N by capture key)` : '') +
         ` | checkpointed: ${result.checkpointed} | audited: ${result.audited}`
     );
-    printSummary(result, log);
+    printSummary(result, out);
 
     if (flags.report) {
       const report = path.resolve(flags.report);
@@ -136,7 +139,7 @@ export function auditHandler(deps = {}) {
           2
         ) + '\n'
       );
-      log(`\nreport written: ${report}`);
+      out(`\nreport written: ${report}`);
     }
   };
 }

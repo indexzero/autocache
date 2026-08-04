@@ -90,6 +90,11 @@ import { parseWaybackUrl } from './audit.js';
 import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } from './key.js';
 import { extractRequisites } from './requisites.js';
 import { detectInterstitial } from './interstitial.js';
+import { NOOP_LOGGER } from './noop-logger.js';
+
+// cacheCapture's fetch path is half of the §4 request/response trace (the doc +
+// requisite firehose; WaybackMachine's #cdxRows is the other half). The library
+// never constructs pino (design §1) — it defaults to NOOP_LOGGER.
 
 // The version new writes stamp. Bumped to 2 for the `interstitial` status
 // (#363): a v2 sidecar may carry `status: "interstitial"` (+ `signature`, and a
@@ -657,13 +662,17 @@ async function responseBytes(res) {
  * @param {WaybackMachine} [options.wayback] - client to borrow fetch from
  * @param {Function} [options.onEntry] - progress observer, called per entry
  *   with { key, hash, status, action: 'fetched'|'skipped'|'failed', flag }
+ * @param {Object} [options.logger] - injected diagnostic logger (default
+ *   no-op; the library never constructs pino). Emits the §4 request/response
+ *   trace per doc + requisite fetch: `evt:'request'` on send, `evt:'response'`
+ *   on receive (2xx info, gone/failed requisite warn, named-doc fault error).
  * @param {Object} [options.hooks] - test seams (see commitEntry)
  * @returns {Promise<{ key: string, hash: string, root: string,
  *   entries: Array<object>, fetched: number, skipped: number,
  *   failures: Array<{ key: string, error: string }> }>}
  */
 export async function cacheCapture(waybackUrl, options = {}) {
-  const { root, requisites: wantRequisites = true, onEntry = () => {}, hooks = {} } = options;
+  const { root, requisites: wantRequisites = true, onEntry = () => {}, hooks = {}, logger = NOOP_LOGGER } = options;
   if (!root) throw new TypeError('cacheCapture: options.root is required');
   const parsed = parseWaybackUrl(waybackUrl);
   if (!parsed) throw new TypeError(`cacheCapture: not a wayback replay URL: ${waybackUrl}`);
@@ -695,11 +704,27 @@ export async function cacheCapture(waybackUrl, options = {}) {
   if (docSidecar) {
     record({ key: docKey, hash: docPaths.hash, status: docSidecar.status, action: 'skipped', flag: docSidecar.flag });
   } else {
-    const res = await fetchImpl(waybackUrl);
+    logger.info({ evt: 'request', method: 'GET', url: waybackUrl, key: docKey, attempt: 1, maxAttempts: 1 });
+    const started = Date.now();
+    let res;
+    try {
+      res = await fetchImpl(waybackUrl);
+    } catch (error) {
+      // A transport throw on the OPERATOR-NAMED capture: pair the request with
+      // an ERR response event (§4) before the throw propagates (cacheCapture
+      // fails the command — the named doc's absence IS the failure, §5).
+      logger.error({ evt: 'response', url: waybackUrl, key: docKey, status: null, ms: Date.now() - started, error: error?.message, outcome: 'failed', note: `${error?.message ?? 'transport error'} · document fetch failed` });
+      throw error;
+    }
+    const ms = Date.now() - started;
     if (res.status === 404) {
+      // The operator NAMED this capture — its absence is the command failing
+      // (error, §5). Body is 0 (nothing served), so the trace shows `0B`.
+      logger.error({ evt: 'response', url: waybackUrl, key: docKey, status: 404, bytes: 0, ms, note: 'document gone → command fails' });
       throw new Error(`cacheCapture: replay returned HTTP 404 — capture missing from the archive: ${waybackUrl}`);
     }
     if (res.status !== 200) {
+      logger.error({ evt: 'response', url: waybackUrl, key: docKey, status: res.status, ms, note: 'transient archive.org trouble → command fails' });
       throw new Error(`cacheCapture: replay returned HTTP ${res.status} (transient archive.org trouble? retry): ${waybackUrl}`);
     }
     const contentType = res.headers?.get?.('content-type') || '';
@@ -714,6 +739,8 @@ export async function cacheCapture(waybackUrl, options = {}) {
     const requisiteRefs = isHtmlish(contentType)
       ? extractRequisites(new TextDecoder('utf-8').decode(docBytes))
       : [];
+
+    logger.info({ evt: 'response', url: waybackUrl, key: docKey, status: 200, bytes: docBytes.length, contentType, ms, requisites: requisiteRefs.length });
 
     docSidecar = await commitEntry(
       root,
@@ -798,6 +825,7 @@ export async function cacheCapture(waybackUrl, options = {}) {
         // from nonsense slices.
         const sep = childKey.indexOf('/');
         if (sep <= 0 || sep === childKey.length - 1) {
+          logger.warn({ key: childKey, kind: 'malformed-requisite-key' }, `malformed requisite key (no timestamp separator): ${childKey}`);
           summary.failures.push({ key: childKey, error: 'malformed requisite key (no timestamp separator)' });
           record({ key: childKey, hash: null, status: 'failed', action: 'failed', flag: null });
           continue;
@@ -817,33 +845,62 @@ export async function cacheCapture(waybackUrl, options = {}) {
             waybackUrl: `https://web.archive.org/web/${childKey.slice(0, childKey.indexOf('/'))}/${childKey.slice(childKey.indexOf('/') + 1)}`
           };
         const { hash } = await entryPaths(root, childKey);
+        logger.info({ evt: 'request', method: 'GET', url: ref.waybackUrl, key: childKey, flag: ref.flag, attempt: 1, maxAttempts: 1 });
+        const started = Date.now();
         try {
           const res = await fetchImpl(ref.waybackUrl);
+          const ms = Date.now() - started;
           const contentType = res.headers?.get?.('content-type') || '';
           let sidecar;
           if (res.status === 200) {
+            const body = await responseBytes(res);
             sidecar = await commitEntry(
               root,
-              { key: childKey, status: 'body', contentType, flag: ref.flag, requisites: [], body: await responseBytes(res) },
+              { key: childKey, status: 'body', contentType, flag: ref.flag, requisites: [], body },
               hooks
             );
+            // A 2xx requisite is the firehose (info, §5).
+            logger.info({ evt: 'response', url: ref.waybackUrl, key: childKey, flag: ref.flag, status: 200, bytes: body.length, contentType, ms });
           } else if (res.status >= 300 && res.status < 400) {
             sidecar = await commitEntry(
               root,
               { key: childKey, status: 'redirect', contentType, flag: ref.flag, requisites: [] },
               hooks
             );
+            logger.info({ evt: 'response', url: ref.waybackUrl, key: childKey, flag: ref.flag, status: res.status, bytes: 0, ms, note: 'redirect → terminal sidecar' });
           } else if (res.status === 404 || res.status === 410) {
             sidecar = await commitEntry(
               root,
               { key: childKey, status: 'error', contentType, flag: ref.flag, requisites: [] },
               hooks
             );
+            // The archive permanently lacks this asset — notable incompleteness
+            // (warn, §5), recorded so future runs stop re-hammering it.
+            logger.warn({ evt: 'response', url: ref.waybackUrl, key: childKey, flag: ref.flag, status: res.status, bytes: 0, ms, note: 'gone → terminal sidecar' });
           } else {
-            throw new Error(`replay returned HTTP ${res.status}`);
+            // 5xx / other → transient failure; carry the real status + timing so
+            // the catch logs `< 503` (warn), not a status-null ERR.
+            const e = new Error(`replay returned HTTP ${res.status}`);
+            e.responseStatus = res.status;
+            e.responseMs = ms;
+            throw e;
           }
           record({ key: childKey, hash, status: sidecar.status, action: 'fetched', flag: ref.flag });
         } catch (error) {
+          // Presumed transient — deferred, retried next run (warn, §5). A known
+          // HTTP status (5xx) keeps its number; a transport throw shows ERR.
+          const httpStatus = error?.responseStatus ?? null;
+          logger.warn({
+            evt: 'response',
+            url: ref.waybackUrl,
+            key: childKey,
+            flag: ref.flag,
+            status: httpStatus,
+            ...(httpStatus !== null ? { bytes: 0 } : {}),
+            ms: error?.responseMs ?? Date.now() - started,
+            error: error?.message,
+            note: httpStatus !== null ? 'requisite HTTP error → retry next run' : 'requisite failed → retry next run'
+          });
           summary.failures.push({ key: childKey, error: error?.message ?? String(error) });
           record({ key: childKey, hash, status: 'failed', action: 'failed', flag: ref.flag });
         }

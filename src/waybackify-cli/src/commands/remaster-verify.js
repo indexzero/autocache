@@ -39,13 +39,12 @@ function parseSample(raw, fail) {
  * @param {Object} [deps]
  * @param {Function} [deps.runRemasterVerify] - the crawl engine (injected → no library load)
  * @param {Function} [deps.formatReport] - the crawl formatter (injected alongside)
- * @param {Function} [deps.log] - stdout line sink (the report / JSON)
- * @param {Function} [deps.error] - stderr line sink (progress)
- * @returns {Function} paparam runner: ({ flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ flags, out }) => Promise<void>
  */
 export function remasterVerifyHandler(deps = {}) {
-  return async ({ flags }) => {
-    const { log = console.log, error = console.error } = deps;
+  return async ({ flags, logger, progressEvery, out = console.log }) => {
+    // Progress + findings fold onto the logger (§2); its human stream is stderr,
+    // so progress still lands there. stdout (out) stays the report only.
 
     /** A usage error (exit 2) the root bail handler honors via .exitCode. */
     const fail = message => {
@@ -69,11 +68,12 @@ export function remasterVerifyHandler(deps = {}) {
       // (default true); a false value means the user asked to skip the rebuild.
       skipDeterminism: flags.determinism === false,
       sample,
-      onProgress: line => error(line)
+      logger,
+      progressEvery
     });
 
     const rendered = flags.json ? JSON.stringify(report, null, 2) : formatReport(report);
-    log(rendered);
+    out(rendered);
     if (flags.out) {
       const { writeFile } = await import('node:fs/promises');
       await writeFile(flags.out, `${rendered}\n`);

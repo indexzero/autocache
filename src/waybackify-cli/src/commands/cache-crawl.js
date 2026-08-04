@@ -39,14 +39,12 @@ function parseNonNegInt(raw, name, fail) {
  * @param {Function} [deps.loadPolicy] - allowed-escapes policy loader (injected)
  * @param {Function} [deps.compilePolicy] - in-memory policy compiler (injected)
  * @param {URL} [deps.DEFAULT_POLICY_URL] - the committed default policy file URL (injected)
- * @param {Function} [deps.log] - stdout line sink (the JSON summary)
- * @param {Function} [deps.error] - stderr line sink (progress + warnings)
- * @returns {Function} paparam runner: ({ args, flags, rest }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, rest, logger, out }) => Promise<void>
+ *   `out` is the stdout line sink (the JSON summary); `logger` carries structured
+ *   progress (logger.info) + warnings (logger.warn) to stderr.
  */
 export function cacheCrawlHandler(deps = {}) {
-  return async ({ args, flags, rest }) => {
-    const { log = console.log, error = console.error } = deps;
-
+  return async ({ args, flags, rest, logger, out = console.log }) => {
     /** A usage error (exit 2) the root bail handler honors via .exitCode. */
     const fail = message => {
       const e = new Error(`waybackify cache crawl: ${message}`);
@@ -64,7 +62,8 @@ export function cacheCrawlHandler(deps = {}) {
       // LOUD: --static-only closes already-recorded dynamic[] but discovers NO
       // new runtime requisites and does NOT verify completeness — surface it so
       // a green run is never mistaken for a verified one.
-      error(
+      logger.warn(
+        { evt: 'crawl-warning', staticOnly: true },
         'waybackify cache crawl: WARNING --static-only — the browser probe is SKIPPED. ' +
           'This closes already-recorded dynamic[] but discovers NO new runtime ' +
           'requisites and does NOT verify completeness.'
@@ -129,15 +128,19 @@ export function cacheCrawlHandler(deps = {}) {
       browserCmd,
       har: Boolean(flags.har),
       onProgress: e => {
-        if (e.type === 'capture') error(`  capture ${e.key} iter=${e.iter} fetched=${e.fetched}`);
-        else if (e.type === 'probe') error(`  ${e.line}`);
-        else if (e.type === 'drop') error(`  drop ${e.line}`);
+        if (e.type === 'capture') {
+          logger.info({ evt: 'crawl-progress', type: 'capture', key: e.key, iter: e.iter, fetched: e.fetched }, `  capture ${e.key} iter=${e.iter} fetched=${e.fetched}`);
+        } else if (e.type === 'probe') {
+          logger.info({ evt: 'crawl-progress', type: 'probe', line: e.line }, `  ${e.line}`);
+        } else if (e.type === 'drop') {
+          logger.info({ evt: 'crawl-progress', type: 'drop', line: e.line }, `  drop ${e.line}`);
+        }
       }
     });
 
     const tally = {};
     for (const r of results) tally[r.status] = (tally[r.status] ?? 0) + 1;
-    log(
+    out(
       JSON.stringify(
         {
           root,

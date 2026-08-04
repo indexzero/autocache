@@ -37,13 +37,11 @@ import fs from 'node:fs';
  * @param {Function} [deps.writeManifest] - canonical writer (manifest + seen)
  * @param {Function} [deps.readUniverse] - universe-file reader
  * @param {Function} [deps.resolve] - archive resolver override (offline tests)
- * @param {Function} [deps.log] - stdout line sink (the stats JSON)
- * @param {Function} [deps.error] - stderr line sink (deferred urls)
- * @returns {Function} paparam runner: ({ args, flags }) => Promise<void>
+ * @returns {Function} paparam runner: ({ args, flags, logger, out }) => Promise<void>
+ *   — `out` (stdout stats) and `logger` (stderr diagnostics) are run()-wired.
  */
 export function manifestHandler(deps = {}) {
-  return async ({ args, flags }) => {
-    const { log = console.log, error = console.error } = deps;
+  return async ({ args, flags, logger, out = console.log }) => {
     const generate = deps.generate ?? (await import('@charlie.dev/waybackify/manifest.js')).generate;
     const readManifest = deps.readManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).readManifest;
     const writeManifest = deps.writeManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).writeManifest;
@@ -55,7 +53,7 @@ export function manifestHandler(deps = {}) {
     // (generate() treats null as empty) so the very first run bootstraps it.
     const seen = flags.seen && fs.existsSync(flags.seen) ? readManifest(flags.seen) : null;
 
-    const options = {};
+    const options = { logger };
     // --near passes straight through to generate → resolve(url, { near }):
     // the library picks the archive capture closest to this timestamp for
     // never-seen urls (covered/seen urls are answered offline, unaffected).
@@ -80,7 +78,7 @@ export function manifestHandler(deps = {}) {
     if (flags.seen) writeManifest(flags.seen, result.seen);
 
     // ONE JSON stats line on stdout (jq/xargs-friendly, like cache's summary).
-    log(
+    out(
       JSON.stringify({
         output: flags.output,
         urls: result.stats.urls,
@@ -92,7 +90,7 @@ export function manifestHandler(deps = {}) {
     );
 
     if (result.deferred.length > 0) {
-      for (const d of result.deferred) error(`unresolved: ${d.url}: ${d.error}`);
+      for (const d of result.deferred) logger.warn({ evt: 'unresolved', url: d.url, error: d.error }, `unresolved: ${d.url}: ${d.error}`);
       // Thrown runner errors route through the root bail handler → exit 1
       // (domain failure — the manifest is incomplete; the partial output +
       // extended seen file make the rerun cheap).

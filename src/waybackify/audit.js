@@ -253,7 +253,7 @@ export async function auditCapture(waybackUrl, options = {}) {
   if (!parsed) throw new TypeError(`auditCapture: not a wayback replay URL: ${waybackUrl}`);
   const { timestamp, original } = parsed;
 
-  const wayback = options.wayback ?? new WaybackMachine({ timeout: 60000 });
+  const wayback = options.wayback ?? new WaybackMachine({ timeout: 60000, logger: options.logger });
   const fetchImpl = options.fetch ?? (url => wayback.impit.fetch(url));
   const checkedAt = new Date().toISOString();
   const base = { url: waybackUrl, timestamp, original, checkedAt };

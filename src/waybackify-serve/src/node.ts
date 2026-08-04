@@ -38,7 +38,7 @@
 
 import { serve, type ServerType } from '@hono/node-server';
 import { parseArgs } from 'node:util';
-import { createApp, validateSplit, type ServedCopy, type SplitOptions } from './app.ts';
+import { createApp, edgeConsoleLogger, validateSplit, type EdgeLogger, type ServedCopy, type SplitOptions } from './app.ts';
 import { FsStore } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import type { SigV4Credentials } from './sigv4.ts';
@@ -81,6 +81,12 @@ export interface ServeOptions {
    * dev entry supplies the site COPY); not wired to a CLI flag.
    */
   copy?: ServedCopy;
+  /**
+   * Diagnostic sink (design §9), threaded into the app. The `waybackify serve`
+   * CLI (`main`) injects the observable `console`-shim by default; programmatic
+   * callers (the crawl probe) omit it and stay silent (the app's no-op).
+   */
+  logger?: EdgeLogger;
 }
 
 /** Remote-bucket serving config — the S3Store leg of the two modes. */
@@ -105,6 +111,8 @@ export interface ServeBucketOptions {
   split?: SplitOptions;
   /** Per-deployment served-page description copy (#453); generic defaults absent. */
   copy?: ServedCopy;
+  /** Diagnostic sink (design §9); the CLI injects the console-shim by default. */
+  logger?: EdgeLogger;
 }
 
 export interface RunningServer {
@@ -137,8 +145,8 @@ function listen(app: ReturnType<typeof createApp>, port: number, hostname: strin
  * server is listening, with the actual bound address.
  */
 export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
-  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy } = options;
-  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy }), port, hostname);
+  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy, logger } = options;
+  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy, logger }), port, hostname);
 }
 
 /**
@@ -147,9 +155,9 @@ export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
  * server is listening, with the actual bound address.
  */
 export function serveBucket(options: ServeBucketOptions): Promise<RunningServer> {
-  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split, copy } = options;
+  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split, copy, logger } = options;
   const store = new S3Store({ endpoint, bucket, region, prefix, credentials });
-  return listen(createApp(store, { liveFallback, split, copy }), port, hostname);
+  return listen(createApp(store, { liveFallback, split, copy, logger }), port, hostname);
 }
 
 const USAGE = [
@@ -284,7 +292,9 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
   }
 
   if (root) {
-    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy });
+    // The CLI is a runtime ENTRY: inject the observable console-shim (§9), so
+    // `waybackify serve` surfaces misses/bodiless captures on stderr by default.
+    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy, logger: edgeConsoleLogger() });
     console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
     return;
   }
@@ -306,6 +316,6 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
     ? { accessKeyId, secretAccessKey, sessionToken }
     : { accessKeyId, secretAccessKey };
 
-  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split, copy: defaults.copy });
+  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split, copy: defaults.copy, logger: edgeConsoleLogger() });
   console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
 }

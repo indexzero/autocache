@@ -46,13 +46,11 @@ function parseCount(raw, flag, fail) {
  * @param {Function} [deps.setGlobalDispatcher] - undici sink (injected → no global install)
  * @param {Function} [deps.createRetryAgent] - waybackify-serve/retry factory
  * @param {Object}   [deps.env] - environment for AWS creds (default process.env)
- * @param {Function} [deps.log] - stdout line sink (the report / JSON)
- * @param {Function} [deps.error] - stderr line sink (progress + diagnosis)
  * @returns {Function} paparam runner: ({ flags }) => Promise<void>
  */
 export function bucketVerifyHandler(deps = {}) {
-  return async ({ flags }) => {
-    const { log = console.log, error = console.error, env = process.env } = deps;
+  return async ({ flags, logger, progressEvery, out = console.log }) => {
+    const { env = process.env } = deps;
 
     /** A usage error (exit 2) the root bail handler honors via .exitCode. */
     const fail = message => {
@@ -100,14 +98,19 @@ export function bucketVerifyHandler(deps = {}) {
         layers,
         sample,
         concurrency,
-        onProgress: line => error(line)
+        // Throttled sweep progress + each mismatch fold onto the logger (§2);
+        // its human stream is stderr, so progress still lands there. stdout
+        // stays the report only. --progress-every governs parity's Layer 2/3
+        // throttle too (§6), overriding its built-in default of 500 (0 = off).
+        logger,
+        progressEvery
       });
     } catch (err) {
       // Layers that finished before the run gave out carry real verdicts —
       // print them first, so "nothing failed verification, the network died at
       // layer N" is legible before the one-line diagnosis.
       const completed = Array.isArray(err?.completedLayers) ? err.completedLayers : [];
-      for (const layer of completed) error(formatLayerVerdict(layer));
+      for (const layer of completed) logger.info({ evt: 'layer-verdict', layer: layer?.layer }, formatLayerVerdict(layer));
       // Then ONE diagnostic line as the thrown message; run() prints it to stderr.
       const diagnosed = new Error(`waybackify bucket verify: ${diagnoseFailure(err, concurrency)}`);
       diagnosed.exitCode = EXIT.DOMAIN;
@@ -115,7 +118,7 @@ export function bucketVerifyHandler(deps = {}) {
     }
 
     const rendered = flags.json ? JSON.stringify(report, null, 2) : formatReport(report);
-    log(rendered);
+    out(rendered);
     if (flags.out) {
       const { writeFile } = await import('node:fs/promises');
       await writeFile(flags.out, `${rendered}\n`);

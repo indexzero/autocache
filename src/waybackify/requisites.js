@@ -36,6 +36,8 @@
 // overwhelmingly common contexts; the residual cases are recorded
 // trade-offs, not oversights.
 
+import { isFetchableResource } from './beacons.js';
+
 const REQUISITE_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);
 
 // One pattern, two anchors: full-host or root-relative /web/. The original
@@ -108,6 +110,11 @@ export function extractRequisites(html) {
     if (!REQUISITE_FLAGS.has(flag)) continue; // unreachable via REF_RE; guards edits
     const original = repairOriginal(rawOriginal);
     if (original === '') continue; // e.g. `url(/web/<ts>im_/)` degenerate ref
+    // The replay rewrites even inline/pseudo refs into `/web/<ts><flag>/<orig>`:
+    // a CSS `url(data:<mime>/...)` mis-resolved into a path, a `javascript:`
+    // handler, `http://javascript/`. Those are not fetchable resources and must
+    // never be recorded as requisites — drop them at the source.
+    if (!isFetchableResource(original)) continue;
     const key = `${timestamp}/${original}`;
     if (seen.has(key)) continue;
     seen.set(key, {

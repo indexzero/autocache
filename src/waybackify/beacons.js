@@ -58,7 +58,18 @@ const TRACKING_BEACONS = [
   { host: 'stats.wp.com' },
   // Facebook pixel — facebook.com serves real content, so scope to the exact
   // `/tr` tracking path.
-  { host: /^(?:www\.)?facebook\.com$/, path: /^\/tr$/ }
+  { host: /^(?:www\.)?facebook\.com$/, path: /^\/tr$/ },
+  // Microsoft Clarity — the entire clarity.ms domain is session-analytics
+  // (`n.clarity.ms/collect`).
+  { hostSuffix: '.clarity.ms' },
+  // Backstory social/analytics widget — the whole getbackstory.com domain is
+  // widget infra (`alpha.getbackstory.com/gbs_setup_*.js`).
+  { hostSuffix: '.getbackstory.com' },
+  // AOL / Verizon ad pixel.
+  { host: 'pixel.advertising.com' },
+  // Microsoft `c.gif` tracking pixel — microsoft.com serves real content, so
+  // scope to the `c1.` beacon host AND the `c.gif` path (`c1.microsoft.com//c.gif?DI=…`).
+  { host: 'c1.microsoft.com', path: /^\/+c\.gif$/ }
 ];
 
 /** Does `host` satisfy a beacon rule's host constraint? */
@@ -96,4 +107,45 @@ export function isTrackingBeacon(originalUrl) {
     return false; // unparseable → not our call to make; leave it a finding.
   }
   return TRACKING_BEACONS.some(rule => beaconHostMatches(host, rule) && beaconPathMatches(path, rule));
+}
+
+/**
+ * Schemes / shapes a requisite must NEVER be: inline or pseudo URLs a wayback
+ * replay can't serve and an extractor should never have emitted. These reach the
+ * frontier because the archived page's CSS/HTML referenced them and the replay
+ * rewrote them into `/web/<ts><flag>/<original>` refs anyway:
+ *   - a CSS `url(data:<mime>/...)` inline font mis-resolved as a relative PATH
+ *     (`.../genericons/data:application/font-woff;base64,…`),
+ *   - `javascript:` handlers (`javascript:parent.adsIframeHtml()`),
+ *   - `mailto:` / `blob:` / `about:` / `tel:` pseudo-URLs,
+ *   - a schemeless keyword resolved to a bare host (`http://javascript/`).
+ */
+const UNFETCHABLE_SCHEME = /^(?:data|javascript|mailto|blob|about|tel|vbscript):/i;
+
+/**
+ * Is `originalUrl` a real, fetchable http(s) resource — i.e. NOT one of the
+ * inline/pseudo/malformed shapes above? A replay could never serve those, so
+ * they are neither fetched nor counted toward a doc's closure.
+ * @param {string} originalUrl - the `<original>` from a `/web/<ts>/<original>`.
+ * @returns {boolean}
+ */
+export function isFetchableResource(originalUrl) {
+  if (typeof originalUrl !== 'string' || originalUrl === '') return false;
+  if (UNFETCHABLE_SCHEME.test(originalUrl)) return false;
+  if (/data:[a-z]+\/[a-z0-9.+-]/i.test(originalUrl)) return false; // data:<mime>/ mis-resolved mid-URL
+  if (/^https?:\/\/javascript(?:[:/]|$)/i.test(originalUrl)) return false; // `http://javascript/`
+  return true;
+}
+
+/**
+ * Is `originalUrl` an UN-MIRRORABLE frontier child — a tracking beacon OR a
+ * non-fetchable resource? The union predicate the frontier sites consult: the
+ * fetcher (cacheCapture) skips these so a run never wastes a request/timeout on
+ * them, and the gate (fsck) skips them so their absence never keeps the store
+ * dirty. A capturable, real requisite is neither.
+ * @param {string} originalUrl - the `<original>` from a `/web/<ts>/<original>`.
+ * @returns {boolean}
+ */
+export function isUnmirrorable(originalUrl) {
+  return !isFetchableResource(originalUrl) || isTrackingBeacon(originalUrl);
 }

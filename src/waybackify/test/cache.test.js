@@ -69,6 +69,43 @@ function mockArchive(overrides = {}) {
 const mkroot = () => fsp.mkdtemp(path.join(os.tmpdir(), 'waybackify-cache-'));
 const sriOf = bytes => `sha256-${crypto.createHash('sha256').update(bytes).digest('base64')}`;
 
+describe('cacheCapture — un-mirrorable frontier children are skipped', () => {
+  let root;
+  beforeEach(async () => {
+    root = await mkroot();
+  });
+
+  it('does not fetch tracking beacons; drops data:/javascript: at extraction', async () => {
+    const ts = '20200101000000';
+    const docUrl = `https://web.archive.org/web/${ts}/http://ex.com/`;
+    const docKey = `${ts}/http://ex.com/`;
+    const realKey = `${ts}/http://ex.com/real.png`;
+    const beaconKey = `${ts}/https://n.clarity.ms/collect`;
+    const body =
+      `<img src="/web/${ts}im_/https://n.clarity.ms/collect">` + // beacon — recorded, never fetched
+      `<img src="/web/${ts}im_/http://ex.com/genericons/data:application/font-woff;base64,AAAA">` + // data: — never recorded
+      `<img src="/web/${ts}im_/http://ex.com/real.png">`; // real — fetched
+    // Only the doc + the real image are routed. If cacheCapture attempted the
+    // beacon or the data: URL, the mock would throw "unrouted" → a failure.
+    const { fetchImpl, calls } = mockArchive({
+      [docUrl]: { status: 200, contentType: 'text/html', body },
+      [`https://web.archive.org/web/${ts}im_/http://ex.com/real.png`]: { status: 200, contentType: 'image/png', body: 'PNG' }
+    });
+
+    const summary = await cacheCapture(docUrl, { root, fetch: fetchImpl });
+
+    assert.equal(summary.failures.length, 0, 'nothing failed — the un-mirrorable children were skipped, not attempted');
+    assert.ok(!calls.some(u => u.includes('clarity.ms')), 'the beacon was never fetched');
+    assert.ok(!calls.some(u => u.includes('data:')), 'the data: URI was never fetched');
+    assert.ok(calls.some(u => u.includes('real.png')), 'the real image WAS fetched');
+
+    const doc = await readSidecar(root, docKey);
+    assert.ok(doc.requisites.includes(beaconKey), 'the beacon is a real edge → recorded (just never fetched)');
+    assert.ok(doc.requisites.includes(realKey), 'the real requisite is recorded');
+    assert.ok(!doc.requisites.some(k => k.includes('data:')), 'the data: URI is garbage → never recorded');
+  });
+});
+
 describe('cacheCapture — requisites by default', () => {
   let root;
   beforeEach(async () => {

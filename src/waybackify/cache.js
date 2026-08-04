@@ -91,6 +91,7 @@ import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } fr
 import { extractRequisites } from './requisites.js';
 import { detectInterstitial } from './interstitial.js';
 import { NOOP_LOGGER } from './noop-logger.js';
+import { isUnmirrorable } from './beacons.js';
 
 // cacheCapture's fetch path is half of the §4 request/response trace (the doc +
 // requisite firehose; WaybackMachine's #cdxRows is the other half). The library
@@ -791,7 +792,16 @@ export async function cacheCapture(waybackUrl, options = {}) {
     // authoritative and never re-extracted, so when a key is in BOTH the stored
     // dynamic flag wins BY RULE — the two flags MAY differ, and dynamic wins
     // regardless (never re-derive a dynamic child's flag from the body).
-    const childKeys = [...new Set([...docSidecar.requisites, ...dynamicByKey.keys()])];
+    const childKeys = [...new Set([...docSidecar.requisites, ...dynamicByKey.keys()])].filter(childKey => {
+      // Drop UN-MIRRORABLE children — tracking beacons + non-fetchable/inline
+      // URIs (data: fonts, javascript: handlers, malformed hosts) — from the
+      // fetch frontier: a replay can never serve them, so fetching wastes a
+      // request/timeout, and they must not count toward closure (fsck agrees, via
+      // the same predicate). A separatorless key is left to the malformed-key
+      // guard below (it becomes a `failed` finding there, not a silent drop).
+      const sep = childKey.indexOf('/');
+      return sep <= 0 || !isUnmirrorable(childKey.slice(sep + 1));
+    });
 
     // Frontier = union children whose sidecar is missing (per-entry
     // completion; closure is this query, never a write barrier).

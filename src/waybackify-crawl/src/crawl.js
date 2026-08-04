@@ -41,7 +41,8 @@ import { WaybackMachine } from '@charlie.dev/waybackify';
 import { serveCacheRoot } from '@charlie.dev/waybackify-serve/node';
 import { loadCorpusKeySet } from '@charlie.dev/waybackify-serve/corpus';
 import { compilePolicy } from './policy.js';
-import { isTrackingBeacon, mapFindings } from './mapkeys.js';
+import { mapFindings } from './mapkeys.js';
+import { isUnmirrorable } from '@charlie.dev/waybackify/beacons.js';
 import { createBrowserProbe } from './probe.js';
 import { ensureCrawlDir, verifiedKeys, stampVerified, invalidateVerified, recordFlaky, writeHar } from './ledger.js';
 
@@ -274,7 +275,13 @@ export async function crawl(urls, options = {}) {
       const dynamicKeys = (Array.isArray(sidecar.dynamic) ? sidecar.dynamic : [])
         .filter(d => !dynamicEntryError(d))
         .map(d => d.key);
-      const frontier = [...new Set([...requisites, ...dynamicKeys])];
+      // Drop un-mirrorable children (beacons + non-fetchable/inline URIs) so the
+      // count matches what a real run would ACTUALLY fetch — cacheCapture skips
+      // exactly this set at the fetch seam.
+      const frontier = [...new Set([...requisites, ...dynamicKeys])].filter(childKey => {
+        const sep = childKey.indexOf('/');
+        return sep <= 0 || !isUnmirrorable(childKey.slice(sep + 1));
+      });
       const wouldFetch = [];
       for (const childKey of frontier) {
         if (!(await readSidecar(root, childKey))) wouldFetch.push(childKey);
@@ -451,9 +458,10 @@ async function crawlDoc(doc, ctx) {
     // the browser has since stopped requesting it. The persisted entry shape is
     // `{ key, flag, via, firstSeen? }` — no original-url field — so recover the
     // original from the key (`<ts>/<original>`, the ts having no slash) and skip
-    // beacons HERE at the seed, before they can enter recordedKeys → unresolved
-    // (mirrors the mapFindings drop that keeps NEW beacons off the frontier).
-    if (isTrackingBeacon(d.key.slice(d.key.indexOf('/') + 1))) continue;
+    // UN-MIRRORABLE children HERE at the seed, before they can enter recordedKeys
+    // → unresolved (mirrors the mapFindings drop that keeps new beacons off the
+    // frontier; the fetcher + gate drop the same set).
+    if (isUnmirrorable(d.key.slice(d.key.indexOf('/') + 1))) continue;
     recordedKeys.add(d.key);
   }
 

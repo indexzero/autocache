@@ -47,6 +47,20 @@ describe('extractRequisites', () => {
     }
   });
 
+  it('drops non-fetchable refs — data: fonts, javascript: handlers, http://javascript/', () => {
+    const ts = '20200101000000';
+    const html =
+      `<img src="/web/${ts}im_/http://x.com/genericons/data:application/font-woff;base64,AAAA">` +
+      `<span data-x="/web/${ts}oe_/javascript:parent.adsIframeHtml()"></span>` +
+      `<img src="/web/${ts}im_/http://javascript/">` +
+      `<img src="/web/${ts}im_/http://x.com/real.png">`;
+    assert.deepEqual(
+      extractRequisites(html).map(r => r.original),
+      ['http://x.com/real.png'],
+      'only the real image survives — the inline/pseudo/malformed refs are never recorded'
+    );
+  });
+
   it('repairs proxy-collapsed schemes exactly like parseWaybackUrl', () => {
     assert.ok(byKey.has('20111011002337/http://example.com/images/collapsed-scheme.jpg'));
   });

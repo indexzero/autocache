@@ -79,7 +79,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS, dynamicEntryError } from './cache.js';
-import { isTrackingBeacon } from './beacons.js';
+import { isUnmirrorable } from './beacons.js';
 import { captureHash } from './key.js';
 import { detectInterstitial } from './interstitial.js';
 import { NOOP_LOGGER } from './noop-logger.js';
@@ -329,7 +329,7 @@ export async function fsck(root, options = {}) {
       // gap. The crawl (mapkeys) already refuses to chase these into the
       // frontier; the gate MUST agree or a beacon keeps the store dirty forever.
       // The key is `<ts>/<original>` — test the original exactly as crawl does.
-      if (isTrackingBeacon(childKey.slice(childKey.indexOf('/') + 1))) continue;
+      if (isUnmirrorable(childKey.slice(childKey.indexOf('/') + 1))) continue;
       const childHash = await captureHash(childKey);
       if (!sidecarHashes.has(childHash)) {
         findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash });
@@ -340,7 +340,7 @@ export async function fsck(root, options = {}) {
       seen.add(childKey);
       // Same beacon exemption as requisites: a browser-discovered dynamic beacon
       // is un-mirrorable, so its missing sidecar is not `incompleteClosure`.
-      if (isTrackingBeacon(childKey.slice(childKey.indexOf('/') + 1))) continue;
+      if (isUnmirrorable(childKey.slice(childKey.indexOf('/') + 1))) continue;
       const childHash = await captureHash(childKey);
       if (!sidecarHashes.has(childHash)) {
         findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash, dynamic: true });

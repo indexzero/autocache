@@ -172,13 +172,17 @@ export async function fsck(root, options = {}) {
   // files are sanctioned exceptions, written INTO the root by design:
   //   .refetch/            `cache fill`'s durable worklist + gone ledger
   //                        (backfill.js) — a resumable bulk fetch's memory.
+  //   .crawl/              `cache crawl`'s durable state (verified.jsonl,
+  //                        flaky.jsonl, and the optional --har/ dir) — the
+  //                        dynamic fixpoint's memory, exactly analogous to
+  //                        .refetch/.
   //   remaster.build.json  `remaster build`'s build record (remaster.js
   //                        BUILD_NAME) at a remastered root.
   // fsck must not flag its own sibling commands' state as foreign — else
-  // `cache fill`/`remaster build` then `cache verify` on that root would report
-  // unclean forever (a non-reapable advisory). (Filenames are a deliberate
-  // local copy, per this file's layout-knowledge note.)
-  const allowed = new Set(['cap', 'meta', 'tmp', '.refetch', 'remaster.build.json']);
+  // `cache fill`/`cache crawl`/`remaster build` then `cache verify` on that
+  // root would report unclean forever (a non-reapable advisory). (Filenames are
+  // a deliberate local copy, per this file's layout-knowledge note.)
+  const allowed = new Set(['cap', 'meta', 'tmp', '.refetch', '.crawl', 'remaster.build.json']);
   for (const ent of await readdirSafe(root)) {
     if (!allowed.has(ent.name)) {
       findings.foreignRoot.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, ent.name) });

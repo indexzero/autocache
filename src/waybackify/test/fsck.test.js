@@ -251,6 +251,22 @@ describe('fsck — root contract (foreign entries)', () => {
     assert.equal(unresolvedFindings(report), 0, 'a fill-populated root verifies clean');
   });
 
+  it('does NOT flag .crawl/ — it is `cache crawl`\'s sanctioned durable state', async () => {
+    // Regression: `cache crawl` writes <root>/.crawl/{verified,flaky}.jsonl (and
+    // an optional --har/ dir); `cache verify` (fsck) must treat it as a sibling,
+    // not a foreign intrusion — else crawl→verify on one root would report
+    // unclean (exit 1) forever, exactly the .refetch/ case above.
+    const root = await mkroot();
+    await commitBody(root, '2011/http://x.example/');
+    await fsp.mkdir(path.join(root, '.crawl'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.crawl', 'verified.jsonl'), '');
+    await fsp.writeFile(path.join(root, '.crawl', 'flaky.jsonl'), '');
+
+    const report = await fsck(root);
+    assert.equal(report.findings.foreignRoot.length, 0, '.crawl/ is not foreign');
+    assert.equal(unresolvedFindings(report), 0, 'a crawl-populated root verifies clean');
+  });
+
   it('does NOT flag remaster.build.json — it is `remaster build`\'s sanctioned build record', async () => {
     // Regression: `remaster build` writes remaster.build.json at the remastered
     // root; `remaster verify` on that root must not report it foreign (exit 1).

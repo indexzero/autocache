@@ -194,6 +194,37 @@ test('--static-only paces ONLY docs that hit archive.org — no-op docs are not 
   assert.ok(elapsed < 500, `no-op docs must not be paced: 3×1000ms would be ~3s, took ${elapsed}ms`);
 });
 
+test('--static-only emits a per-doc progress heartbeat (done/total + running totals) only for docs that fetch', async () => {
+  const root = await tmpRoot();
+  const docA = K(0, 'https://ex.com/a'); // 2 absent dynamic children → fetches 2
+  const docB = K(3, 'https://ex.com/b'); // already complete → no request, no heartbeat
+  const store = makeStore({
+    [docA]: {
+      dynamic: [
+        { key: K(1, 'https://ex.com/a1.png'), flag: 'im_', via: 'remaster-verify' },
+        { key: K(2, 'https://ex.com/a2.png'), flag: 'im_', via: 'remaster-verify' }
+      ]
+    },
+    [docB]: {}
+  });
+  const events = [];
+  const { results } = await crawl([docA, docB], {
+    root,
+    staticOnly: true,
+    delayMs: 0,
+    deps: makeDeps(store, { docs: {} }, newCounters()),
+    policy: noPolicy,
+    onProgress: e => { if (e.type === 'static') events.push(e); }
+  });
+
+  assert.equal(results.length, 2);
+  assert.equal(events.length, 1, 'only docA fetched → one heartbeat; the no-op docB emits none');
+  assert.equal(events[0].done, 1, 'docA is doc 1 of 2');
+  assert.equal(events[0].total, 2);
+  assert.equal(events[0].fetched, 2, 'docA fetched both children');
+  assert.equal(events[0].totalFetched, 2, 'running total carried on the event');
+});
+
 test('threads the injected logger into cacheCapture (the §4 firehose is visible during a crawl)', async () => {
   const root = await tmpRoot();
   const doc = K(0, 'https://ex.com/');

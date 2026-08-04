@@ -288,26 +288,40 @@ export async function crawl(urls, options = {}) {
   // --static-only: no server, no browser — just close each doc's ALREADY
   // recorded frontier. Completeness is not verified; the caller warns.
   if (staticOnly) {
+    let done = 0;
+    let totalFetched = 0;
+    let totalFailed = 0;
     for (const doc of docs) {
+      done++;
       if (requestCount >= maxRequests) {
         results.push({ key: doc.key, status: 'cap-skipped' });
         continue;
       }
-      const before = requestCount;
+      let fetched = 0;
+      let failed = 0;
       try {
         const summary = await cacheCapture(doc.url, { root, fetch: countingFetch, logger, onEntry: addCommitted });
-        results.push({ key: doc.key, status: 'static', fetched: summary.fetched, failures: summary.failures.length });
+        fetched = summary.fetched;
+        failed = summary.failures.length;
+        results.push({ key: doc.key, status: 'static', fetched, failures: failed });
       } catch (error) {
         if (error instanceof CapReachedError) results.push({ key: doc.key, status: 'cap-skipped', error: error.message });
         else results.push({ key: doc.key, status: 'error', error: error?.message ?? String(error) });
       }
-      // Pace ONLY docs that actually hit archive.org. An already-complete doc
-      // makes zero requests (its whole frontier is present), so sleeping on it is
-      // pure waste — delayMs × every cached doc is minutes over a corpus, and it
-      // freezes the log for that long BEFORE the first real fetch. requestCount
-      // rises iff countingFetch was called, so it is the exact "did this doc
-      // touch the network?" signal.
-      if (delayMs && requestCount > before) await sleep(delayMs);
+      // A doc whose frontier was already complete fetched nothing and failed
+      // nothing — it made no archive.org request. Only docs that actually
+      // touched the network get a progress line AND the pacing delay; the
+      // already-complete ones fly past silently (else delayMs × every cached
+      // doc is minutes of wasted sleep, and the log freezes before the first
+      // real fetch). The heartbeat carries the running totals so an operator can
+      // see the shape of the run — which doc of how many, and how much it has
+      // fetched / failed / requested so far.
+      if (fetched + failed > 0) {
+        totalFetched += fetched;
+        totalFailed += failed;
+        onProgress({ type: 'static', done, total: docs.length, key: doc.key, fetched, failed, totalFetched, totalFailed, requests: requestCount });
+        if (delayMs) await sleep(delayMs);
+      }
     }
     return { requestCount, cap: maxRequests, results };
   }

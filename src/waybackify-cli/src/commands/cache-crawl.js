@@ -135,7 +135,12 @@ export function cacheCrawlHandler(deps = {}) {
       // progress); `onProgress` below stays the crawl's own event seam.
       logger,
       onProgress: e => {
-        if (e.type === 'capture') {
+        if (e.type === 'static') {
+          logger.info(
+            { evt: 'crawl-progress', type: 'static', done: e.done, total: e.total, key: e.key, fetched: e.fetched, failed: e.failed, totalFetched: e.totalFetched, totalFailed: e.totalFailed, requests: e.requests },
+            `static ${e.done}/${e.total} · ${e.totalFetched} fetched · ${e.totalFailed} failed · ${e.requests} req · ${e.key}`
+          );
+        } else if (e.type === 'capture') {
           logger.info({ evt: 'crawl-progress', type: 'capture', key: e.key, iter: e.iter, fetched: e.fetched }, `  capture ${e.key} iter=${e.iter} fetched=${e.fetched}`);
         } else if (e.type === 'probe') {
           logger.info({ evt: 'crawl-progress', type: 'probe', line: e.line }, `  ${e.line}`);

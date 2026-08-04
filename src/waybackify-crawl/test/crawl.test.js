@@ -171,6 +171,29 @@ test('--dry-run enumerates the recorded frontier (requisites ∪ dynamic) and fe
   assert.equal(store.sidecars.has(absentA), false, 'the store was not mutated');
 });
 
+test('--static-only paces ONLY docs that hit archive.org — no-op docs are not slept on (regression)', async () => {
+  // The bug: `if (delayMs) await sleep(delayMs)` ran after EVERY doc, so a large
+  // --delay-ms over a corpus of already-complete docs burned minutes sleeping on
+  // docs that fetched nothing — and froze the log for that long before the first
+  // real fetch. These three docs have empty frontiers → zero requests → zero
+  // pacing. 3×1000ms of (wrong) sleep would be 3s; the fix keeps it near-instant.
+  const root = await tmpRoot();
+  const docs = [K(0, 'https://ex.com/a'), K(1, 'https://ex.com/b'), K(2, 'https://ex.com/c')];
+  const store = makeStore(Object.fromEntries(docs.map(d => [d, {}])));
+  const t0 = Date.now();
+  const { results } = await crawl(docs, {
+    root,
+    staticOnly: true,
+    delayMs: 1000,
+    deps: makeDeps(store, { docs: {} }, newCounters()),
+    policy: noPolicy
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(results.length, 3);
+  assert.ok(results.every(r => r.status === 'static'));
+  assert.ok(elapsed < 500, `no-op docs must not be paced: 3×1000ms would be ~3s, took ${elapsed}ms`);
+});
+
 test('threads the injected logger into cacheCapture (the §4 firehose is visible during a crawl)', async () => {
   const root = await tmpRoot();
   const doc = K(0, 'https://ex.com/');

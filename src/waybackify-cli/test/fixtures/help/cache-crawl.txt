@@ -32,7 +32,8 @@ Flags:
   --dry-run                enumerate the recorded frontier (requisites ∪ dynamic) and report what a run would fetch; touch nothing
   --allow-escapes <file>   allowed-escapes policy override (default: the committed policy)
   --max <n>                archive.org request cap for this run (default: unlimited)
-  --delay-ms <n>           pacing between captures (default 1500)
+  --delay-ms <n>           pacing between captures that hit archive.org (default 1500; already-complete docs are not paced)
+  --timeout <n>            per-request archive.org timeout in ms (default 20000; a dead host hangs this long before failing)
   --har                    write per-doc request logs to <root>/.crawl/har/
   --browser-cmd <cmd>      the agent-browser executable (default: agent-browser)
   --help|-h                Show help

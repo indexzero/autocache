@@ -76,6 +76,7 @@ export function cacheCrawlHandler(deps = {}) {
     // and NOT a validation error. Only a value the operator actually typed is
     // range-checked (rejecting Infinity/NaN/negative — see parseNonNegInt).
     const maxRequests = flags.max === undefined ? Infinity : parseNonNegInt(flags.max, '--max', fail);
+    const timeout = flags.timeout === undefined ? 20000 : parseNonNegInt(flags.timeout, '--timeout', fail);
     const browserCmd = flags.browserCmd ?? 'agent-browser';
 
     // The engine + policy loaders: injected fakes (tests) or the crawl package
@@ -126,6 +127,7 @@ export function cacheCrawlHandler(deps = {}) {
       policy,
       maxRequests,
       delayMs,
+      timeout,
       browserCmd,
       har: Boolean(flags.har),
       // Thread the diagnostics logger so cacheCapture's §4 per-fetch firehose is

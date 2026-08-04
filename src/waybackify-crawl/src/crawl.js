@@ -152,7 +152,10 @@ export function toDoc(input) {
  *   real probe.
  * @param {object} [options.policy] - compiled allowed-escapes policy (match(url)).
  * @param {number} [options.maxRequests=Infinity] - archive.org request cap.
- * @param {number} [options.delayMs=1500] - pacing between captures.
+ * @param {number} [options.delayMs=1500] - pacing between captures that actually
+ *   hit archive.org (a doc whose frontier is already complete makes no request
+ *   and is NOT paced).
+ * @param {number} [options.timeout=20000] - per-request archive.org timeout (ms).
  * @param {(e: object) => void} [options.onProgress]
  * @param {object} [options.logger] - injected diagnostics logger, threaded into
  *   cacheCapture so the §4 request/response firehose shows during a crawl (like
@@ -174,6 +177,11 @@ export async function crawl(urls, options = {}) {
     policy = compilePolicy({ escapes: [] }),
     maxRequests = Infinity,
     delayMs = 1500,
+    // Per-request archive.org timeout. A dead host (an ad server, a gone CDN)
+    // never answers, so it hangs the full timeout before failing — 60s was
+    // brutal on a bulk close of mostly-dead requisites. 20s is ample for a live
+    // capture and 3× faster to give up on a corpse; --timeout overrides.
+    timeout = 20000,
     onProgress = () => {},
     // The injected diagnostics logger, threaded straight into cacheCapture so the
     // §4 request/response firehose (per requisite fetched) is visible during a
@@ -225,7 +233,7 @@ export async function crawl(urls, options = {}) {
 
   // One archive.org client + a counting fetch for the whole run (shared session
   // is gentler on the IA; the count is the exact request tally for the cap).
-  const wayback = new WaybackMachine({ timeout: 60000 });
+  const wayback = new WaybackMachine({ timeout });
   let requestCount = 0;
   // Enforce the cap AT THE FETCH SEAM, not just between docs: cacheCapture fans
   // a doc's whole frontier out in one loop, so a between-docs check alone could
@@ -285,6 +293,7 @@ export async function crawl(urls, options = {}) {
         results.push({ key: doc.key, status: 'cap-skipped' });
         continue;
       }
+      const before = requestCount;
       try {
         const summary = await cacheCapture(doc.url, { root, fetch: countingFetch, logger, onEntry: addCommitted });
         results.push({ key: doc.key, status: 'static', fetched: summary.fetched, failures: summary.failures.length });
@@ -292,7 +301,13 @@ export async function crawl(urls, options = {}) {
         if (error instanceof CapReachedError) results.push({ key: doc.key, status: 'cap-skipped', error: error.message });
         else results.push({ key: doc.key, status: 'error', error: error?.message ?? String(error) });
       }
-      if (delayMs) await sleep(delayMs);
+      // Pace ONLY docs that actually hit archive.org. An already-complete doc
+      // makes zero requests (its whole frontier is present), so sleeping on it is
+      // pure waste — delayMs × every cached doc is minutes over a corpus, and it
+      // freezes the log for that long BEFORE the first real fetch. requestCount
+      // rises iff countingFetch was called, so it is the exact "did this doc
+      // touch the network?" signal.
+      if (delayMs && requestCount > before) await sleep(delayMs);
     }
     return { requestCount, cap: maxRequests, results };
   }

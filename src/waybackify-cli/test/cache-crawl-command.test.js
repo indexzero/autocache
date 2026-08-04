@@ -115,6 +115,19 @@ test('--static-only warns LOUD and compiles an empty-escapes policy (no browser)
   assert.equal(calls.find(c => c.urls).options.policy.kind, 'compiled');
 });
 
+test('--timeout threads through (default 20000, overridable, validated)', async () => {
+  const a = handlerFor({ results: [{ status: 'verified' }] });
+  await a.invoke(['cache', 'crawl', '-r', '/root', WB1]);
+  assert.equal(a.calls.find(c => c.urls).options.timeout, 20000, 'default is 20s');
+
+  const b = handlerFor({ results: [{ status: 'verified' }] });
+  await b.invoke(['cache', 'crawl', '-r', '/root', '--timeout', '5000', WB1]);
+  assert.equal(b.calls.find(c => c.urls).options.timeout, 5000, 'override threads through');
+
+  const c = handlerFor({ results: [{ status: 'verified' }] });
+  assert.equal(await c.invoke(['cache', 'crawl', '-r', '/root', '--timeout', 'nope', WB1]), EXIT.USAGE);
+});
+
 test('--dry-run threads through, prints the frontier summary, and exits 0 (never a domain failure)', async () => {
   const { invoke, calls, out } = handlerFor({
     results: [{ key: 'k', status: 'dry-run', frontier: 5, wouldFetch: 3, keys: ['a', 'b', 'c'] }]

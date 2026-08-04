@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { formatTrace, hhmmss, humanBytes, humanMs, normalizeType, makeLogger, parseLoggingFlags } from '../src/logger.js';
+import { formatTrace, traceMessageFormat, hhmmss, humanBytes, humanMs, normalizeType, makeLogger, parseLoggingFlags } from '../src/logger.js';
 
 // A fixed wall-clock so the HH:MM:SS prefix is deterministic in the assertions.
 const T = new Date(2020, 0, 1, 21, 57, 11).getTime();
@@ -123,6 +123,20 @@ test('the URL is ALWAYS last — every column before it is constant-width', () =
   const a = formatTrace({ evt: 'response', time: T, url: 'AAA', status: 200, bytes: 14520, contentType: 'text/html', ms: 412 }, null);
   const b = formatTrace({ evt: 'response', time: T, url: 'BBB', status: 404, bytes: 0, ms: 5, note: 'x' }, null);
   assert.equal(a.indexOf('AAA'), b.indexOf('BBB'));
+});
+
+test('traceMessageFormat terminates every line with a newline (pino-pretty fn-messageFormat adds no EOL)', () => {
+  // Regression: pino-pretty 13 writes a FUNCTION messageFormat's return value
+  // VERBATIM and appends no eol of its own, so a missing trailing \n runs every
+  // record onto the previous one on a TTY (`worklist…plan…cached…`). Both the
+  // §4-trace branch and the plain-message branch must end in \n.
+  const resp = { evt: 'response', time: T, url: 'https://x/', status: 200, bytes: 10, contentType: 'text/html', ms: 5 };
+  const respLine = traceMessageFormat(resp, 'msg', 'INFO', { colors: null });
+  assert.ok(respLine.endsWith('\n'), 'a §4 response line ends in a newline');
+  assert.equal(respLine, `${formatTrace(resp, null)}\n`);
+
+  const plainLine = traceMessageFormat({ time: T, msg: 'worklist: built 5' }, 'msg', 'INFO', { colors: null });
+  assert.equal(plainLine, `${TS}  worklist: built 5\n`, 'a plain summary line is HH:MM:SS + msg + newline');
 });
 
 test('humanBytes / humanMs / normalizeType', () => {

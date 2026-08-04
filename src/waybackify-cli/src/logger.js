@@ -147,12 +147,17 @@ export function formatTrace(log, colors = NO_COLORS) {
  * level: warn amber, error/fatal red), so the firehose and the summaries share
  * one shape. The leading `\x1b[0m` defeats pino-pretty's cyan message-wrap so
  * ONLY our `<` marker (or a warn/error line) carries color.
+ *
+ * We terminate the line with `\n` OURSELVES. pino-pretty 13 uses a FUNCTION
+ * messageFormat's return value verbatim as the whole rendered line and does NOT
+ * append its own EOL (only the string/default form does) — so without this every
+ * record concatenates onto the previous one on a TTY (`worklist…plan…cached…`).
  */
 export function traceMessageFormat(log, messageKey, levelLabel, extra) {
   const colors = extra?.colors ?? NO_COLORS;
   const reset = colors ? '\x1b[0m' : '';
   if (log.evt === 'request' || log.evt === 'response') {
-    return reset + formatTrace(log, colors);
+    return reset + formatTrace(log, colors) + '\n';
   }
   const time = hhmmss(log.time);
   const msg = log[messageKey] ?? '';
@@ -161,7 +166,7 @@ export function traceMessageFormat(log, messageKey, levelLabel, extra) {
     if (log.level >= 50) paint = colors.red;
     else if (log.level >= 40) paint = colors.yellow;
   }
-  return reset + `${time}  ${paint(msg)}`;
+  return reset + `${time}  ${paint(msg)}` + '\n';
 }
 
 /**

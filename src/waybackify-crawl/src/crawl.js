@@ -31,6 +31,7 @@ import {
   cacheCapture as coreCacheCapture,
   recordDynamic as coreRecordDynamic,
   readSidecar as coreReadSidecar,
+  dynamicEntryError,
   SIDECAR_VERSION
 } from '@charlie.dev/waybackify/cache.js';
 import { RULE_VERSION } from '@charlie.dev/waybackify/rewrite.js';
@@ -144,6 +145,11 @@ export function toDoc(input) {
  * @param {boolean} [options.staticOnly=false] - skip the browser probe; run only
  *   the static bulk pass (closes ALREADY-recorded dynamic[]). Loud: completeness
  *   is NOT verified. The caller warns; this flag just gates the probe.
+ * @param {boolean} [options.dryRun=false] - enumerate each doc's recorded
+ *   frontier (requisites ∪ well-formed dynamic) and report which children are
+ *   absent (`status: 'dry-run'`, `wouldFetch`, `keys`); fetch, probe, and write
+ *   NOTHING. Reports the recorded frontier only — new dynamic discovery needs a
+ *   real probe.
  * @param {object} [options.policy] - compiled allowed-escapes policy (match(url)).
  * @param {number} [options.maxRequests=Infinity] - archive.org request cap.
  * @param {number} [options.delayMs=1500] - pacing between captures.
@@ -161,6 +167,7 @@ export async function crawl(urls, options = {}) {
     maxIterations = 4,
     force = false,
     staticOnly = false,
+    dryRun = false,
     policy = compilePolicy({ escapes: [] }),
     maxRequests = Infinity,
     delayMs = 1500,
@@ -230,6 +237,36 @@ export async function crawl(urls, options = {}) {
   const corpus = await loadCorpus(root);
 
   const results = [];
+
+  // --dry-run: enumerate each doc's ALREADY-recorded frontier (requisites ∪
+  // well-formed dynamic children) and report which children are absent — the
+  // exact set a real run would fetch — without touching the network, the
+  // browser, or the store. Mirrors `cache fill --dry-run` (build/show the
+  // worklist, fetch nothing). It reports the RECORDED frontier ONLY: discovering
+  // NEW dynamic requisites needs a live probe, so a dry-run never renders.
+  if (dryRun) {
+    for (const doc of docs) {
+      const sidecar = await readSidecar(root, doc.key);
+      if (!sidecar) {
+        results.push({ key: doc.key, status: 'dry-run', present: false, frontier: 0, wouldFetch: 0, keys: [] });
+        continue;
+      }
+      const requisites = Array.isArray(sidecar.requisites) ? sidecar.requisites : [];
+      // Same well-formedness filter cacheCapture applies to the fetch frontier
+      // (dynamicEntryError) so the count matches what a real run would attempt.
+      const dynamicKeys = (Array.isArray(sidecar.dynamic) ? sidecar.dynamic : [])
+        .filter(d => !dynamicEntryError(d))
+        .map(d => d.key);
+      const frontier = [...new Set([...requisites, ...dynamicKeys])];
+      const wouldFetch = [];
+      for (const childKey of frontier) {
+        if (!(await readSidecar(root, childKey))) wouldFetch.push(childKey);
+      }
+      results.push({ key: doc.key, status: 'dry-run', present: true, frontier: frontier.length, wouldFetch: wouldFetch.length, keys: wouldFetch });
+      onProgress({ type: 'dry-run', key: doc.key, frontier: frontier.length, wouldFetch: wouldFetch.length });
+    }
+    return { requestCount: 0, cap: maxRequests, results };
+  }
 
   // --static-only: no server, no browser — just close each doc's ALREADY
   // recorded frontier. Completeness is not verified; the caller warns.

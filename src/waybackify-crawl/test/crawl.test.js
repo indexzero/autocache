@@ -131,6 +131,46 @@ function newCounters() {
 
 /* ------------------------------------------------------------------ */
 
+test('--dry-run enumerates the recorded frontier (requisites ∪ dynamic) and fetches nothing', async () => {
+  const root = await tmpRoot();
+  const doc = K(0, 'https://ex.com/');
+  const present = K(1, 'https://ex.com/present.css'); // already cached
+  const absentA = K(2, 'https://ex.com/absent-a.woff');
+  const absentB = K(3, 'https://ex.com/absent-b.js');
+  const absentReq = K(4, 'https://ex.com/absent.png');
+  const store = makeStore({
+    [doc]: {
+      dynamic: [
+        { key: present, flag: 'cs_', via: 'remaster-verify' },
+        { key: absentA, flag: null, via: 'remaster-verify' },
+        { key: absentB, flag: 'js_', via: 'remaster-verify' }
+      ]
+    },
+    [present]: {}
+  });
+  store.sidecars.get(doc).requisites = [absentReq]; // a STATIC requisite, absent
+  const counters = newCounters();
+
+  const { requestCount, results } = await crawl([doc], {
+    root,
+    dryRun: true,
+    deps: makeDeps(store, { docs: {} }, counters),
+    policy: noPolicy,
+    delayMs: 0
+  });
+
+  assert.equal(requestCount, 0, 'a dry-run issues zero archive.org requests');
+  assert.equal(counters.events.length, 0, 'no capture/record — nothing fetched or written');
+  assert.equal(results.length, 1);
+  const r = results[0];
+  assert.equal(r.status, 'dry-run');
+  assert.equal(r.present, true);
+  assert.equal(r.frontier, 4, 'requisites ∪ dynamic = 4 distinct children');
+  assert.equal(r.wouldFetch, 3, 'three are absent; present.css is already cached');
+  assert.deepEqual(new Set(r.keys), new Set([absentReq, absentA, absentB]));
+  assert.equal(store.sidecars.has(absentA), false, 'the store was not mutated');
+});
+
 test('converges: leaked local children are recorded then fetched, then the render is clean', async () => {
   const root = await tmpRoot();
   const doc = K(0, 'https://ex.com/');

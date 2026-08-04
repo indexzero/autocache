@@ -122,6 +122,7 @@ export function cacheCrawlHandler(deps = {}) {
       maxIterations,
       force: Boolean(flags.force),
       staticOnly,
+      dryRun: Boolean(flags.dryRun),
       policy,
       maxRequests,
       delayMs,
@@ -154,6 +155,10 @@ export function cacheCrawlHandler(deps = {}) {
         2
       )
     );
+
+    // A dry-run enumerates the recorded frontier and fetches nothing — it can
+    // never "fail to converge", so it always exits 0 (like `cache fill --dry-run`).
+    if (flags.dryRun) return;
 
     // A doc that is neither freshly verified, verified-from-cache, nor closed by
     // the static-only pass is a domain failure — the crawl did not converge.

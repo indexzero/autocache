@@ -29,6 +29,7 @@ Flags:
   --max-iterations <n>     reference-depth cap per doc (default 4)
   --force                  re-probe docs already stamped verified
   --static-only            skip the browser probe; close ALREADY-recorded dynamic[] only (LOUD: completeness NOT verified)
+  --dry-run                enumerate the recorded frontier (requisites ∪ dynamic) and report what a run would fetch; touch nothing
   --allow-escapes <file>   allowed-escapes policy override (default: the committed policy)
   --max <n>                archive.org request cap for this run (default: unlimited)
   --delay-ms <n>           pacing between captures (default 1500)

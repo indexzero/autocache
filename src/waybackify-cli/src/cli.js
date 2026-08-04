@@ -367,6 +367,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     flag('--max-iterations <n>', 'reference-depth cap per doc (default 4)'),
     flag('--force', 're-probe docs already stamped verified'),
     flag('--static-only', 'skip the browser probe; close ALREADY-recorded dynamic[] only (LOUD: completeness NOT verified)'),
+    flag('--dry-run', 'enumerate the recorded frontier (requisites ∪ dynamic) and report what a run would fetch; touch nothing'),
     flag('--allow-escapes <file>', 'allowed-escapes policy override (default: the committed policy)'),
     flag('--max <n>', 'archive.org request cap for this run (default: unlimited)'),
     flag('--delay-ms <n>', 'pacing between captures (default 1500)'),

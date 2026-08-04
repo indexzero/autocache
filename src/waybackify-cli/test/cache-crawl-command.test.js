@@ -115,6 +115,18 @@ test('--static-only warns LOUD and compiles an empty-escapes policy (no browser)
   assert.equal(calls.find(c => c.urls).options.policy.kind, 'compiled');
 });
 
+test('--dry-run threads through, prints the frontier summary, and exits 0 (never a domain failure)', async () => {
+  const { invoke, calls, out } = handlerFor({
+    results: [{ key: 'k', status: 'dry-run', frontier: 5, wouldFetch: 3, keys: ['a', 'b', 'c'] }]
+  });
+  const code = await invoke(['cache', 'crawl', '-r', '/root', '--dry-run', WB1]);
+  // A dry-run fetches nothing, so `status: 'dry-run'` must NOT read as an
+  // unconverged doc (which would be exit 1) — the handler short-circuits to 0.
+  assert.equal(code, EXIT.OK);
+  assert.equal(calls.find(c => c.urls).options.dryRun, true);
+  assert.deepEqual(JSON.parse(out[0]).tally, { 'dry-run': 1 });
+});
+
 test('a flag placed AFTER a positional URL is rejected loud (exit 2), never swallowed', async () => {
   // paparam's rest is greedy: `WB --force` lands `--force` in rest. The handler
   // must reject it (usage) rather than crawl the literal string '--force'.

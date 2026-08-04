@@ -37,7 +37,12 @@
 //                   sidecar.dynamic[].key, v3 — findings marked `dynamic: true`)
 //                   whose own sidecar is absent from THIS store. The frontier is
 //                   `requisites ∪ dynamic`: a recorded-but-unfetched dynamic
-//                   child is exactly as incomplete as a missing requisite.
+//                   child is exactly as incomplete as a missing requisite. A
+//                   non-deterministic tracking beacon (isTrackingBeacon —
+//                   per-render-random query strings, un-mirrorable BY
+//                   CONSTRUCTION) is EXCLUDED: the crawl already refuses to chase
+//                   it, so the gate agrees rather than hold the store dirty on an
+//                   asset that can never converge.
 //                   Store-relative
 //                   — the check reads the doc's own edge list, no ledger and no
 //                   network. It is the reason this pass exists: a mirror can be
@@ -74,6 +79,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS, dynamicEntryError } from './cache.js';
+import { isTrackingBeacon } from './beacons.js';
 import { captureHash } from './key.js';
 import { detectInterstitial } from './interstitial.js';
 import { NOOP_LOGGER } from './noop-logger.js';
@@ -318,6 +324,12 @@ export async function fsck(root, options = {}) {
     for (const childKey of doc.requisites) {
       if (seen.has(childKey)) continue;
       seen.add(childKey);
+      // A non-deterministic tracking beacon (per-render-random query strings) is
+      // un-mirrorable BY CONSTRUCTION, so its absent sidecar is never a closure
+      // gap. The crawl (mapkeys) already refuses to chase these into the
+      // frontier; the gate MUST agree or a beacon keeps the store dirty forever.
+      // The key is `<ts>/<original>` — test the original exactly as crawl does.
+      if (isTrackingBeacon(childKey.slice(childKey.indexOf('/') + 1))) continue;
       const childHash = await captureHash(childKey);
       if (!sidecarHashes.has(childHash)) {
         findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash });
@@ -326,6 +338,9 @@ export async function fsck(root, options = {}) {
     for (const childKey of doc.dynamic) {
       if (seen.has(childKey)) continue;
       seen.add(childKey);
+      // Same beacon exemption as requisites: a browser-discovered dynamic beacon
+      // is un-mirrorable, so its missing sidecar is not `incompleteClosure`.
+      if (isTrackingBeacon(childKey.slice(childKey.indexOf('/') + 1))) continue;
       const childHash = await captureHash(childKey);
       if (!sidecarHashes.has(childHash)) {
         findings.incompleteClosure.push({ hash: doc.hash, aa: doc.aa, key: doc.key, child: childKey, childHash, dynamic: true });

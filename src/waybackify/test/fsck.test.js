@@ -344,6 +344,33 @@ describe('fsck — incomplete requisite closure (store-relative, report-only)', 
     assert.ok(fs.existsSync(body) && fs.existsSync(meta), 'the doc is left in place');
     assert.equal(unresolvedFindings(report), 1, 'closure gap keeps the store dirty through --fix');
   });
+
+  it('does NOT flag an absent tracking-beacon child (un-mirrorable, so never a closure gap)', async () => {
+    // A body doc whose dynamic[] carries an un-mirrorable tracking beacon (per-
+    // render-random query strings → an unconvergeable key) ALONGSIDE a genuine
+    // absent asset. The crawl (mapkeys) already refuses to chase the beacon, so
+    // the gate must agree — else the beacon holds the store dirty forever.
+    const beacon = '20180101000000/https://csi.gstatic.com/csi?v=3'; // Google CSI timing pixel
+    const beaconTwo = '20150311160456/http://ib.adnxs.com/seg?t=2&add=752311'; // AppNexus ad beacon
+    const real = '20110101000000/https://example.com/real.css'; // the control: a genuine missing asset
+    await commitEntry(root, {
+      key: '2011/http://x.example/',
+      status: 'body',
+      contentType: 'text/html',
+      dynamic: [
+        { key: beacon, flag: 'oe_', via: 'remaster-verify', firstSeen: '2026-07-29T00:00:00.000Z' },
+        { key: beaconTwo, flag: 'im_', via: 'remaster-verify', firstSeen: '2026-07-29T00:00:00.000Z' },
+        { key: real, flag: 'cs_', via: 'remaster-verify', firstSeen: '2026-07-29T00:00:00.000Z' }
+      ],
+      body: new TextEncoder().encode('doc-with-beacon-child')
+    });
+
+    const report = await fsck(root);
+    only(report, 'incompleteClosure');
+    const children = report.findings.incompleteClosure.map(f => f.child);
+    assert.deepEqual(children, [real], 'only the real absent asset is a gap; the beacons are exempt');
+    assert.equal(unresolvedFindings(report), 1);
+  });
 });
 
 describe('fsck — committed corpus fixture', () => {

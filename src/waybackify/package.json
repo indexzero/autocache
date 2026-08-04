@@ -9,6 +9,7 @@
     ".": "./index.js",
     "./audit.js": "./audit.js",
     "./backfill.js": "./backfill.js",
+    "./beacons.js": "./beacons.js",
     "./bucket-batch.js": "./bucket-batch.js",
     "./cache.js": "./cache.js",
     "./fsck.js": "./fsck.js",

@@ -35,7 +35,9 @@
  *
  * Each rule: `host` (exact string, case-insensitive) or a `RegExp`, OR
  * `hostSuffix` (whole-domain beacon collector); with an optional `path` (exact
- * string or `RegExp`) required when the host also serves content.
+ * string or `RegExp`) required when the host also serves content. A rule with a
+ * `path` and NO host is HOST-AGNOSTIC — it matches that path on any host, for
+ * beacons like `/generate_204` that fire from a fleet of hosts.
  * @type {Array<{host?: string|RegExp, hostSuffix?: string, path?: string|RegExp}>}
  */
 const TRACKING_BEACONS = [
@@ -69,7 +71,28 @@ const TRACKING_BEACONS = [
   { host: 'pixel.advertising.com' },
   // Microsoft `c.gif` tracking pixel — microsoft.com serves real content, so
   // scope to the `c1.` beacon host AND the `c.gif` path (`c1.microsoft.com//c.gif?DI=…`).
-  { host: 'c1.microsoft.com', path: /^\/+c\.gif$/ }
+  { host: 'c1.microsoft.com', path: /^\/+c\.gif$/ },
+  // Google connectivity/latency beacons: `generate_204` / `gen_204` return HTTP
+  // 204 with no content, fired from MANY hosts (googlevideo, ytimg, googleapis,
+  // maps, youtube-nocookie, lscache). googlevideo/ytimg are deliberately treated
+  // as CONTENT, so match the beacon PATH host-agnostically (a path-only rule);
+  // anchored at the path end so it also catches `/maps/gen_204`.
+  { path: /(?:^|\/)(?:generate_204|gen_204)$/ },
+  // YouTube in-video annotation beacon — youtube.com serves content, so scope it.
+  { host: /^(?:www\.)?youtube\.com$/, path: /^\/annotations_invideo$/ },
+  // comScore ScorecardResearch.
+  { hostSuffix: '.scorecardresearch.com' },
+  // AOL Tacoda ad-targeting beacon.
+  { host: 'tacoda.at.atwola.com' },
+  // TripleLift ad exchange.
+  { hostSuffix: '.3lift.com' },
+  // Domdex ad pixel.
+  { hostSuffix: '.domdex.com' },
+  // LinkedIn Bizographics B2B tracking.
+  { hostSuffix: '.bizographics.com' },
+  // Umami analytics — umami.dev also hosts the product site, so scope to the
+  // api-gateway host + the `/api/send` collection path.
+  { host: 'api-gateway.umami.dev', path: /^\/api\/send$/ }
 ];
 
 /** Does `host` satisfy a beacon rule's host constraint? */
@@ -78,7 +101,9 @@ function beaconHostMatches(host, rule) {
     return host === rule.hostSuffix.replace(/^\./, '') || host.endsWith(rule.hostSuffix);
   }
   if (rule.host instanceof RegExp) return rule.host.test(host);
-  return host === rule.host;
+  if (rule.host !== undefined) return host === rule.host;
+  return true; // no host constraint → a PATH-ONLY rule (matches any host); its
+  //             `path` MUST be set, or it would match everything.
 }
 
 /** Does `path` satisfy a beacon rule's (optional) path constraint? */
@@ -133,7 +158,10 @@ export function isFetchableResource(originalUrl) {
   if (typeof originalUrl !== 'string' || originalUrl === '') return false;
   if (UNFETCHABLE_SCHEME.test(originalUrl)) return false;
   if (/data:[a-z]+\/[a-z0-9.+-]/i.test(originalUrl)) return false; // data:<mime>/ mis-resolved mid-URL
-  if (/^https?:\/\/javascript(?:[:/]|$)/i.test(originalUrl)) return false; // `http://javascript/`
+  // A schemeless keyword resolved to a bare, DOTLESS host is a mis-resolved
+  // relative URL, never a real archived resource (`http://javascript/`,
+  // `https://img/favicon.ico`). Every real archived host has a dotted domain.
+  if (/^https?:\/\/[^./:@]+(?:[/:?#]|$)/i.test(originalUrl)) return false;
   return true;
 }
 

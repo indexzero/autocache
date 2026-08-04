@@ -14,6 +14,28 @@ test('the tracker denylist covers the added hosts (and mob.adnxs via the suffix)
   assert.ok(isTrackingBeacon('http://mob.adnxs.com/seg?t=2'), 'mob.adnxs matches the .adnxs.com suffix');
 });
 
+test('generate_204 / gen_204 connectivity beacons are dropped host-agnostically', () => {
+  assert.ok(isTrackingBeacon('https://r5---sn-t0a7ln7d.googlevideo.com/generate_204'), 'googlevideo generate_204');
+  assert.ok(isTrackingBeacon('https://i.ytimg.com/generate_204'), 'ytimg generate_204');
+  assert.ok(isTrackingBeacon('https://www.googleapis.com/generate_204'), 'googleapis generate_204');
+  assert.ok(isTrackingBeacon('http://maps.googleapis.com/maps/gen_204?ev=api_viewport'), 'nested /maps/gen_204');
+  assert.ok(isTrackingBeacon('https://www.youtube-nocookie.com/gen_204?attributionpartner=x'), 'youtube-nocookie gen_204');
+  assert.ok(isTrackingBeacon('https://www.youtube.com/annotations_invideo'), 'youtube annotation beacon');
+  // real video/image CONTENT on the same hosts is NOT a beacon
+  assert.equal(isTrackingBeacon('http://r13.googlevideo.com/videoplayback?id=abc'), false, 'videoplayback is content');
+  assert.equal(isTrackingBeacon('https://i.ytimg.com/vi/abc/hqdefault.jpg'), false, 'a thumbnail is content');
+});
+
+test('the added ad / analytics hosts are dropped (product sites are not)', () => {
+  assert.ok(isTrackingBeacon('http://b.scorecardresearch.com/b?c1=2&c2=6035486'), 'comScore');
+  assert.ok(isTrackingBeacon('http://tacoda.at.atwola.com/atx/cc?apid=x'), 'AOL Tacoda');
+  assert.ok(isTrackingBeacon('http://ib.3lift.com/ttj'), 'TripleLift');
+  assert.ok(isTrackingBeacon('http://domdex.com/con?image=true'), 'Domdex');
+  assert.ok(isTrackingBeacon('https://www.bizographics.com/collect/?pid=3520&fmt=gif'), 'Bizographics');
+  assert.ok(isTrackingBeacon('https://api-gateway.umami.dev/api/send'), 'Umami api/send');
+  assert.equal(isTrackingBeacon('https://umami.dev/docs'), false, 'the umami product site is not a beacon');
+});
+
 test('the denylist stays CONSERVATIVE — nearby real content is NOT a beacon', () => {
   assert.equal(isTrackingBeacon('https://www.microsoft.com/en-us/'), false, 'microsoft.com content');
   assert.equal(isTrackingBeacon('https://c1.microsoft.com/download/setup.exe'), false, 'c1 host, non-c.gif path');
@@ -29,6 +51,9 @@ test('isFetchableResource rejects inline / pseudo / malformed URLs', () => {
   );
   assert.equal(isFetchableResource('javascript:parent.adsIframeHtml()'), false, 'javascript: handler');
   assert.equal(isFetchableResource('http://javascript/'), false, 'javascript resolved to a bare host');
+  assert.equal(isFetchableResource('https://img/favicon.ico'), false, 'a bare dotless host');
+  assert.equal(isFetchableResource('http://intranet/x.png'), false, 'any dotless host is mis-resolved');
+  assert.ok(isFetchableResource('http://a.b/c'), 'a dotted host is a real resource');
   assert.equal(isFetchableResource('data:image/png;base64,AAAA'), false, 'a bare data: URI');
   assert.equal(isFetchableResource('mailto:x@y.com'), false, 'mailto:');
   assert.equal(isFetchableResource(''), false, 'empty');

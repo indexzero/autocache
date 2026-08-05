@@ -437,6 +437,24 @@ export function validateSplit(split: SplitOptions): string | null {
   return null;
 }
 
+/** Short month names for {@link shortDate}. */
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * Format a wayback timestamp (`YYYYMMDDHHMMSS`, or any `YYYYMMDD…` prefix) as a
+ * short human date — `20090226220257` → `Feb 26 2009`. Falls back to the raw
+ * timestamp if it lacks a full, in-range `YYYYMMDD` prefix (the shell shows
+ * SOMETHING rather than a blank). Pure digits/month-names out, so it needs no
+ * escaping — the caller still escapes it, no exceptions.
+ */
+function shortDate(ts: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})/.exec(ts);
+  if (!m) return ts;
+  const month = MONTHS_SHORT[Number(m[2]) - 1];
+  if (!month) return ts;
+  return `${month} ${Number(m[3])} ${m[1]}`;
+}
+
 /**
  * Render the chrome shell for a capture request: the attribution chrome (#320
  * now owns ALL visible attribution — the capture link, provenance, and the
@@ -454,6 +472,7 @@ function renderChromeShell(args: {
   const src = escapeHtml(args.iframeSrc);
   const original = escapeHtml(args.originalUrl);
   const ts = escapeHtml(args.timestamp);
+  const date = escapeHtml(shortDate(args.timestamp));
   const archive = escapeHtml(args.canonicalArchiveUrl);
   // The chrome shell is always served on the chrome host; escape it too (the
   // caller passes the configured chromeHost, but every host interpolated into
@@ -468,17 +487,17 @@ function renderChromeShell(args: {
 <title>${original} · ${chromeHost} · web.archive.org mirror</title>
 <style>
   html, body { margin: 0; height: 100%; }
-  body { display: flex; flex-direction: column; font: 14px/1.5 system-ui, sans-serif; color: #222; }
-  header { padding: 0.5rem 1rem; border-bottom: 1px solid #ddd; background: #fafafa; }
-  header a { color: #06c; }
-  .muted { color: #666; }
+  body { display: flex; flex-direction: column; font: 14px/1.5 system-ui, sans-serif; }
+  header { padding: 0.5rem 1rem; text-align: center; background: #333; color: #fff; }
+  header a { color: #8ab4f8; }
   iframe { flex: 1 1 auto; width: 100%; border: 0; }
 </style>
 </head>
 <body>
 <header>
-  <span>Archived mirror of <a href="${archive}" rel="noreferrer">${original}</a></span>
-  <span class="muted"> — captured ${ts}. The <a href="https://web.archive.org/" rel="noreferrer">Internet Archive</a> did the work; consider <a href="https://archive.org/donate/" rel="noreferrer">donating</a>.</span>
+  Archived mirror of <a href="${archive}" rel="noreferrer">${original}</a> (web.archive.org)
+  captured on ${date} by <a href="https://web.archive.org/" rel="noreferrer">The Internet Archive</a>.
+  <a href="https://archive.org/donate/" rel="noreferrer">Donate</a> to keep knowledge free.
 </header>
 <iframe src="${src}" title="${title}" sandbox="${IFRAME_SANDBOX}" referrerpolicy="no-referrer"></iframe>
 </body>

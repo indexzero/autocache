@@ -155,6 +155,19 @@ describe('chrome/content split (#320)', () => {
       assert.ok(body.includes(`src="https://${CONTENT}${PATH}"`));
     });
 
+    it('the attribution header names the original, a SHORT capture date, and the archive + donate links', async () => {
+      const app = createApp(new ThrowingStore(), { split: SPLIT });
+      const body = await (await app.request(chromeUrl())).text();
+      // The original URL links to its canonical archive capture.
+      assert.ok(body.includes(`Archived mirror of <a href="https://web.archive.org/web/${TS}/${ORIGINAL}" rel="noreferrer">${ORIGINAL}</a> (web.archive.org)`));
+      // The wayback timestamp is rendered human-short, not the raw 14 digits.
+      assert.ok(body.includes('captured on Apr 3 2014 by'), 'short date "Apr 3 2014", not the raw timestamp');
+      assert.ok(!body.includes(`captured on ${TS}`), 'the raw timestamp is NOT shown');
+      // Both named links: the archive credit and the donation ask.
+      assert.ok(body.includes('<a href="https://web.archive.org/" rel="noreferrer">The Internet Archive</a>'));
+      assert.ok(body.includes('<a href="https://archive.org/donate/" rel="noreferrer">Donate</a> to keep knowledge free.'));
+    });
+
     it('carries a locked-down chrome CSP: frames only the content origin, no scripts, unframeable', async () => {
       const app = createApp(new ThrowingStore(), { split: SPLIT });
       const res = await app.request(chromeUrl());

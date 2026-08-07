@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { captureKey, parseArchiveUrl, parseWaybackPath } from '../src/path.ts';
+import { captureKey, decodeCapturePath, formatCapturePath, parseArchiveUrl, parseWaybackPath } from '../src/path.ts';
 
 describe('parseWaybackPath', () => {
   it('parses a canonical capture path', () => {
@@ -166,5 +166,52 @@ describe('parseArchiveUrl', () => {
 describe('captureKey', () => {
   it('is the `${timestamp}/${originalUrl}` storage contract', () => {
     assert.equal(captureKey('20140403040000', 'http://example.com/'), '20140403040000/http://example.com/');
+  });
+});
+
+describe('formatCapturePath / decodeCapturePath — the href round-trip pair', () => {
+  it('is the identity for a wire-safe key (todays reachable paths keep working byte-for-byte)', () => {
+    const key = '20091121071757/http://www.microsoft.com:80/downloads/details.aspx?displaylang=en&FamilyID=3db8';
+    assert.equal(formatCapturePath(key), `/${key}`);
+    assert.equal(decodeCapturePath(`/${key}`), `/${key}`);
+  });
+
+  it('percent-encodes exactly the bytes a request line cannot carry raw, and decodes them back', () => {
+    const key = '20140101000000/http://example.com/a b/<i>"q"</i>\\x^y`z{w}#f';
+    const href = formatCapturePath(key);
+    assert.ok(!/[ "<>\\^`{}#]/.test(href), 'no WHATWG-mangled byte survives raw in the href');
+    assert.equal(decodeCapturePath(href), `/${key}`);
+  });
+
+  it('the encoding is a WHATWG fixed point — a browser transmits the href byte-identically', () => {
+    const keys = [
+      '20140403040000/http://x.com/a?b=c#f',
+      '20140101000000/http://example.com/café/日本',
+      "20140101000000/http://example.com/a?q='hi' &x=<1>",
+      '20140101000000/http://example.com/100%/a%20b'
+    ];
+    for (const key of keys) {
+      const href = formatCapturePath(key);
+      const url = new URL(`http://h${href}`);
+      assert.equal(url.pathname + url.search, href, `fixed point for ${key}`);
+      assert.equal(decodeCapturePath(url.pathname + url.search), `/${key}`, `decodes to the byte-exact key for ${key}`);
+    }
+  });
+
+  it('escapes % itself, so a key holding a literal percent-sequence never decodes to a different key', () => {
+    const key = '20140101000000/http://example.com/a%20b';
+    assert.equal(formatCapturePath(key), '/20140101000000/http://example.com/a%2520b');
+    assert.equal(decodeCapturePath('/20140101000000/http://example.com/a%2520b'), `/${key}`);
+    // The UNDOUBLED form is a different request — it decodes to the space
+    // key, never back to the literal-%20 key (raw-first serving handles the
+    // precedence between the two).
+    assert.equal(decodeCapturePath(`/${key}`), '/20140101000000/http://example.com/a b');
+  });
+
+  it('never invents path structure: %2F stays literal, malformed escapes pass through', () => {
+    assert.equal(decodeCapturePath('/2014/http://x.com/a%2Fb'), '/2014/http://x.com/a%2Fb');
+    assert.equal(decodeCapturePath('/2014/http://x.com/100%'), '/2014/http://x.com/100%');
+    assert.equal(decodeCapturePath('/2014/http://x.com/a%2'), '/2014/http://x.com/a%2');
+    assert.equal(decodeCapturePath('/2014/http://x.com/a%zz'), '/2014/http://x.com/a%zz');
   });
 });

@@ -39,6 +39,7 @@
 import { serve, type ServerType } from '@hono/node-server';
 import { parseArgs } from 'node:util';
 import { createApp, edgeConsoleLogger, validateSplit, type EdgeLogger, type ServedCopy, type SplitOptions } from './app.ts';
+import { loadCorpusKeySet } from './corpus.ts';
 import { FsStore } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import type { SigV4Credentials } from './sigv4.ts';
@@ -81,6 +82,13 @@ export interface ServeOptions {
    * dev entry supplies the site COPY); not wired to a CLI flag.
    */
   copy?: ServedCopy;
+  /**
+   * Local-only cache index (the full capture key-set from loadCorpusKeySet) —
+   * enables `GET /_index`, the browsable cache search page. FsStore/--root
+   * only: the CLI builds it under `--index`; serveBucket has no analogue
+   * (bucket enumeration needs a paginated LIST — out of scope).
+   */
+  indexKeys?: Set<string>;
   /**
    * Diagnostic sink (design §9), threaded into the app. The `waybackify serve`
    * CLI (`main`) injects the observable `console`-shim by default; programmatic
@@ -145,8 +153,8 @@ function listen(app: ReturnType<typeof createApp>, port: number, hostname: strin
  * server is listening, with the actual bound address.
  */
 export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
-  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy, logger } = options;
-  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy, logger }), port, hostname);
+  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy, indexKeys, logger } = options;
+  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy, indexKeys, logger }), port, hostname);
 }
 
 /**
@@ -161,12 +169,14 @@ export function serveBucket(options: ServeBucketOptions): Promise<RunningServer>
 }
 
 const USAGE = [
-  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback] [--split | --chrome-host H --content-host H [--split-scheme S]]',
+  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback] [--index] [--split | --chrome-host H --content-host H [--split-scheme S]]',
   '  --root   <dir>   serve a local waybackify cache-root (FsStore)',
   '  --bucket <name>  serve a remote S3-compatible bucket (S3Store); --endpoint required,',
   '                   credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env',
   '  --live-fallback  answer a corpus miss with a 302 to live web.archive.org instead of a',
   '                   local 404 (off by default — strict serving never leaves this server)',
+  '  --index          serve a local /_index cache search page (--root only; bucket mode',
+  '                   cannot enumerate)',
   '  --split          enable the #320 chrome/content split with the placeholder hostnames',
   '                   (chrome wayback.example.com, content content.example.net)',
   '  --chrome-host H  chrome-origin host for the split (attribution UI + iframe shell; no bytes)',
@@ -257,6 +267,7 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
         port: { type: 'string' },
         host: { type: 'string' },
         'live-fallback': { type: 'boolean' },
+        index: { type: 'boolean' },
         split: { type: 'boolean' },
         'chrome-host': { type: 'string' },
         'content-host': { type: 'string' },
@@ -290,11 +301,21 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
     fail('one of --root or --bucket is required');
     return;
   }
+  // `--index` is consumed only by the --root branch (FsStore can enumerate a
+  // cache-root; a bucket cannot without a paginated LIST, out of scope). A
+  // flag that silently does nothing is a lie — fail loud instead.
+  if (bucket && values.index) {
+    fail('--index is only valid with --root (bucket mode cannot enumerate)');
+    return;
+  }
 
   if (root) {
     // The CLI is a runtime ENTRY: inject the observable console-shim (§9), so
     // `waybackify serve` surfaces misses/bodiless captures on stderr by default.
-    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy, logger: edgeConsoleLogger() });
+    // `--index` enumerates the cache-root ONCE at boot (loadCorpusKeySet) and
+    // enables the local-only /_index search page — FsStore/--root only.
+    const indexKeys = values.index ? await loadCorpusKeySet(root) : undefined;
+    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy, indexKeys, logger: edgeConsoleLogger() });
     console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
     return;
   }

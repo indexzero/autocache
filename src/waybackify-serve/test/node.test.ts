@@ -66,6 +66,14 @@ describe('main — mode dispatch & validation', () => {
     assert.match(errors.join('\n'), /one of --root or --bucket is required/);
   });
 
+  it('rejects --bucket --index (the index is --root only — bucket mode cannot enumerate)', async () => {
+    // Without the guard, --index would be silently ignored: only the --root
+    // branch consumes it, so a bucket invocation would boot with /_index off.
+    await main(['--bucket', BUCKET, '--endpoint', 'http://e', '--index']);
+    assert.equal(process.exitCode, 2);
+    assert.match(errors.join('\n'), /--index is only valid with --root/);
+  });
+
   it('rejects --bucket without --endpoint', async () => {
     await main(['--bucket', BUCKET]);
     assert.equal(process.exitCode, 2);

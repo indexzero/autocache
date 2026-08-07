@@ -43,7 +43,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { classifyContentType, rewrite } from '@charlie.dev/waybackify/rewrite.js';
 import { stripWaybackChrome } from './html.ts';
-import { parseWaybackPath } from './path.ts';
+import { decodeCapturePath, formatCapturePath, parseWaybackPath } from './path.ts';
 import type { Store } from './store.ts';
 
 /** The two header names the standalone CSP can ride, per `cspMode`. */
@@ -227,6 +227,57 @@ answer a local 404 — the mirror serves what it holds and nothing else.</p>
 }
 
 /**
+ * The local-only cache index/search page (`GET /_index`). Server-rendered,
+ * zero client script (CSP-safe by construction): a plain GET form filters the
+ * key list server-side. `q` is attacker-controlled (a query param) and every
+ * key is arbitrary archived-URL text — both go through escapeHtml, no
+ * exceptions. Styled to match {@link indexHtml}.
+ */
+function indexSearchHtml(mirrorHost: string, q: string, shown: string[], total: number): string {
+  const h = escapeHtml(mirrorHost);
+  // Each link must ROUND-TRIP: clicking it has to land on the byte-exact
+  // capture key. escapeHtml alone is XSS-safe but not URL-safe — a raw `#`
+  // would become a fragment (dropped client-side) and the WHATWG parser
+  // would re-encode spaces/`<`/quotes/Unicode, so the `*` route's parse
+  // (which does NOT percent-decode) would see a different key. So the href
+  // is built by formatCapturePath (src/path.ts) — the parser's inverse,
+  // whose output the browser transmits byte-identically and whose escape
+  // set the `*` route's decode-fallback maps back to the exact key — and
+  // THEN HTML-escaped for the attribute context.
+  const items = shown
+    .map(key => `<li><a href="${escapeHtml(formatCapturePath(key))}">${escapeHtml(key)}</a></li>`)
+    .join('\n');
+  const refine = total > shown.length ? ' — refine to narrow' : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache index · ${h} · web.archive.org mirror</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
+  code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
+  ul { padding-left: 1.2rem; }
+  li { overflow-wrap: anywhere; }
+  .muted { color: #666; }
+</style>
+</head>
+<body>
+<h1>Cache index · ${h}</h1>
+<form method="get" action="/_index">
+  <input type="search" name="q" value="${escapeHtml(q)}" placeholder="filter capture keys">
+  <button type="submit">Search</button>
+</form>
+<p class="muted">showing ${shown.length} of ${total}${refine}</p>
+<ul>
+${items}
+</ul>
+</body>
+</html>
+`;
+}
+
+/**
  * The chrome/content split (#320). One deployed app, two hostnames routed by
  * the Host header: the CHROME host serves attribution UI + a sandboxed iframe
  * shell and NEVER serves capture bytes; the CONTENT host — a declared
@@ -308,6 +359,12 @@ export interface AppOptions {
    */
   copy?: ServedCopy;
   /**
+   * Local-only cache index (the full capture key-set from loadCorpusKeySet).
+   * Set ONLY by the Node --root entry; edge entries can't enumerate and must
+   * never set it. When present, `GET /_index` serves a search page.
+   */
+  indexKeys?: Set<string>;
+  /**
    * Diagnostic sink for the serving path (design §9), same injection pattern as
    * `localize`/`cspMode`. The runtime entry supplies it: a `console`-shim by
    * default (observable for free — `wrangler tail` / `fastly log-tail`), or the
@@ -347,6 +404,26 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * Make a request-derived string safe to emit as an HTTP header value. Header
+ * values are ByteStrings (no NUL/CR/LF; nothing beyond latin1 — a raw U+65E5
+ * makes Headers.set THROW, a 500 instead of a capture). Unreachable before
+ * the decode-fallback (a wire-derived URL is ASCII), but a fallback hit's
+ * identity can carry Unicode/control bytes from the byte-exact key. Values
+ * that are already visible-ASCII — every value emitted today — pass through
+ * UNTOUCHED (no re-encoding of existing `%XX`, no behavior change); anything
+ * else gets its offending bytes percent-encoded (UTF-8), printable ASCII
+ * kept verbatim.
+ */
+function headerSafe(value: string): string {
+  if (/^[\x20-\x7e]*$/.test(value)) return value;
+  let out = '';
+  for (const b of new TextEncoder().encode(value)) {
+    out += b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, '0')}`;
+  }
+  return out;
 }
 
 /**
@@ -534,6 +611,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // contract (TRUSTED site config carrying <a> links) — see ServedCopy.
   const indexAbout = options.copy?.index ?? DEFAULT_INDEX_ABOUT;
   const notFoundAbout = options.copy?.notFound ?? DEFAULT_NOT_FOUND_ABOUT;
+  const indexKeys = options.indexKeys;
   const log = options.logger ?? NOOP_EDGE_LOGGER;
   const app = new Hono();
 
@@ -632,7 +710,10 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   const liveOr404 = (c: Context, archiveUrl: string, documentCsp: string, mode: CspMode): Response => {
     if (liveFallback) {
       c.header('Cache-Control', NO_STORE);
-      return c.redirect(archiveUrl, 302);
+      // headerSafe: Location is a header too — a decode-fallback identity can
+      // carry bytes a ByteString cannot (see headerSafe); ASCII values (every
+      // pre-fallback redirect) pass through byte-identical.
+      return c.redirect(headerSafe(archiveUrl), 302);
     }
     return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, mode);
   };
@@ -648,7 +729,14 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // mode keeps the pre-#320 posture EXACTLY — the standalone CSP on `text/html`
   // only, so the #292 deployment is byte-identical. This is the ONLY code that
   // reaches the store or emits capture bytes.
-  const serveContent = async (c: Context, parsed: NonNullable<ReturnType<typeof parseWaybackPath>>, documentCsp: string, stampAll: boolean): Promise<Response> => {
+  // `alt` is the DECODE-FALLBACK candidate (see the `*` route): the same
+  // request re-parsed with formatCapturePath's escape set decoded. Tried ONLY
+  // when the raw key misses, so every request that resolves today resolves to
+  // the same capture tomorrow — the fallback turns misses into hits, never a
+  // hit into a different hit. (Corner: if a corpus holds BOTH byte-variants of
+  // one URL — `…/a b` AND `…/a%20b` — the raw key wins and shadows the
+  // decoded one; raw-first is the order that cannot regress existing links.)
+  const serveContent = async (c: Context, rawParsed: NonNullable<ReturnType<typeof parseWaybackPath>>, documentCsp: string, stampAll: boolean, alt: ReturnType<typeof parseWaybackPath> = null): Promise<Response> => {
     // The content-host security policy (`contentDocumentCsp` — the egress-lock
     // + `frame-ancestors`) is a hostile-content boundary, so it is ALWAYS
     // emitted as enforced `Content-Security-Policy`, exactly like the chrome
@@ -658,9 +746,20 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     // split/content mode, so it discriminates the boundary policy from the
     // plain one.
     const documentCspMode: CspMode = stampAll ? 'enforce' : cspMode;
-    const capture = c.req.method === 'HEAD'
-      ? await store.head(parsed.key)
-      : await store.get(parsed.key);
+    const lookup = (key: string) => c.req.method === 'HEAD' ? store.head(key) : store.get(key);
+    // Raw key first — today's behavior, byte-for-byte. Only a raw MISS
+    // consults the decoded candidate; when that hits, `parsed` becomes the
+    // decoded identity so every downstream field (key, archiveUrl,
+    // X-Wayback-Source) names the capture actually served.
+    let parsed = rawParsed;
+    let capture = await lookup(parsed.key);
+    if (capture === null && alt !== null) {
+      const altCapture = await lookup(alt.key);
+      if (altCapture !== null) {
+        parsed = alt;
+        capture = altCapture;
+      }
+    }
     // MISS → strict local 404 (or the opt-in live fallback). Notable at the
     // edge: it names a capture the mirror could not serve (§9).
     if (capture === null) {
@@ -704,7 +803,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     c.header('Cache-Control', HIT_CACHE_CONTROL);
     // Provenance header on every hit — where this body actually came from.
     // Invisible to the page; visible attribution is #320's chrome.
-    c.header('X-Wayback-Source', parsed.canonicalArchiveUrl);
+    c.header('X-Wayback-Source', headerSafe(parsed.canonicalArchiveUrl));
 
     // The document CSP — the browser enforces same-origin fetches on references
     // no rewriter caught, and (under the split) `frame-ancestors` so only the
@@ -836,6 +935,51 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     return c.html(indexHtml(mirrorHost, indexAbout));
   });
 
+  // The local-only cache index/search page. INERT unless `indexKeys` was
+  // supplied — only the Node --root entry can enumerate a cache-root, so the
+  // edge entries never set it and `/_index` there answers the same styled 404
+  // any non-capture path gets (the null-parse shape below). Server-side
+  // filtering, zero client script: the page renders under the same document
+  // CSP as the rest of the mirror. `no-store` — the cache changes between
+  // runs and the listing is an operator tool, not content.
+  app.on(['GET', 'HEAD'], '/_index', c => {
+    const url = new URL(c.req.url);
+    const role = roleOf(url);
+    if (!indexKeys) {
+      // Edge safety: without the option, /_index does not exist. Mirror the
+      // catch-all's null-parse 404 exactly, per-role.
+      if (role === 'chrome') {
+        c.header('Cache-Control', NO_STORE);
+        c.header('Content-Security-Policy', chromeCspValue);
+        return c.html(notFoundHtml(mirrorHostOf(c), notFoundAbout), 404);
+      }
+      return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content' ? 'enforce' : cspMode);
+    }
+    // The content origin (#320) hosts nothing of ours, EVER — the listing on
+    // the sacrificial origin would leak the whole corpus map into the zone
+    // hostile captures run in. A content-host /_index is a content 404 under
+    // the always-enforced boundary CSP, exactly like `/` there.
+    if (role === 'content') return notFound(c, mirrorHostOf(c), notFoundAbout, contentDocumentCsp, 'enforce');
+    const q = url.searchParams.get('q') ?? '';
+    const all = [...indexKeys].sort();
+    const hits = q ? all.filter(k => k.toLowerCase().includes(q.toLowerCase())) : all;
+    const shown = hits.slice(0, 200);
+    c.header('Content-Type', 'text/html; charset=utf-8');
+    c.header('Cache-Control', NO_STORE);
+    if (role === 'chrome') {
+      // Our trusted UI on the chrome origin rides the LOCKED chrome CSP,
+      // always enforced (never cspMode-governed) — the page is server-rendered
+      // with zero <script>, so `script-src 'none'` holds, and `style-src
+      // 'self' 'unsafe-inline'` covers its inline <style>.
+      c.header('Content-Security-Policy', chromeCspValue);
+    } else {
+      // single-host: the plain document CSP under the configured posture.
+      setCsp(c, DOCUMENT_CSP, cspMode);
+    }
+    if (c.req.method === 'HEAD') return c.body(null);
+    return c.body(indexSearchHtml(mirrorHostOf(c), q, shown, hits.length));
+  });
+
   app.on(['GET', 'HEAD'], '*', async c => {
     // Parse pathname + search as one string: the original URL's own query
     // string is part of the capture identity (`?displaylang=en&...` style
@@ -843,7 +987,8 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     const url = new URL(c.req.url);
     const role = roleOf(url);
 
-    const parsed = parseWaybackPath(url.pathname + url.search);
+    const rawPath = url.pathname + url.search;
+    const parsed = parseWaybackPath(rawPath);
     if (parsed === null) {
       // A non-capture path. Its 404 must carry the CSP of the ORIGIN it lands
       // on: on the content host it may be rendered in-frame (archived pages
@@ -867,10 +1012,23 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     // chrome host, or anything unrecognized — gets the sandboxed iframe shell,
     // which never reaches the store, so a spoofed/unknown Host can never coax
     // bytes out of the chrome origin.
+    // The chrome shell is a pure host swap of this same URL — the content
+    // host does its own key resolution in-frame, so no fallback is needed here.
     if (role === 'chrome') return chromeShell(c, url, parsed);
+
+    // The decode-fallback candidate (the serve side of the /_index link
+    // round-trip): the SAME request string with formatCapturePath's escape
+    // set decoded, re-parsed by the SAME parser. A key holding bytes a
+    // request line cannot carry raw (`#`, space, `<`, quotes, Unicode, …) is
+    // only dialable via its formatCapturePath href; decoding that escape set
+    // — and ONLY that set — recovers the byte-exact key. `null` whenever the
+    // request carries nothing to decode (the common case: decodeCapturePath
+    // returns its input by identity), so the hot path pays nothing.
+    const decodedPath = decodeCapturePath(rawPath);
+    const alt = decodedPath === rawPath ? null : parseWaybackPath(decodedPath);
     // content mode stamps frame-ancestors on EVERY response; single-host keeps
     // the pre-#320 text/html-only posture.
-    return serveContent(c, parsed, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content');
+    return serveContent(c, parsed, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content', alt);
   });
 
   return app;

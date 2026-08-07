@@ -102,6 +102,108 @@ export function parseArchiveUrl(url: string): WaybackPath | null {
 }
 
 /**
+ * Is `byte` one a request line cannot carry raw — the escape set of
+ * {@link formatCapturePath} and the ONLY set {@link decodeCapturePath}
+ * decodes, so the pair is an exact inverse by construction.
+ *
+ * The membership is EMPIRICAL, not aesthetic: it is precisely the bytes the
+ * WHATWG URL parser refuses to keep byte-identical in `pathname + search`
+ * (which is what src/app.ts hands to parseWaybackPath — no percent-decoding).
+ * A raw `#` starts the fragment (dropped client-side, never transmitted); a
+ * raw `\` in a path is normalized to `/`; space, `"`, `<`, `>`, `` ` ``,
+ * `{`, `}`, `^` are percent-encoded in paths and `'` in (special-URL)
+ * queries; C0 controls, DEL, and every byte ≥ 0x80 (a non-ASCII character's
+ * UTF-8 bytes) are percent-encoded everywhere. `%` itself is in the set so
+ * the encoding is unambiguous — a key that already contains a literal
+ * percent-sequence (`…/a%20b`, common in archived URLs) formats to
+ * `…/a%2520b` and decodes back to itself, never to a different key.
+ *
+ * Deliberately NOT in the set: `/`, `:`, `?`, `&`, `=`, `|`, `[`, `]`, `@`,
+ * `~` and the other bytes the parser keeps raw — for a key made only of
+ * those, formatCapturePath is the IDENTITY, so today's reachable request
+ * paths keep working byte-for-byte.
+ */
+function hrefEscaped(byte: number): boolean {
+  if (byte <= 0x1f || byte >= 0x7f) return true; // C0 controls, DEL, non-ASCII
+  switch (byte) {
+    case 0x20: // space
+    case 0x22: // "
+    case 0x23: // #
+    case 0x25: // % (the escape character itself)
+    case 0x27: // '
+    case 0x3c: // <
+    case 0x3e: // >
+    case 0x5c: // \
+    case 0x5e: // ^
+    case 0x60: // `
+    case 0x7b: // {
+    case 0x7d: // }
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Format a capture key as the request path that dials it — the INVERSE of
+ * parseWaybackPath, for building links (the `/_index` cache page). Returns
+ * `/<key>` with exactly the {@link hrefEscaped} bytes percent-encoded
+ * (UTF-8), so the result is a FIXED POINT of WHATWG URL parsing: a browser
+ * navigating the href transmits `pathname + search` byte-identical to what
+ * we emitted, no re-encoding, no dropped fragment. The serving side
+ * (src/app.ts's `*` route) recovers the byte-exact key by trying the raw
+ * parse first and, on a store miss, the {@link decodeCapturePath}'d parse.
+ *
+ * For a key with no escaped bytes this is exactly `/${key}` — the identity.
+ */
+export function formatCapturePath(key: string): string {
+  const bytes = new TextEncoder().encode(key);
+  let out = '/';
+  for (const b of bytes) {
+    out += hrefEscaped(b)
+      ? `%${b.toString(16).toUpperCase().padStart(2, '0')}`
+      : String.fromCharCode(b);
+  }
+  return out;
+}
+
+/**
+ * Decode a request path (`url.pathname + url.search`) back to the string
+ * {@link formatCapturePath} encoded — decoding ONLY `%XX` sequences whose
+ * byte is in the {@link hrefEscaped} set, so the pair is an exact inverse.
+ * Everything else is untouched: `%2F` is NOT decoded (a `/` is never
+ * invented, so the path structure the parser saw cannot change), a lone or
+ * malformed `%` passes through literally, and a path with no `%` at all is
+ * returned unchanged (===), which is how the caller cheaply detects "nothing
+ * to decode".
+ */
+export function decodeCapturePath(raw: string): string {
+  if (!raw.includes('%')) return raw;
+  const enc = new TextEncoder();
+  const bytes: number[] = [];
+  for (let i = 0; i < raw.length; ) {
+    if (raw.charCodeAt(i) === 0x25 /* % */) {
+      // A truncated tail (`…%2`) yields a short slice the regex rejects.
+      const hex = raw.slice(i + 1, i + 3);
+      if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+        const b = parseInt(hex, 16);
+        if (hrefEscaped(b)) {
+          bytes.push(b);
+          i += 3;
+          continue;
+        }
+      }
+    }
+    // A literal character (surrogate-pair aware): its UTF-8 bytes, verbatim.
+    const cp = raw.codePointAt(i)!;
+    const ch = String.fromCodePoint(cp);
+    for (const b of enc.encode(ch)) bytes.push(b);
+    i += ch.length;
+  }
+  return new TextDecoder().decode(Uint8Array.from(bytes));
+}
+
+/**
  * Repair/normalize the embedded original URL, mirroring wayback's own
  * tolerance:
  *

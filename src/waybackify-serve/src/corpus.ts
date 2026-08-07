@@ -12,6 +12,15 @@
 import fsp from 'node:fs/promises';
 
 /**
+ * The sidecar `flag` values that mark a capture as a page REQUISITE — an
+ * image (`im_`), stylesheet (`cs_`), script (`js_`), or embedded media
+ * (`oe_`) fetched to complete a page, as opposed to a top-level document
+ * (whose sidecar carries an empty/absent flag). Established from the corpus;
+ * inlined here on purpose so this module stays dependency-free.
+ */
+const REQUISITE_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);
+
+/**
  * Build the set of capture keys a cache-root holds by reading every
  * `<root>/meta/<aa>/<hash>.json` sidecar and collecting its `.key`.
  *
@@ -57,4 +66,51 @@ export async function loadCorpusKeySet(root: string): Promise<Set<string>> {
     }
   }
   return keys;
+}
+
+/**
+ * Walk a cache-root's `meta/` sidecars once → the full capture-key CATALOG:
+ * every key the root holds (`keys`, exactly loadCorpusKeySet's set) plus the
+ * subset whose sidecar `flag` marks it a page requisite (`requisites` ⊆
+ * `keys`, per {@link REQUISITE_FLAGS}). The /_index search page stands on
+ * this to filter top-level documents from their requisites server-side.
+ *
+ * DEFENSIVE-BY-DESIGN for the same reason as loadCorpusKeySet (see its
+ * header): this is an optimization catalog, not an authority, so an
+ * unreadable/unparseable/keyless sidecar is skipped, never a boot abort.
+ */
+export async function loadCorpusCatalog(root: string): Promise<{ keys: Set<string>; requisites: Set<string> }> {
+  const keys = new Set<string>();
+  const requisites = new Set<string>();
+  const metaDir = `${root}/meta`;
+
+  let shards: string[];
+  try {
+    shards = await fsp.readdir(metaDir);
+  } catch {
+    // No meta/ dir at all (empty or not-yet-populated root): empty catalog.
+    return { keys, requisites };
+  }
+
+  for (const aa of shards) {
+    let files: string[];
+    try {
+      files = await fsp.readdir(`${metaDir}/${aa}`);
+    } catch {
+      continue; // a stray non-directory entry under meta/ — skip it
+    }
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const raw = await fsp.readFile(`${metaDir}/${aa}/${file}`, 'utf8');
+        const { key, flag } = JSON.parse(raw) as { key?: unknown; flag?: unknown };
+        if (typeof key !== 'string') continue;
+        keys.add(key);
+        if (typeof flag === 'string' && REQUISITE_FLAGS.has(flag)) requisites.add(key);
+      } catch {
+        // Unreadable or unparseable sidecar: skip it (see loadCorpusKeySet).
+      }
+    }
+  }
+  return { keys, requisites };
 }

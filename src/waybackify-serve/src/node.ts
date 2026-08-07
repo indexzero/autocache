@@ -17,7 +17,9 @@
  * (bin/serve.js is this package's own entry; render/wayback re-launches it
  * for local dev through bin/localdev.js over @charlie.dev/waybackify-serve/node.)
  *
- * The two modes are mutually exclusive; credentials for --bucket arrive from
+ * The two modes are mutually exclusive — except under `--index`, where
+ * `--bucket` (the serve store) and `--root` (the /_index catalog) combine;
+ * see main(). Credentials for --bucket arrive from
  * the standard AWS env vars (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, plus
  * an optional AWS_SESSION_TOKEN), never from flags — an operator's secret
  * belongs in the environment, not the process table.
@@ -39,7 +41,7 @@
 import { serve, type ServerType } from '@hono/node-server';
 import { parseArgs } from 'node:util';
 import { createApp, edgeConsoleLogger, validateSplit, type EdgeLogger, type ServedCopy, type SplitOptions } from './app.ts';
-import { loadCorpusKeySet } from './corpus.ts';
+import { loadCorpusCatalog } from './corpus.ts';
 import { FsStore } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import type { SigV4Credentials } from './sigv4.ts';
@@ -84,11 +86,16 @@ export interface ServeOptions {
   copy?: ServedCopy;
   /**
    * Local-only cache index (the full capture key-set from loadCorpusKeySet) —
-   * enables `GET /_index`, the browsable cache search page. FsStore/--root
-   * only: the CLI builds it under `--index`; serveBucket has no analogue
-   * (bucket enumeration needs a paginated LIST — out of scope).
+   * enables `GET /_index`, the browsable cache search page. The CLI builds it
+   * from the --root cache-root under `--index`; serveBucket takes the same
+   * option (a local-root CATALOG over a bucket serve store — see there).
    */
   indexKeys?: Set<string>;
+  /**
+   * The REQUISITE subset of `indexKeys` (loadCorpusCatalog's `requisites`) —
+   * drives /_index's "is requisite?" filter (top-level pages by default).
+   */
+  indexRequisites?: Set<string>;
   /**
    * Diagnostic sink (design §9), threaded into the app. The `waybackify serve`
    * CLI (`main`) injects the observable `console`-shim by default; programmatic
@@ -119,6 +126,21 @@ export interface ServeBucketOptions {
   split?: SplitOptions;
   /** Per-deployment served-page description copy (#453); generic defaults absent. */
   copy?: ServedCopy;
+  /**
+   * Capture key CATALOG for `GET /_index` (dev tooling) — a Set built from a
+   * LOCAL cache-root (loadCorpusKeySet), since a bucket cannot enumerate
+   * without a paginated LIST (out of scope). The /_index route is
+   * store-agnostic (it only iterates this set), so its same-origin result
+   * links resolve against THIS server → bucket GETs. Strict fs↔bucket parity
+   * is deliberately not checked: a catalog key the bucket lacks 404s, a
+   * useful drift signal. The CLI wires this under `--bucket --index --root`.
+   */
+  indexKeys?: Set<string>;
+  /**
+   * The REQUISITE subset of `indexKeys` (loadCorpusCatalog's `requisites`) —
+   * drives /_index's "is requisite?" filter (top-level pages by default).
+   */
+  indexRequisites?: Set<string>;
   /** Diagnostic sink (design §9); the CLI injects the console-shim by default. */
   logger?: EdgeLogger;
 }
@@ -153,8 +175,8 @@ function listen(app: ReturnType<typeof createApp>, port: number, hostname: strin
  * server is listening, with the actual bound address.
  */
 export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
-  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy, indexKeys, logger } = options;
-  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy, indexKeys, logger }), port, hostname);
+  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy, indexKeys, indexRequisites, logger } = options;
+  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy, indexKeys, indexRequisites, logger }), port, hostname);
 }
 
 /**
@@ -163,9 +185,9 @@ export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
  * server is listening, with the actual bound address.
  */
 export function serveBucket(options: ServeBucketOptions): Promise<RunningServer> {
-  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split, copy, logger } = options;
+  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split, copy, indexKeys, indexRequisites, logger } = options;
   const store = new S3Store({ endpoint, bucket, region, prefix, credentials });
-  return listen(createApp(store, { liveFallback, split, copy, logger }), port, hostname);
+  return listen(createApp(store, { liveFallback, split, copy, indexKeys, indexRequisites, logger }), port, hostname);
 }
 
 const USAGE = [
@@ -175,8 +197,9 @@ const USAGE = [
   '                   credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env',
   '  --live-fallback  answer a corpus miss with a 302 to live web.archive.org instead of a',
   '                   local 404 (off by default — strict serving never leaves this server)',
-  '  --index          serve a local /_index cache search page (--root only; bucket mode',
-  '                   cannot enumerate)',
+  '  --index          serve a local /_index cache search page, cataloged from the --root',
+  '                   cache-root; with --bucket, --root supplies the catalog while the',
+  '                   bucket serves the bytes (a bucket cannot enumerate itself)',
   '  --split          enable the #320 chrome/content split with the placeholder hostnames',
   '                   (chrome wayback.example.com, content content.example.net)',
   '  --chrome-host H  chrome-origin host for the split (attribution UI + iframe shell; no bytes)',
@@ -233,10 +256,15 @@ function resolveSplit(values: {
 }
 
 /**
- * CLI shim for bin/serve.js — two mutually exclusive modes:
+ * CLI shim for bin/serve.js — two modes:
  *   --root <cache-root>                     FsStore (local)
  *   --bucket <name> --endpoint <url> ...    S3Store (remote)
- * parseArgs is Node's own stable argv parser
+ * Mutually exclusive EXCEPT under `--index` (dev tooling): there `--bucket`
+ * is the serve store and `--root` is the /_index CATALOG — the same-origin
+ * result links resolve against this server, so clicking one GETs the bucket.
+ * Resolves to the RunningServer on a successful boot (programmatic callers
+ * and tests close it; bin/serve.js ignores it), or undefined on `--help` and
+ * on the fail() paths. parseArgs is Node's own stable argv parser
  * (https://nodejs.org/api/util.html#utilparseargsconfig) — no dependency
  * needed for a handful of flags.
  *
@@ -245,7 +273,7 @@ function resolveSplit(values: {
  * here so `pnpm dev` renders the same description production does; a bare
  * `waybackify-serve` invocation omits it and ships the generic defaults.
  */
-export async function main(argv: string[], defaults: { copy?: ServedCopy } = {}): Promise<void> {
+export async function main(argv: string[], defaults: { copy?: ServedCopy } = {}): Promise<RunningServer | undefined> {
   // `--help` / `-h` is a request, not a bad invocation: print the usage banner
   // and exit 0 (before parseArgs, which is strict and would reject the unknown
   // flag with exit 2). The exit-2 path stays reserved for genuine usage errors.
@@ -292,32 +320,36 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
     return;
   }
 
-  // Exactly one mode: --root or --bucket, never both, never neither.
-  if (root && bucket) {
-    fail('--root and --bucket are mutually exclusive — pick one mode');
+  // Exactly one SERVE store: --root or --bucket, never neither, and both
+  // only under --index — where the bucket serves and the root is merely the
+  // /_index catalog (a bucket cannot enumerate itself without a paginated
+  // LIST, out of scope; a local cache-root can, via loadCorpusKeySet).
+  if (root && bucket && !values.index) {
+    fail('--root and --bucket are mutually exclusive — pick one mode (or add --index to serve the bucket with --root as the /_index catalog)');
     return;
   }
   if (!root && !bucket) {
     fail('one of --root or --bucket is required');
     return;
   }
-  // `--index` is consumed only by the --root branch (FsStore can enumerate a
-  // cache-root; a bucket cannot without a paginated LIST, out of scope). A
-  // flag that silently does nothing is a lie — fail loud instead.
-  if (bucket && values.index) {
-    fail('--index is only valid with --root (bucket mode cannot enumerate)');
+  // `--index` in bucket mode NEEDS the local catalog — without --root the
+  // flag could only silently do nothing, and a flag that silently does
+  // nothing is a lie — fail loud instead.
+  if (bucket && values.index && !root) {
+    fail('--index in bucket mode needs --root <cache-root> as the /_index catalog');
     return;
   }
 
-  if (root) {
+  if (root && !bucket) {
     // The CLI is a runtime ENTRY: inject the observable console-shim (§9), so
     // `waybackify serve` surfaces misses/bodiless captures on stderr by default.
-    // `--index` enumerates the cache-root ONCE at boot (loadCorpusKeySet) and
-    // enables the local-only /_index search page — FsStore/--root only.
-    const indexKeys = values.index ? await loadCorpusKeySet(root) : undefined;
-    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy, indexKeys, logger: edgeConsoleLogger() });
+    // `--index` enumerates the cache-root ONCE at boot (loadCorpusCatalog) and
+    // enables the local-only /_index search page — FsStore/--root only. The
+    // catalog's requisite subset drives the page's "is requisite?" filter.
+    const catalog = values.index ? await loadCorpusCatalog(root) : undefined;
+    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy, indexKeys: catalog?.keys, indexRequisites: catalog?.requisites, logger: edgeConsoleLogger() });
     console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
-    return;
+    return running;
   }
 
   // --bucket mode: --endpoint is required, and credentials come from the
@@ -337,6 +369,13 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
     ? { accessKeyId, secretAccessKey, sessionToken }
     : { accessKeyId, secretAccessKey };
 
-  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split, copy: defaults.copy, logger: edgeConsoleLogger() });
-  console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
+  // `--bucket --index`: the /_index CATALOG is the --root cache-root (the
+  // guard above made sure it's present), enumerated ONCE at boot exactly as
+  // the --root leg does. Dev tooling — no fs↔bucket parity check on purpose:
+  // a catalog key the bucket lacks 404s from the bucket, a useful drift
+  // signal, never a boot failure.
+  const catalog = values.index ? await loadCorpusCatalog(root!) : undefined;
+  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split, copy: defaults.copy, indexKeys: catalog?.keys, indexRequisites: catalog?.requisites, logger: edgeConsoleLogger() });
+  console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}${catalog ? ` (/_index catalog: ${root})` : ''}`);
+  return running;
 }

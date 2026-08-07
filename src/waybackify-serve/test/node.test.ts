@@ -1,5 +1,6 @@
 /**
- * Node CLI entry (src/node.ts) — the two mutually exclusive serving modes:
+ * Node CLI entry (src/node.ts) — the two serving modes (mutually exclusive
+ * except under --index, where the bucket serves and --root is the catalog):
  *
  *   - main() ARG VALIDATION: both/neither mode, --bucket without --endpoint,
  *     and --bucket with the AWS credentials absent from the environment all
@@ -54,7 +55,9 @@ describe('main — mode dispatch & validation', () => {
     process.exitCode = undefined;
   });
 
-  it('rejects both --root and --bucket (mutually exclusive)', async () => {
+  it('rejects both --root and --bucket WITHOUT --index (still mutually exclusive)', async () => {
+    // Only `--index` licenses the combination (bucket serves, root catalogs);
+    // without it the modes stay exclusive, exactly as before.
     await main(['--root', '/some/root', '--bucket', BUCKET, '--endpoint', 'http://e']);
     assert.equal(process.exitCode, 2);
     assert.match(errors.join('\n'), /mutually exclusive/);
@@ -66,12 +69,13 @@ describe('main — mode dispatch & validation', () => {
     assert.match(errors.join('\n'), /one of --root or --bucket is required/);
   });
 
-  it('rejects --bucket --index (the index is --root only — bucket mode cannot enumerate)', async () => {
-    // Without the guard, --index would be silently ignored: only the --root
-    // branch consumes it, so a bucket invocation would boot with /_index off.
+  it('rejects --bucket --index without --root (the /_index catalog must come from a local cache-root)', async () => {
+    // A bucket cannot enumerate itself, so bucket-mode /_index NEEDS the
+    // local catalog; without --root the flag could only silently do nothing —
+    // fail loud with the pointer to what is missing instead.
     await main(['--bucket', BUCKET, '--endpoint', 'http://e', '--index']);
     assert.equal(process.exitCode, 2);
-    assert.match(errors.join('\n'), /--index is only valid with --root/);
+    assert.match(errors.join('\n'), /--index in bucket mode needs --root/);
   });
 
   it('rejects --bucket without --endpoint', async () => {
@@ -110,6 +114,75 @@ describe('main — mode dispatch & validation', () => {
     assert.equal(process.exitCode, undefined); // never set the failing code
     assert.equal(errors.length, 0); // no error banner
     assert.match(logs.join('\n'), /usage: waybackify-serve/);
+  });
+});
+
+describe('main — /_index wiring (--index, catalog from --root)', () => {
+  let errors: string[];
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    errors = [];
+    mock.method(console, 'error', (msg: unknown) => void errors.push(String(msg)));
+    savedEnv = {
+      AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+      AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY
+    };
+    process.env.AWS_ACCESS_KEY_ID = CREDENTIALS.accessKeyId;
+    process.env.AWS_SECRET_ACCESS_KEY = CREDENTIALS.secretAccessKey;
+  });
+  afterEach(() => {
+    mock.restoreAll();
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    process.exitCode = undefined;
+  });
+
+  it('--bucket --root --index: the bucket serves, the root catalogs — /_index links resolve to bucket GETs', async () => {
+    // The combined mode: main builds indexKeys from the --root cache-root
+    // (loadCorpusKeySet over its meta/ sidecars) and threads them through
+    // serveBucket into the app, while every byte-serving request still goes
+    // to the S3Store. main resolves with the RunningServer, so the test can
+    // exercise the booted process end-to-end and then close it.
+    const stub = await startS3Stub(await projectFixtureToBucket(FIXTURE_ROOT), BUCKET);
+    const running = await main(['--bucket', BUCKET, '--endpoint', stub.url, '--root', FIXTURE_ROOT, '--index']);
+    assert.ok(running, 'main boots (no validation failure) and resolves with the server');
+    try {
+      assert.equal(process.exitCode, undefined);
+
+      // /_index serves off the ROOT-built catalog: keys from the fixture's
+      // meta sidecars, linked same-origin.
+      const index = await fetch(`${running.url}/_index`);
+      assert.equal(index.status, 200);
+      const body = await index.text();
+      assert.ok(body.includes('href="/20140403040000/http://example.com/"'), 'a root-cataloged key is listed');
+      assert.ok(body.includes('href="/19981202230410/http://www.google.com/"'), 'the whole root catalog is walked, not one entry');
+
+      // Clicking a listed link lands on THIS server → the BUCKET answers it.
+      const doc = await fetch(`${running.url}/20140403040000/http://example.com/`);
+      assert.equal(doc.status, 200);
+      assert.match(await doc.text(), /Example Domain/);
+    } finally {
+      await new Promise(resolve => running!.server.close(resolve));
+      await stub.close();
+    }
+  });
+
+  it('--root --index alone still serves /_index off the local store (regression guard)', async () => {
+    const running = await main(['--root', FIXTURE_ROOT, '--index']);
+    assert.ok(running, 'the plain local mode boots exactly as before');
+    try {
+      assert.equal(process.exitCode, undefined);
+      const index = await fetch(`${running.url}/_index`);
+      assert.equal(index.status, 200);
+      assert.ok((await index.text()).includes('href="/20140403040000/http://example.com/"'));
+      const doc = await fetch(`${running.url}/20140403040000/http://example.com/`);
+      assert.equal(doc.status, 200);
+    } finally {
+      await new Promise(resolve => running!.server.close(resolve));
+    }
   });
 });
 

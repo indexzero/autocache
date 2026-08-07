@@ -67,6 +67,13 @@ export interface ServeOptions {
   /** Restore the miss→302-to-live fallback (`--live-fallback`); off by default. */
   liveFallback?: boolean;
   /**
+   * STOPGAP (`--relax-content-csp`); off by default (strict). Widens the
+   * content CSP (and the chrome shell's framing grants) with the archive
+   * origins so un-localized web.archive.org references load live — see
+   * AppOptions.relaxContentCsp for the exact directive contract.
+   */
+  relaxContentCsp?: boolean;
+  /**
    * Serve-time reference localization (design §D3) — the corpus key-set to
    * localize wayback references against (build it once with
    * loadCorpusKeySet(root), src/corpus.ts). Programmatic callers only (the
@@ -122,6 +129,8 @@ export interface ServeBucketOptions {
   hostname?: string;
   /** Restore the miss→302-to-live fallback (`--live-fallback`); off by default. */
   liveFallback?: boolean;
+  /** STOPGAP (`--relax-content-csp`); off by default — see ServeOptions.relaxContentCsp. */
+  relaxContentCsp?: boolean;
   /** The chrome/content split (#320); off by default (single-host serving). */
   split?: SplitOptions;
   /** Per-deployment served-page description copy (#453); generic defaults absent. */
@@ -175,8 +184,8 @@ function listen(app: ReturnType<typeof createApp>, port: number, hostname: strin
  * server is listening, with the actual bound address.
  */
 export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
-  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, localize, cspMode, split, copy, indexKeys, indexRequisites, logger } = options;
-  return listen(createApp(new FsStore(root), { liveFallback, localize, cspMode, split, copy, indexKeys, indexRequisites, logger }), port, hostname);
+  const { root, port = 0, hostname = '127.0.0.1', liveFallback = false, relaxContentCsp = false, localize, cspMode, split, copy, indexKeys, indexRequisites, logger } = options;
+  return listen(createApp(new FsStore(root), { liveFallback, relaxContentCsp, localize, cspMode, split, copy, indexKeys, indexRequisites, logger }), port, hostname);
 }
 
 /**
@@ -185,18 +194,22 @@ export function serveCacheRoot(options: ServeOptions): Promise<RunningServer> {
  * server is listening, with the actual bound address.
  */
 export function serveBucket(options: ServeBucketOptions): Promise<RunningServer> {
-  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, split, copy, indexKeys, indexRequisites, logger } = options;
+  const { endpoint, bucket, region = 'auto', prefix, credentials, port = 0, hostname = '127.0.0.1', liveFallback = false, relaxContentCsp = false, split, copy, indexKeys, indexRequisites, logger } = options;
   const store = new S3Store({ endpoint, bucket, region, prefix, credentials });
-  return listen(createApp(store, { liveFallback, split, copy, indexKeys, indexRequisites, logger }), port, hostname);
+  return listen(createApp(store, { liveFallback, relaxContentCsp, split, copy, indexKeys, indexRequisites, logger }), port, hostname);
 }
 
 const USAGE = [
-  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback] [--index] [--split | --chrome-host H --content-host H [--split-scheme S]]',
+  'usage: waybackify-serve (--root <cache-root> | --bucket <name> --endpoint <url> [--region <r>] [--prefix <p>]) [--port N] [--host H] [--live-fallback] [--relax-content-csp] [--index] [--split | --chrome-host H --content-host H [--split-scheme S]]',
   '  --root   <dir>   serve a local waybackify cache-root (FsStore)',
   '  --bucket <name>  serve a remote S3-compatible bucket (S3Store); --endpoint required,',
   '                   credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the env',
   '  --live-fallback  answer a corpus miss with a 302 to live web.archive.org instead of a',
   '                   local 404 (off by default — strict serving never leaves this server)',
+  '  --relax-content-csp',
+  '                   STOPGAP: widen the content CSP so un-localized web.archive.org',
+  '                   references load live from the archive instead of being blocked',
+  '                   (self-containment lost while on; off by default — strict CSP)',
   '  --index          serve a local /_index cache search page, cataloged from the --root',
   '                   cache-root; with --bucket, --root supplies the catalog while the',
   '                   bucket serves the bytes (a bucket cannot enumerate itself)',
@@ -295,6 +308,7 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
         port: { type: 'string' },
         host: { type: 'string' },
         'live-fallback': { type: 'boolean' },
+        'relax-content-csp': { type: 'boolean' },
         index: { type: 'boolean' },
         split: { type: 'boolean' },
         'chrome-host': { type: 'string' },
@@ -306,7 +320,7 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
     fail((error as Error).message);
     return;
   }
-  const { root, bucket, endpoint, region, prefix, port: portArg, host, 'live-fallback': liveFallback = false } = values;
+  const { root, bucket, endpoint, region, prefix, port: portArg, host, 'live-fallback': liveFallback = false, 'relax-content-csp': relaxContentCsp = false } = values;
 
   const port = portArg === undefined ? 0 : Number(portArg);
   if (Number.isNaN(port)) {
@@ -347,8 +361,8 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
     // enables the local-only /_index search page — FsStore/--root only. The
     // catalog's requisite subset drives the page's "is requisite?" filter.
     const catalog = values.index ? await loadCorpusCatalog(root) : undefined;
-    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, split, copy: defaults.copy, indexKeys: catalog?.keys, indexRequisites: catalog?.requisites, logger: edgeConsoleLogger() });
-    console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
+    const running = await serveCacheRoot({ root, port, hostname: host, liveFallback, relaxContentCsp, split, copy: defaults.copy, indexKeys: catalog?.keys, indexRequisites: catalog?.requisites, logger: edgeConsoleLogger() });
+    console.error(`wayback mirror: serving cache-root ${root} at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${relaxContentCsp ? ' (relax-content-csp on — STOPGAP, self-containment lost)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}`);
     return running;
   }
 
@@ -375,7 +389,7 @@ export async function main(argv: string[], defaults: { copy?: ServedCopy } = {})
   // a catalog key the bucket lacks 404s from the bucket, a useful drift
   // signal, never a boot failure.
   const catalog = values.index ? await loadCorpusCatalog(root!) : undefined;
-  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, split, copy: defaults.copy, indexKeys: catalog?.keys, indexRequisites: catalog?.requisites, logger: edgeConsoleLogger() });
-  console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}${catalog ? ` (/_index catalog: ${root})` : ''}`);
+  const running = await serveBucket({ endpoint, bucket: bucket!, region, prefix, credentials, port, hostname: host, liveFallback, relaxContentCsp, split, copy: defaults.copy, indexKeys: catalog?.keys, indexRequisites: catalog?.requisites, logger: edgeConsoleLogger() });
+  console.error(`wayback mirror: serving bucket ${bucket} (${endpoint}) at ${running.url}${liveFallback ? ' (live-fallback on)' : ''}${relaxContentCsp ? ' (relax-content-csp on — STOPGAP, self-containment lost)' : ''}${split ? ` (split: chrome ${split.chromeHost} / content ${split.contentHost})` : ''}${catalog ? ` (/_index catalog: ${root})` : ''}`);
   return running;
 }

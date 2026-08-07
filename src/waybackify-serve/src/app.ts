@@ -104,7 +104,7 @@ const NO_STORE = 'no-store';
  * inline event handlers (`onload="…"`), all of which the fixtures exercise.
  * `data:` on img-src covers inline-encoded images defensively.
  */
-const DOCUMENT_CSP = [
+const DOCUMENT_CSP_DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
@@ -118,7 +118,37 @@ const DOCUMENT_CSP = [
   // cross-origin `<form>` to exfiltrate data despite `connect-src 'self'`.
   // `'self'` keeps same-origin form fidelity; it mirrors the chrome lockdown.
   "form-action 'self'"
-].join('; ');
+];
+const DOCUMENT_CSP = DOCUMENT_CSP_DIRECTIVES.join('; ');
+
+/**
+ * The archive origins the opt-in `relaxContentCsp` STOPGAP admits into the
+ * content CSP (see {@link AppOptions.relaxContentCsp}): live web.archive.org
+ * replay plus archive.org itself (replay pages pull static assets from both).
+ */
+const ARCHIVE_CONTENT_ORIGINS = 'https://web.archive.org https://archive.org';
+
+/**
+ * The content directives the relaxation widens — resource-loading families
+ * only. Pointedly ABSENT: `default-src`, `form-action`, `base-uri`, and
+ * `frame-ancestors` — the relaxation widens directive VALUES on the fetch
+ * families, never the document's own posture or its framing/egress contract.
+ */
+const RELAXABLE_CONTENT_DIRECTIVES = new Set([
+  'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'frame-src'
+]);
+
+/**
+ * DOCUMENT_CSP with the archive origins appended to each relaxable directive —
+ * the STOPGAP posture. Built from the directive LIST (append per named
+ * directive), not by patching the finished policy string, so a directive
+ * reorder or addition cannot silently misplace an origin.
+ */
+function relaxedDocumentCsp(): string {
+  return DOCUMENT_CSP_DIRECTIVES
+    .map(d => (RELAXABLE_CONTENT_DIRECTIVES.has(d.slice(0, d.indexOf(' '))) ? `${d} ${ARCHIVE_CONTENT_ORIGINS}` : d))
+    .join('; ');
+}
 
 /**
  * The description paragraph each served page carries — the ONE fragment that
@@ -352,6 +382,20 @@ export interface AppOptions {
    */
   cspMode?: CspMode;
   /**
+   * STOPGAP (off by default — strict). When true, the CONTENT CSP's
+   * resource-loading directives (script/style/img/font/media/connect/frame)
+   * additionally allow `https://web.archive.org https://archive.org`, and the
+   * chrome shell's `frame-src`/`child-src` allow `https://web.archive.org` —
+   * so wayback references the localizer has not (yet) rewritten load LIVE from
+   * the archive instead of being blocked (self-containment is lost while it is
+   * on). The flag widens directive VALUES only: `default-src 'self'`,
+   * `form-action 'self'`, `base-uri`, every `frame-ancestors`, the chrome
+   * `script-src 'none'`/`object-src 'none'`, and the enforcement MODE (the
+   * boundary policies stay forced-`'enforce'`) are all untouched. Once
+   * localization covers the full reference graph this flag is a no-op.
+   */
+  relaxContentCsp?: boolean;
+  /**
    * The chrome/content split (#320). When set, serving is Host-keyed: the
    * chrome host gets the iframe shell (no store access), the content host gets
    * capture bytes + the `frame-ancestors` CSP. When absent, the app is
@@ -457,16 +501,24 @@ function headerSafe(value: string): string {
  * be embedded by anyone (the shell has no legitimate embedder — anti-
  * clickjacking); `base-uri 'none'` and `form-action 'self'` close the usual
  * escapes.
+ *
+ * `relax` is the {@link AppOptions.relaxContentCsp} STOPGAP: it widens ONLY
+ * the framing grants (`frame-src`/`child-src`) with `https://web.archive.org`,
+ * so an in-frame navigation to an un-localized archive URL renders instead of
+ * blanking the iframe. The lockdown itself — `script-src 'none'`,
+ * `object-src 'none'`, `frame-ancestors 'self'`, `base-uri 'none'`,
+ * `form-action 'self'` — is never touched, relax or not.
  */
-function chromeCsp(contentOrigin: string): string {
+function chromeCsp(contentOrigin: string, relax = false): string {
+  const frameTargets = relax ? `${contentOrigin} https://web.archive.org` : contentOrigin;
   return [
     "default-src 'self'",
     "script-src 'none'",
     "object-src 'none'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
-    `frame-src ${contentOrigin}`,
-    `child-src ${contentOrigin}`,
+    `frame-src ${frameTargets}`,
+    `child-src ${frameTargets}`,
     "frame-ancestors 'self'",
     "base-uri 'none'",
     "form-action 'self'"
@@ -646,6 +698,7 @@ function notFound(c: Context, mirrorHost: string, about: string, documentCsp: st
 export function createApp(store: Store, options: AppOptions = {}): Hono {
   const liveFallback = options.liveFallback ?? false;
   const cspMode = options.cspMode ?? 'enforce';
+  const relaxContentCsp = options.relaxContentCsp ?? false;
   const localize = options.localize;
   const split = options.split;
   // The per-deployment served-page description copy (#453): resolve each
@@ -713,14 +766,19 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   const contentAuthority = splitCfg ? canonHost(splitCfg.contentHost) : '';
   const chromeOrigin = hasSplit ? `${scheme}://${chromeAuthority}` : '';
   const contentOrigin = hasSplit ? `${scheme}://${contentAuthority}` : '';
+  // The document CSP this app stamps — the strict DOCUMENT_CSP, or its
+  // archive-widened STOPGAP variant under relaxContentCsp. The relaxation
+  // happens HERE, before the frame-ancestors merge below, so it can only ever
+  // touch the resource-loading directive values — never the framing contract.
+  const documentCsp = relaxContentCsp ? relaxedDocumentCsp() : DOCUMENT_CSP;
   // ONLY the chrome origin may frame content — NOT `'self'`. Granting `'self'`
   // would let one content capture frame another within the sacrificial origin
   // (a content page could embed a sibling capture), an over-grant the boundary
   // does not need. The chrome shell is the sole legitimate embedder.
   const contentDocumentCsp = hasSplit
-    ? `${DOCUMENT_CSP}; frame-ancestors ${chromeOrigin}`
-    : DOCUMENT_CSP;
-  const chromeCspValue = hasSplit ? chromeCsp(contentOrigin) : '';
+    ? `${documentCsp}; frame-ancestors ${chromeOrigin}`
+    : documentCsp;
+  const chromeCspValue = hasSplit ? chromeCsp(contentOrigin, relaxContentCsp) : '';
 
   // The role of an incoming request under the split (#320): `content` only when
   // its Host authority EXACTLY equals the content authority — an ALLOWLIST —
@@ -996,7 +1054,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
         c.header('Content-Security-Policy', chromeCspValue);
         return c.html(notFoundHtml(mirrorHostOf(c), notFoundAbout), 404);
       }
-      return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content' ? 'enforce' : cspMode);
+      return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : documentCsp, role === 'content' ? 'enforce' : cspMode);
     }
     // The content origin (#320) hosts nothing of ours, EVER — the listing on
     // the sacrificial origin would leak the whole corpus map into the zone
@@ -1026,7 +1084,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       c.header('Content-Security-Policy', chromeCspValue);
     } else {
       // single-host: the plain document CSP under the configured posture.
-      setCsp(c, DOCUMENT_CSP, cspMode);
+      setCsp(c, documentCsp, cspMode);
     }
     if (c.req.method === 'HEAD') return c.body(null);
     return c.body(indexSearchHtml(mirrorHostOf(c), q, showReq, shown, hits.length));
@@ -1056,7 +1114,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       }
       // The content-host boundary policy is always enforced (see serveContent);
       // the plain single-host document policy stays cspMode-governed.
-      return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content' ? 'enforce' : cspMode);
+      return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : documentCsp, role === 'content' ? 'enforce' : cspMode);
     }
 
     // The chrome/content split (#320): capture bytes are served IFF the request
@@ -1080,7 +1138,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     const alt = decodedPath === rawPath ? null : parseWaybackPath(decodedPath);
     // content mode stamps frame-ancestors on EVERY response; single-host keeps
     // the pre-#320 text/html-only posture.
-    return serveContent(c, parsed, role === 'content' ? contentDocumentCsp : DOCUMENT_CSP, role === 'content', alt);
+    return serveContent(c, parsed, role === 'content' ? contentDocumentCsp : documentCsp, role === 'content', alt);
   });
 
   return app;

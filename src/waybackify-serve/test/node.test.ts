@@ -223,6 +223,28 @@ describe('serveBucket — remote S3 mode over a stubbed endpoint', () => {
     }
   });
 
+  it('threads relaxContentCsp: true through to the app (document CSP gains the archive origins)', async () => {
+    const stub = await startS3Stub(await projectFixtureToBucket(FIXTURE_ROOT), BUCKET);
+    const { server, url } = await serveBucket({
+      endpoint: stub.url,
+      bucket: BUCKET,
+      region: 'auto',
+      credentials: CREDENTIALS,
+      relaxContentCsp: true
+    });
+    try {
+      const doc = await fetch(`${url}/20140403040000/http://example.com/`);
+      assert.equal(doc.status, 200);
+      const csp = doc.headers.get('content-security-policy') ?? '';
+      assert.ok(csp.includes("script-src 'self' 'unsafe-inline' https://web.archive.org https://archive.org"));
+      // Values widened, posture untouched: default-src stays 'self' alone.
+      assert.ok(csp.includes("default-src 'self';"));
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+      await stub.close();
+    }
+  });
+
   it('threads liveFallback: true through to the app (miss restores the 302)', async () => {
     const stub = await startS3Stub(await projectFixtureToBucket(FIXTURE_ROOT), BUCKET);
     const { server, url } = await serveBucket({

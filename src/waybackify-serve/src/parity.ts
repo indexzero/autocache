@@ -65,6 +65,14 @@ export interface ParityOptions extends ParityConfig {
   /** Emit a progress line every `progressEvery` entries (Layers 2–3). */
   progressEvery?: number;
   /**
+   * Layer 3 per-object re-fetch knobs for a THROWN body READ (#499). A broken
+   * body surfaces mid-stream — AFTER the dispatcher handed the response off —
+   * so ./retry.ts cannot transparently replay it; the heal lives here instead,
+   * scoped to exactly that post-handoff phase (see {@link verifyBody}).
+   * Tests pass 1ms timeouts to stay instant; prod uses the defaults.
+   */
+  bodyRetry?: BodyRetryTuning;
+  /**
    * Injected diagnostic logger (default no-op; a library never constructs pino,
    * design §1). The throttled sweep progress and each Mismatch fold onto
    * structured `logger.*` calls here (§2) — objects, not strings.
@@ -80,6 +88,37 @@ export interface ParityLogger {
 }
 
 const NOOP_PARITY_LOGGER: ParityLogger = { info() {}, warn() {}, error() {} };
+
+/** Layer 3 body re-fetch policy — mirrors ./retry.ts's RetryTuning shape. */
+export interface BodyRetryTuning {
+  /** TOTAL attempts per object (the first try included). Default 3. */
+  attempts?: number;
+  /** First backoff (ms) before re-fetch #1; doubles per attempt. Default 250. */
+  minTimeout?: number;
+  /** Backoff cap (ms). Default 2000. */
+  maxTimeout?: number;
+}
+
+/** Layer 3 body re-fetch defaults — the policy when no tuning arrives. */
+const DEFAULT_BODY_RETRY: Required<BodyRetryTuning> = { attempts: 3, minTimeout: 250, maxTimeout: 2000 };
+
+/**
+ * Coerce PUBLIC tuning to sane values — bodyRetry crosses the API boundary, so
+ * a NaN/Infinity/fractional `attempts` must not break loop termination (the
+ * re-fetch loop's only exits are `attempt >= attempts` and success), and a
+ * non-finite backoff must not become an eternal sleep.
+ */
+function sanitizeBodyRetry(tuning: BodyRetryTuning | undefined): Required<BodyRetryTuning> {
+  const positiveInt = (value: number | undefined, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
+  const nonNegative = (value: number | undefined, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+  return {
+    attempts: positiveInt(tuning?.attempts, DEFAULT_BODY_RETRY.attempts),
+    minTimeout: nonNegative(tuning?.minTimeout, DEFAULT_BODY_RETRY.minTimeout),
+    maxTimeout: nonNegative(tuning?.maxTimeout, DEFAULT_BODY_RETRY.maxTimeout)
+  };
+}
 
 /** In-flight HEAD/GET cap for Layers 2–3 — shared by the pool default and the bin's hint. */
 export const DEFAULT_CONCURRENCY = 16;
@@ -381,8 +420,97 @@ export async function checkBodies(config: ParityConfig, entries: Entry[], option
   const store = new S3Store(config);
   const bodied = entries.filter(e => e.status === 'body');
   const mismatches: Mismatch[] = [];
+  const logger = options.logger ?? NOOP_PARITY_LOGGER;
+  const retry = sanitizeBodyRetry(options.bodyRetry);
 
-  await mapPool(bodied, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, options.logger ?? NOOP_PARITY_LOGGER, 'layer 3 (body verification)', entry => entry.capKey, async entry => {
+  // The #499 per-object re-fetch lives INSIDE verifyBody, phase-scoped to the
+  // body read — see the ownership boundary documented there. This callback
+  // deliberately adds no retry of its own: wrapping the WHOLE verify (including
+  // store.get) in a retry loop is exactly the bug #500 removes.
+  await mapPool(bodied, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, logger, 'layer 3 (body verification)', entry => entry.capKey, entry => verifyBody(store, entry, mismatches, retry, logger));
+
+  return { layer: 3, name: 'body verification (GET every status:body)', pass: mismatches.length === 0, checked: bodied.length, mismatches };
+}
+
+/**
+ * The mid-stream body-transport failures the Layer 3 re-fetch may heal — and
+ * NOTHING else. These are the errors that surface WHILE the response body is
+ * being consumed, AFTER the dispatcher handed the response off, which is why
+ * they cannot live in ./retry.ts's RETRY_ERROR_CODES (a RetryAgent cannot
+ * re-issue a request whose body handoff already began — see #499).
+ *
+ * THE BAR FOR MEMBERSHIP (#500): retry only a failure whose recovery you can
+ * name in one sentence —
+ *
+ *   UND_ERR_RES_CONTENT_LENGTH_MISMATCH  body ended short of its Content-Length
+ *                                        → a fresh GET gets a whole one.
+ *   UND_ERR_SOCKET                       socket died mid-body ("other side
+ *                                        closed") → a new connection carries it.
+ *   ECONNRESET / EPIPE                   peer reset / broken pipe mid-stream
+ *                                        → a fresh socket re-carries the bytes.
+ *
+ * ERR_ASSERTION is deliberately NOT here (removed in #500): an assertion is
+ * undici reaching a state it declared impossible — there is no sentence naming
+ * what a retry would fix, so it FAILS CLOSED (surfaced, not healed).
+ *
+ * Deliberately an ALLOWLIST: S3Store.get also throws on terminal HTTP faults
+ * (403 auth, exhausted-retry 5xx, …), and retrying those could heal a flapping
+ * terminal error into a false PASS — the one thing a verification gate must
+ * never do.
+ */
+const RETRYABLE_BODY_ERROR_CODES = new Set([
+  'UND_ERR_RES_CONTENT_LENGTH_MISMATCH',
+  'UND_ERR_SOCKET',
+  'ECONNRESET',
+  'EPIPE'
+]);
+
+/**
+ * True iff some link of `error`'s cause chain carries a
+ * {@link RETRYABLE_BODY_ERROR_CODES} code. The chain walk matters: undici's
+ * fetch wraps the mid-stream break as `TypeError('terminated', { cause })`, so
+ * the discriminating `code` sits one (or more) `cause` links down.
+ */
+function isRetryableBodyError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let node: unknown = error;
+  while (node && typeof node === 'object' && !seen.has(node)) {
+    seen.add(node);
+    const { code, cause } = node as { code?: unknown; cause?: unknown };
+    if (typeof code === 'string' && RETRYABLE_BODY_ERROR_CODES.has(code)) return true;
+    node = cause;
+  }
+  return false;
+}
+
+/**
+ * GET + stream-hash ONE bodied entry, folding any divergence into `mismatches`,
+ * with the #499 re-fetch scoped to EXACTLY the post-handoff phase (#500).
+ *
+ * THE PHASE CUT IS AN OWNERSHIP BOUNDARY. Every failure BEFORE the response is
+ * handed off — connect, pre-header resets, 5xx, 429 — belongs to the DISPATCHER
+ * (./retry.ts's RetryAgent), which already replayed it as many times as policy
+ * allows. So when `store.get` throws, the dispatcher is either exhausted or the
+ * fault is terminal (403, …) — and app-retrying it AGAIN would grant the read
+ * more attempts than policy and could heal a genuinely failing object into a
+ * false PASS. `store.get` therefore sits OUTSIDE the try: its throw PROPAGATES
+ * untouched, always.
+ *
+ * The APP owns exactly ONE failure class: a throw while CONSUMING
+ * `capture.body`, after the handoff, which the dispatcher can never replay (the
+ * body stream already left its hands). Only that read is retryable — the
+ * transient body-transport allowlist ({@link isRetryableBodyError}), and a
+ * retry loops back to re-issue a FRESH idempotent GET. After `attempts` the
+ * last error propagates unchanged — a persistently broken body still fails the
+ * run.
+ *
+ * Every verify OUTCOME — miss, bodiless, hash mismatch — RETURNS as Mismatch
+ * data, never throws.
+ */
+async function verifyBody(store: S3Store, entry: Entry, mismatches: Mismatch[], retry: Required<BodyRetryTuning>, logger: ParityLogger): Promise<void> {
+  const { attempts, minTimeout, maxTimeout } = retry;
+  for (let attempt = 1; ; attempt += 1) {
+    // PRE-HANDOFF — dispatcher-owned. A throw here propagates (never app-retried).
     const capture = await store.get(entry.key);
     if (capture === null) {
       mismatches.push({ key: entry.capKey, field: 'presence', expected: 'present', actual: 'missing (404)' });
@@ -395,13 +523,26 @@ export async function checkBodies(config: ParityConfig, entries: Entry[], option
       mismatches.push({ key: entry.capKey, field: 'body', expected: 'body bytes', actual: `bodiless (${capture.status ?? 'body'})` });
       return;
     }
-    const actual = await sriOf(capture.body);
-    if (actual !== entry.contentHash) {
-      mismatches.push({ key: entry.capKey, field: 'contentHash', expected: entry.contentHash ?? '(none)', actual });
+    try {
+      // POST-HANDOFF — app-owned. ONLY this body read is retryable.
+      const actual = await sriOf(capture.body);
+      if (actual !== entry.contentHash) {
+        mismatches.push({ key: entry.capKey, field: 'contentHash', expected: entry.contentHash ?? '(none)', actual });
+      }
+      return;
+    } catch (error) {
+      if (!isRetryableBodyError(error) || attempt >= attempts) throw error;
+      logger.warn(
+        { evt: 'parity-body-retry', key: entry.capKey, attempt, attempts, error: error instanceof Error ? error.message : String(error) },
+        `layer 3 (body verification) · ${entry.capKey}: broken body (attempt ${attempt}/${attempts}), re-fetching`
+      );
+      await sleep(Math.min(minTimeout * 2 ** (attempt - 1), maxTimeout));
     }
-  });
+  }
+}
 
-  return { layer: 3, name: 'body verification (GET every status:body)', pass: mismatches.length === 0, checked: bodied.length, mismatches };
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /** Stream-hash a capture body → SRI `sha256-<base64>`, constant memory. */

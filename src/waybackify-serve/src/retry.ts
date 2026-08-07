@@ -53,6 +53,11 @@ export const RETRY_ERROR_CODES = [
   'EPIPE',
   'UND_ERR_SOCKET',
   'UND_ERR_CONNECT_TIMEOUT'
+  // UND_ERR_RES_CONTENT_LENGTH_MISMATCH is deliberately NOT here (#499): it
+  // surfaces MID-BODY, after the dispatcher already handed the response off, so
+  // a RetryAgent entry cannot replay it — it would only double-retry the rare
+  // pre-handoff shape. The heal lives in Layer 3's per-object re-fetch
+  // (./parity.ts checkBodies); do not re-add it at this seam.
 ] as const;
 
 /** Backoff knobs — tests pass tiny timeouts to stay instant; prod uses the defaults. */

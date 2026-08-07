@@ -30,7 +30,7 @@ import {
   type ParityConfig
 } from '../src/parity.ts';
 import { S3Store } from '@charlie.dev/waybackify-serve/s3store';
-import { createRetryAgent } from '../src/retry.ts';
+import { createRetryAgent, RETRY_ERROR_CODES } from '../src/retry.ts';
 
 const ORIGIN = 'https://parity.mock.test';
 const BUCKET = 'wayback-captures';
@@ -111,6 +111,21 @@ describe('dispatcher retry — a resolver hiccup must not kill the run', () => {
     assert.equal(mockAgent.pendingInterceptors().length, 1);
   });
 
+  it('a body-integrity break (UND_ERR_RES_CONTENT_LENGTH_MISMATCH, #499) is NOT dispatcher-retried — Layer 3 owns that heal', async () => {
+    // The code surfaces MID-BODY, after the dispatcher handed the response off,
+    // so a RetryAgent entry could never replay the real shape — it would only
+    // MULTIPLY attempts with Layer 3's per-object re-fetch (the one seam that
+    // can re-issue the GET; see parity.test.ts). Guard against re-adding it.
+    assert.ok(!(RETRY_ERROR_CODES as readonly string[]).includes('UND_ERR_RES_CONTENT_LENGTH_MISMATCH'));
+
+    pool.intercept({ path: ANY_BUCKET_PATH, method: 'GET' }).replyWithError(networkError('UND_ERR_RES_CONTENT_LENGTH_MISMATCH'));
+    // A dispatcher retry would consume THIS success — it must stay pending, proving one attempt.
+    pool.intercept({ path: ANY_BUCKET_PATH, method: 'GET' }).reply(200, LIST_XML);
+
+    await assert.rejects(listPrefix(CONFIG, 'cap/'));
+    assert.equal(mockAgent.pendingInterceptors().length, 1);
+  });
+
   it('an object read (Layers 2–4 path) self-heals: HEAD flaps twice, then answers', async () => {
     pool.intercept({ path: ANY_BUCKET_PATH, method: 'HEAD' }).replyWithError(networkError('ETIMEDOUT')).times(2);
     pool
@@ -168,9 +183,15 @@ describe('failure diagnosis — an exhausted retry reads as a diagnosis, not a s
 
     // Drive the real Layer-3 runner; concurrency 1 makes the first failing object
     // deterministic. The GET never recovers, so mapPool tags it with layer + key.
-    const error = await runParityCheck({ ...CONFIG, root: FIXTURE_ROOT, layers: [3], concurrency: 1 }).catch(
-      e => e as unknown
-    );
+    // (Tiny bodyRetry backoff: the exhausted-503 shape is TERMINAL and never
+    // body-retried, but keep the test instant even if that policy drifts.)
+    const error = await runParityCheck({
+      ...CONFIG,
+      root: FIXTURE_ROOT,
+      layers: [3],
+      concurrency: 1,
+      bodyRetry: { attempts: 3, minTimeout: 1, maxTimeout: 1 }
+    }).catch(e => e as unknown);
     assert.ok(error instanceof ParityTaskError);
     assert.match((error as ParityTaskError).context, /^layer 3 \(body verification\) · cap\/[0-9a-f]{2}\//);
     // No Retry-After header this time — the shape drops that clause but keeps the hint.
@@ -201,7 +222,8 @@ describe('failure diagnosis — an exhausted retry reads as a diagnosis, not a s
       ...CONFIG,
       root: FIXTURE_ROOT,
       layers: [1, 3],
-      concurrency: 1
+      concurrency: 1,
+      bodyRetry: { attempts: 3, minTimeout: 1, maxTimeout: 1 }
     }).catch(e => e)) as ParityTaskError & { completedLayers?: LayerReport[] };
 
     // Layer 1 finished and PASSED before Layer 3's reads gave out.

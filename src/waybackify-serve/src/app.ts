@@ -197,13 +197,26 @@ const DEFAULT_NOT_FOUND_ABOUT =
  * live web.archive.org. `about` is the (raw-HTML, TRUSTED) site description
  * paragraph — see {@link ServedCopy}.
  */
-function notFoundHtml(mirrorHost: string, about: string): string {
+function notFoundHtml(mirrorHost: string, about: string, archiveUrl?: string): string {
   // SECURITY: mirrorHost can be the attacker-controlled request Host header in
   // single-host mode — escape it exactly like the chrome shell escapes the
   // capture URL, or a hostile Host smuggles markup into the served page. NOTE:
   // `about` is TRUSTED site config (it carries an <a> link) and is injected
   // RAW on purpose — the site owns its safety; the host stays escaped.
   const h = escapeHtml(mirrorHost);
+  // The hand-off to the Internet Archive. Rendered ONLY for a capture MISS,
+  // where `archiveUrl` names the wayback URL this capture lives at (a generic
+  // /index 404 passes none, so it gets no link). It is an explicit hop to a
+  // SEPARATE site — new tab (`target="_blank"`, riding the iframe sandbox's
+  // existing allow-popups so no sandbox change is needed), `rel="noopener
+  // noreferrer"` — and the copy names the Internet Archive plainly, matching
+  // the mirror's "NOT affiliated with the Internet Archive" disclaimer voice:
+  // an honest referral, not an in-house feature. archiveUrl is derived from the
+  // attacker-controlled request path, so it goes through escapeHtml.
+  const archiveLink = archiveUrl
+    ? `\n<p>This page was archived by the Internet Archive, a separate organization.
+<a href="${escapeHtml(archiveUrl)}" target="_blank" rel="noopener noreferrer">View this page on the Internet Archive ↗</a></p>`
+    : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -221,7 +234,7 @@ function notFoundHtml(mirrorHost: string, about: string): string {
 <h1>Not mirrored here</h1>
 <p>${about}</p>
 <p class="muted">No request left this server for it. If you need the original,
-it lives at <code>web.archive.org</code>.</p>
+it lives at <code>web.archive.org</code>.</p>${archiveLink}
 </body>
 </html>
 `;
@@ -684,10 +697,10 @@ function renderChromeShell(args: {
  * sibling hits do; a top-level miss carries the plain document CSP. `cspMode`
  * selects the header name for that document policy (design §D3).
  */
-function notFound(c: Context, mirrorHost: string, about: string, documentCsp: string = DOCUMENT_CSP, cspMode: CspMode = 'enforce'): Response {
+function notFound(c: Context, mirrorHost: string, about: string, documentCsp: string = DOCUMENT_CSP, cspMode: CspMode = 'enforce', archiveUrl?: string): Response {
   c.header('Cache-Control', NO_STORE);
   setCsp(c, documentCsp, cspMode);
-  return c.html(notFoundHtml(mirrorHost, about), 404);
+  return c.html(notFoundHtml(mirrorHost, about, archiveUrl), 404);
 }
 
 /**
@@ -816,7 +829,12 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       // pre-fallback redirect) pass through byte-identical.
       return c.redirect(headerSafe(archiveUrl), 302);
     }
-    return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, mode);
+    // Strict: a local 404 that ALSO hands off to the archive — `archiveUrl`
+    // names the wayback URL this uncaptured capture lives at, so the miss page
+    // can offer an explicit new-tab link to the Internet Archive (a capture
+    // miss always has one; the generic /index 404s that call notFound directly
+    // pass none and stay link-free).
+    return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, mode, archiveUrl);
   };
 
   // The content-serving path: store lookup, status discrimination, the hit
@@ -891,7 +909,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     }
     if (status === 'error') {
       log.warn({ evt: 'bodiless', key: parsed.key, status: 'error' }, 'archived error capture — no body');
-      return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, documentCspMode);
+      return notFound(c, mirrorHostOf(c), notFoundAbout, documentCsp, documentCspMode, parsed.archiveUrl);
     }
 
     // Normalize the media type ONCE: trim leading/trailing HTTP optional

@@ -315,6 +315,32 @@ describe('createApp', () => {
     });
   });
 
+  describe('cache miss — hands off to the Internet Archive (Option C)', () => {
+    it('renders the notFound page with a new-tab archive link on a capture MISS', async () => {
+      // store is empty (beforeEach) → PATH misses.
+      const res = await app.request(PATH, { headers: { host: 'm.test' } });
+      assert.equal(res.status, 404);
+      const body = await res.text();
+      assert.ok(body.includes('Not mirrored here'), 'the styled local miss page');
+      // The explicit hand-off: exact web.archive.org URL, opening a new tab,
+      // rel-hardened. `↗` is the affordance the copy carries.
+      assert.ok(
+        body.includes(`<a href="${ARCHIVE}" target="_blank" rel="noopener noreferrer">View this page on the Internet Archive ↗</a>`),
+        'the miss page links to the exact capture URL on the Internet Archive, in a new tab'
+      );
+      assert.ok(body.includes('Internet Archive'), 'the copy names the separate site plainly');
+    });
+
+    it('does NOT render the archive link on a non-capture 404 (no capture URL)', async () => {
+      const res = await app.request('/not-a-capture', { headers: { host: 'm.test' } });
+      assert.equal(res.status, 404);
+      const body = await res.text();
+      assert.ok(body.includes('Not mirrored here'), 'still the styled local 404');
+      assert.ok(!body.includes('target="_blank"'), 'a generic 404 has no capture URL — no archive link');
+      assert.ok(!body.includes('View this page on the Internet Archive'));
+    });
+  });
+
   describe('cache miss — with { liveFallback: true } (opt-in, restores the old 302)', () => {
     let liveApp: ReturnType<typeof createApp>;
     beforeEach(() => {

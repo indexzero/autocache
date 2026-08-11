@@ -152,6 +152,73 @@ describe('rewriteHtml — unsatisfiable references stay foreign', () => {
   });
 });
 
+describe('rewriteHtml — uncaptured NAVIGATIONAL refs funnel to the mirror (Option C)', () => {
+  // NOTHING captured: the corpus is empty, so every ref below is uncaptured.
+  const empty = corpusOf();
+
+  it('B1: an uncaptured absolute-archive <a href> sheds its host (no archive-in-frame escape)', () => {
+    const html = `<a href="https://web.archive.org/web/20140403040000/http://example.com/ClassNotice.htm">notice</a>`;
+    const { text, changed } = rewriteHtml(html, empty);
+    assert.equal(text, `<a href="/web/20140403040000/http://example.com/ClassNotice.htm">notice</a>`);
+    assert.equal(changed, true);
+    // The load-bearing property: clicking it can no longer render live archive.org.
+    assert.ok(!text.includes('web.archive.org'));
+  });
+
+  it('B2: an uncaptured host-relative <a href> stays in mirror form', () => {
+    const html = `<a href="/web/20140403040000/http://example.com/ClassNotice.htm">notice</a>`;
+    const { text } = rewriteHtml(html, empty);
+    assert.ok(text.includes(`href="/web/20140403040000/http://example.com/ClassNotice.htm"`));
+    assert.ok(!text.includes('web.archive.org'));
+  });
+
+  it('navigational context also covers <area href> and <form action>', () => {
+    const html =
+      `<area href="https://web.archive.org/web/20140403040000/http://example.com/map">` +
+      `<form action="https://web.archive.org/web/20140403040000/http://example.com/submit"></form>`;
+    const out = rewriteHtml(html, empty).text;
+    assert.ok(out.includes(`href="/web/20140403040000/http://example.com/map"`));
+    assert.ok(out.includes(`action="/web/20140403040000/http://example.com/submit"`));
+    assert.ok(!out.includes('web.archive.org'));
+  });
+
+  it('a SUBRESOURCE <img src> stays foreign when uncaptured (unchanged behavior)', () => {
+    const html = `<img src="https://web.archive.org/web/20140403040000im_/http://example.com/absent.png">`;
+    const { text, changed } = rewriteHtml(html, empty);
+    assert.equal(text, html);
+    assert.equal(changed, false);
+  });
+
+  it('a <link href> stylesheet is a SUBRESOURCE, not navigational — stays foreign', () => {
+    const html = `<link rel="stylesheet" href="https://web.archive.org/web/20140403040000cs_/http://example.com/screen.css">`;
+    const { text, changed } = rewriteHtml(html, empty);
+    assert.equal(text, html);
+    assert.equal(changed, false);
+    assert.ok(text.includes('web.archive.org'));
+  });
+
+  it('<base href> is NOT navigational — an uncaptured base stays foreign', () => {
+    const html = `<base href="https://web.archive.org/web/20140403040000/http://example.com/">`;
+    const { text, changed } = rewriteHtml(html, empty);
+    assert.equal(text, html);
+    assert.equal(changed, false);
+  });
+
+  it('captured navigational + captured subresource both localize (regression guard)', () => {
+    const corpus = corpusOf(
+      '20140403040000/http://example.com/post',
+      '20140403040000/http://example.com/logo.gif'
+    );
+    const html =
+      `<a href="https://web.archive.org/web/20140403040000/http://example.com/post">p</a>` +
+      `<img src="https://web.archive.org/web/20140403040000im_/http://example.com/logo.gif">`;
+    const out = rewriteHtml(html, corpus).text;
+    assert.ok(out.includes(`href="/web/20140403040000/http://example.com/post"`));
+    assert.ok(out.includes(`src="/web/20140403040000im_/http://example.com/logo.gif"`));
+    assert.ok(!out.includes('web.archive.org'));
+  });
+});
+
 describe('rewriteCss', () => {
   const corpus = corpusOf(FONT_KEY, IMG2X, CSS_KEY);
 

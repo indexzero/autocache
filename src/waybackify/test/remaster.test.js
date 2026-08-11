@@ -177,7 +177,10 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
     assert.ok(html.includes('/web/20140403040000im_/http://example.com/logo.png 1x')); // srcset candidate 1
     assert.ok(html.includes('https://web.archive.org/web/20140403040000im_/http://example.com/absent.png 2x')); // foreign
     assert.ok(html.includes('href="/web/20140403040000/http://example.com/screen.css"')); // B2 preserved
-    assert.ok(html.includes('https://web.archive.org/web/20140403040000/http://example.com/nope')); // unsatisfiable foreign
+    // An UNCAPTURED NAVIGATIONAL <a href> is now localized to mirror form (Option C):
+    // it must funnel to the mirror's own miss page, never load live archive.org in-frame.
+    assert.ok(html.includes('href="/web/20140403040000/http://example.com/nope"'));
+    assert.ok(!html.includes('https://web.archive.org/web/20140403040000/http://example.com/nope'));
     assert.ok(html.includes('"/web/20140403040000js_/http://example.com/app.js"')); // inline JS literal
     assert.ok(html.includes('@import "/web/20140403040000cs_/http://example.com/screen.css"')); // inline <style>
     assert.ok(html.includes('url(/web/20140403040000im_/http://example.com/logo.png)')); // inline <style> url()

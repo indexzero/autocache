@@ -13,9 +13,14 @@
 // `/web/<ts><flag>/<orig>` form — the one shape that resolves against any
 // host, because render/wayback's path parser accepts the optional `/web`
 // prefix as a first-class capture request (see render/wayback/src/path.ts).
-// A reference is rewritten ONLY when its capture exists in the supplied
-// corpus map; anything we cannot satisfy is left byte-for-byte foreign, so a
-// strict serve/validator can still surface it.
+// A SUBRESOURCE reference is rewritten ONLY when its capture exists in the
+// supplied corpus map; anything we cannot satisfy is left byte-for-byte
+// foreign, so a strict serve/validator can still surface it. A NAVIGATIONAL
+// reference (`<a href>`, `<area href>`, `<form action>`) is rewritten to the
+// mirror form EVEN WHEN UNCAPTURED, so an uncaptured in-page link funnels to
+// the mirror's own first-party miss page instead of loading live archive.org
+// content inside our sandboxed iframe (a false-affiliation leak) — see
+// localizeRefs / isNavigational.
 //
 // Implementation stance — string surgery, no DOM/CSS parse — is deliberate
 // and matches the rest of this package (requisites.js, audit.js) and
@@ -48,7 +53,7 @@ export { stripWaybackChrome } from './strip.js';
  * a remastered tree's build record notes which rules produced it and
  * remaster verify can detect a stale rebuild.
  */
-export const RULE_VERSION = 1;
+export const RULE_VERSION = 2;
 
 /* ------------------------------------------------------------------------ *
  * Content-type classification
@@ -153,7 +158,17 @@ function repairOriginalUrl(rest) {
 /**
  * Localize every wayback reference in a text region. Absolute refs shed their
  * host; host-relative refs are emitted unchanged (already the target form).
- * A ref is rewritten only when its derived capture key is in `corpus`.
+ *
+ * A SUBRESOURCE ref (the default) is rewritten only when its derived capture
+ * key is in `corpus` — anything unsatisfiable stays byte-for-byte foreign so a
+ * strict serve/validator can surface it. A NAVIGATIONAL ref (`<a href>`,
+ * `<area href>`, `<form action>`) is rewritten to the mirror form EVEN WHEN
+ * UNCAPTURED: an absolute `https://web.archive.org/web/…` link sheds its host
+ * so clicking it can no longer render live Internet Archive content inside our
+ * sandboxed iframe (a false-affiliation leak), and a host-relative `/web/…`
+ * link stays in mirror form — both funnel to the mirror's own first-party
+ * "not mirrored" miss page rather than escaping the origin. The unparseable
+ * `return full` guard is kept in both modes (a non-URL token is never a link).
  *
  * @param {string} text
  * @param {{ has(key: string): boolean }} corpus - captureKey → present.
@@ -161,9 +176,13 @@ function repairOriginalUrl(rest) {
  * @param {boolean} [options.decodeEntities=false] - decode HTML entities when
  *   deriving the key (true for HTML attribute / inline-style contexts, where
  *   the value is entity-encoded; false for CSS/JS bodies, which are not).
+ * @param {boolean} [options.navigational=false] - the ref is a navigational
+ *   link (see above); when true, the corpus gate is skipped so uncaptured
+ *   navigational refs still localize. NEVER set for CSS `url()` / JS literals /
+ *   subresource url-attrs — those keep the corpus-gated behavior.
  * @returns {{ text: string, count: number }} count = refs actually changed.
  */
-function localizeRefs(text, corpus, { decodeEntities = false } = {}) {
+function localizeRefs(text, corpus, { decodeEntities = false, navigational = false } = {}) {
   let count = 0;
   const out = text.replace(WAYBACK_REF_RE, (full, _host, ts, flag, rawOriginal) => {
     const trimmed = trimUnbalanced(rawOriginal);
@@ -171,7 +190,9 @@ function localizeRefs(text, corpus, { decodeEntities = false } = {}) {
     const candidate = decodeEntities ? decodeAttrEntities(trimmed) : trimmed;
     const original = repairOriginalUrl(candidate);
     if (original === null || original === '') return full; // not a satisfiable URL shape → foreign
-    if (!corpus.has(`${ts}/${original}`)) return full; // capture absent → stays foreign
+    // Subresource: capture absent → stays foreign. Navigational: rewrite anyway
+    // (uncaptured links must funnel to our miss page, never escape the origin).
+    if (!navigational && !corpus.has(`${ts}/${original}`)) return full;
     const replacement = `/web/${ts}${flag || ''}/${trimmed}${suffix}`;
     if (replacement !== full) count++;
     return replacement;
@@ -249,6 +270,24 @@ const OPEN_TAG_RE = /<[a-zA-Z][^>]*>/g;
 // `=` is required.
 const ATTR_RE = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(\s*=\s*)("[^"]*"|'[^']*'|[^\s"'>]+)/g;
 
+// The tag NAME of an opening tag — the letters/digits right after '<', before
+// any whitespace or attribute. Load-bearing for navigational classification:
+// `href` is a link on <a>/<area> but a subresource on <link>/<base>, so the
+// tag, not the attribute alone, decides. `[^>]` in OPEN_TAG_RE already bounds
+// the match, so this only reads the name.
+const TAG_NAME_RE = /^<([a-zA-Z][a-zA-Z0-9]*)/;
+
+// Navigational (tag, attr) pairs — the ONLY contexts an uncaptured wayback ref
+// is rewritten anyway (localizeRefs `navigational: true`). A user-initiated
+// navigation: `href` on <a>/<area>, `action` on <form>. NOT `href` on
+// <link>/<base> (those are subresource/document-base), and NOT src/srcset/
+// poster/data-* (subresources), which stay corpus-gated.
+function isNavigational(tagName, attr) {
+  if (attr === 'href') return tagName === 'a' || tagName === 'area';
+  if (attr === 'action') return tagName === 'form';
+  return false;
+}
+
 // Inline <style>…</style> and inline <script>…</script> (no src) blocks.
 const STYLE_BLOCK_RE = /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi;
 const SCRIPT_BLOCK_RE = /(<script\b(?![^>]*\ssrc\s*=)[^>]*>)([\s\S]*?)(<\/script>)/gi;
@@ -260,8 +299,12 @@ const SCRIPT_BLOCK_RE = /(<script\b(?![^>]*\ssrc\s*=)[^>]*>)([\s\S]*?)(<\/script
  * inside them is localized.
  */
 function rewriteAttributes(html, corpus, counter) {
-  return html.replace(OPEN_TAG_RE, tag =>
-    tag.replace(ATTR_RE, (full, name, eq, value) => {
+  return html.replace(OPEN_TAG_RE, tag => {
+    // The tag name is fixed per opening tag; compute it ONCE so every attribute
+    // in the tag classifies against the right element (navigational is a
+    // tag+attr fact — see isNavigational).
+    const tagName = (TAG_NAME_RE.exec(tag)?.[1] ?? '').toLowerCase();
+    return tag.replace(ATTR_RE, (full, name, eq, value) => {
       const lower = name.toLowerCase();
       const isStyle = lower === 'style';
       if (!isStyle && !URL_ATTRS.has(lower) && !lower.startsWith('data-')) return full;
@@ -269,11 +312,11 @@ function rewriteAttributes(html, corpus, counter) {
       const inner = q ? value.slice(1, -1) : value;
       const res = isStyle
         ? rewriteCss(inner, corpus, { decodeEntities: true })
-        : localizeRefs(inner, corpus, { decodeEntities: true });
+        : localizeRefs(inner, corpus, { decodeEntities: true, navigational: isNavigational(tagName, lower) });
       counter.count += res.count;
       return `${name}${eq}${q}${res.text}${q}`;
-    })
-  );
+    });
+  });
 }
 
 /**

@@ -7,11 +7,11 @@
  * survives), then injected-defect cases surface one failure class each — a
  * planted absolute archive.org ref in HTML / CSS / JS, a tampered body vs its
  * build record, and a stale rebuild. The committed 7-entry fixture is remastered
- * and scanned too: it is DELIBERATELY not standalone (its google.com capture,
- * and its stored `alpha.jpg` wayback error page, reference captures outside the
- * 7-entry corpus, which remaster leaves byte-for-byte foreign "so a strict
- * validator can surface it"), so the scan MUST find those escapes — that is the
- * interstitial-shaped-body case.
+ * and scanned too: its uncaptured refs (its google.com capture's links, and its
+ * stored `alpha.jpg` wayback error page's links, to captures outside the 7-entry
+ * corpus) are all NAVIGATIONAL, which rule v2 localizes to the mirror form — so
+ * the real fixture now stands alone and the scan comes back clean. Subresource
+ * escapes still stay foreign, exercised by the planted-ref cases above.
  *
  * DYNAMIC tier: the request-classification core is a pure function tested in
  * probe.test.js (which this tier reuses verbatim); runDynamic's fail-closed
@@ -262,19 +262,33 @@ describe('remaster verify static — determinism (build-record integrity + rebui
   });
 });
 
-describe('remaster verify static — the committed 7-entry fixture is deliberately NOT standalone', () => {
+describe('remaster verify static — the committed fixture stands alone under rule v2 (navigational archive links localize)', () => {
   const FIXTURE = path.resolve(HERE, 'fixtures/cache-root');
 
-  it('remastering the real fixture leaves foreign archive.org refs the scan surfaces (incl. the alpha.jpg interstitial)', async () => {
+  it('remastering the real fixture localizes its uncaptured navigational archive.org links, so the escape scan is clean', async () => {
     const out = await mkroot('remaster-verify-fixture-');
     await remaster(FIXTURE, out);
     const report = await scanEscapes(await enumerateRemastered(out));
-    assert.equal(report.pass, false);
-    // The stored `alpha.jpg` is a text/html wayback error page — an
-    // interstitial-shaped body — carrying archive.org links to captures the
-    // 7-entry corpus does not hold.
-    assert.ok(report.findings.some(f => f.key.endsWith('/alpha.jpg') && f.kind === 'archive-org'), 'expected escapes from the alpha.jpg interstitial');
-    assert.ok(report.findings.some(f => f.key === '19981202230410/http://www.google.com/'), 'expected escapes from the google.com document');
+    // Rule v2: uncaptured NAVIGATIONAL <a href> refs localize to the mirror form
+    // (they funnel to the mirror's own "not mirrored" miss page) instead of
+    // staying foreign. The fixture's only surviving escapes — the google.com
+    // homepage's links to captures outside the 7-entry corpus, and the stored
+    // alpha.jpg wayback error page's links — were all navigational, so the real
+    // fixture now stands alone. (Subresource escapes DO stay foreign — covered
+    // by the planted-ref tests above.)
+    assert.equal(report.pass, true, JSON.stringify(report.findings, null, 2));
+    assert.equal(report.findings.length, 0);
+    // The mechanism, on a REAL body: the 1998 google.com homepage links to
+    // findmail.com (a capture the corpus does not hold) via an ABSOLUTE
+    // https://web.archive.org/web/… href. After remaster it is the host-relative
+    // mirror form, and no absolute archive origin survives in the served bytes.
+    const hash = await captureHash('19981202230410/http://www.google.com/');
+    const googleBody = await fsp.readFile(path.join(out, 'cap', hash.slice(0, 2), hash), 'utf8');
+    assert.ok(
+      googleBody.includes('/web/19981202230410/http://www.findmail.com/list/google-friends/'),
+      'the uncaptured navigational link is localized to the mirror form'
+    );
+    assert.ok(!googleBody.includes('https://web.archive.org'), 'no absolute archive.org origin remains in the served body');
     await fsp.rm(out, { recursive: true, force: true });
   });
 });

@@ -29,7 +29,7 @@ import {
   type LayerReport,
   type ParityConfig
 } from '../src/parity.ts';
-import { S3Store } from '@charlie.dev/waybackify-serve/s3store';
+import { S3Store } from '@autocache/waybackify-serve/s3store';
 import { createRetryAgent, RETRY_ERROR_CODES } from '../src/retry.ts';
 
 const ORIGIN = 'https://parity.mock.test';

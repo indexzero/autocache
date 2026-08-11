@@ -47,7 +47,7 @@
  * ROUND-TRIP — a signed HEAD/GET returning bytes over a real endpoint.
  */
 
-import { capturePath } from '@charlie.dev/waybackify/key.js';
+import { capturePath } from '@autocache/waybackify/key.js';
 import { signRequest, type SigV4Credentials } from './sigv4.ts';
 import type { Capture, CaptureMeta, CaptureStatus, Store } from './store.ts';
 

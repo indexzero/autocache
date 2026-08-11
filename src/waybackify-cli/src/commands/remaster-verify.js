@@ -57,7 +57,7 @@ export function remasterVerifyHandler(deps = {}) {
     const sample = parseSample(flags.sample, fail);
 
     // Injected fake, or the crawl engine + its formatter (lazy).
-    const mod = deps.runRemasterVerify ? deps : await import('@charlie.dev/waybackify-crawl/verify');
+    const mod = deps.runRemasterVerify ? deps : await import('@autocache/waybackify-crawl/verify');
     const { runRemasterVerify, formatReport } = mod;
 
     const report = await runRemasterVerify({

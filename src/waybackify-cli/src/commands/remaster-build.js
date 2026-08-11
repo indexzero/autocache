@@ -24,7 +24,7 @@ import path from 'node:path';
  */
 export function remasterBuildHandler(deps = {}) {
   return async ({ args, flags, logger, progressEvery, out = console.log }) => {
-    const remaster = deps.remaster ?? (await import('@charlie.dev/waybackify/remaster.js')).remaster;
+    const remaster = deps.remaster ?? (await import('@autocache/waybackify/remaster.js')).remaster;
 
     const hermeticRoot = path.resolve(args.hermeticRoot);
     const remasteredRoot = path.resolve(args.remasteredRoot);

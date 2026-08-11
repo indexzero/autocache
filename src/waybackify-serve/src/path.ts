@@ -40,7 +40,7 @@ export interface WaybackPath {
   canonicalArchiveUrl: string;
 }
 
-import { captureKey } from '@charlie.dev/waybackify/key.js';
+import { captureKey } from '@autocache/waybackify/key.js';
 
 /**
  * `/<timestamp><flag?>/<rest>` — timestamps are 4–14 digits (wayback accepts
@@ -60,7 +60,7 @@ const PATH_RE = /^\/(?:web\/)?(\d{4,14})([a-z]{1,3}_)?\/(.+)$/;
 // The key derivation itself lives in the shared waybackify package (a pure,
 // extraction-ready module — it's the storage contract the #254 waybackify CLI
 // shares); re-exported here because the parser is where consumers meet keys.
-export { captureKey } from '@charlie.dev/waybackify/key.js';
+export { captureKey } from '@autocache/waybackify/key.js';
 
 /**
  * Parse a wayback-style path (pathname + search of an incoming request).

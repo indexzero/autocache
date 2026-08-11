@@ -21,7 +21,7 @@ import net, { type AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher, type Dispatcher } from 'undici';
-import { capturePath } from '@charlie.dev/waybackify/key.js';
+import { capturePath } from '@autocache/waybackify/key.js';
 import { createRetryAgent } from '../src/retry.ts';
 import {
   checkBodies,

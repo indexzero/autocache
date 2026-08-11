@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { stripWaybackChrome } from '../src/html.ts';
-import { captureHash } from '@charlie.dev/waybackify/key.js';
+import { captureHash } from '@autocache/waybackify/key.js';
 
 const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
 

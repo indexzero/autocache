@@ -197,7 +197,7 @@ test('isTrackingBeacon: matches the documented denylist and spares content', () 
 });
 
 test('every produced entry is well-formed for recordDynamic (via/flag/key)', async () => {
-  const { dynamicEntryError } = await import('@charlie.dev/waybackify/cache.js');
+  const { dynamicEntryError } = await import('@autocache/waybackify/cache.js');
   const { entries } = mapFindings(
     {
       dangling: [{ url: 'http://l/web/20200101000000/https://cdn.example.com/a.css', resourceType: 'stylesheet' }],

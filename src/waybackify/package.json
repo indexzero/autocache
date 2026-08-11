@@ -1,5 +1,5 @@
 {
-  "name": "@charlie.dev/waybackify",
+  "name": "@autocache/waybackify",
   "version": "0.0.0",
   "description": "Transform dead links into Internet Archive Wayback Machine permalinks",
   "private": true,
@@ -35,7 +35,7 @@
     "dead-links"
   ],
   "author": "Charlie Robbins <npm@charlie.dev>",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "impit": "^0.14.1"
   }

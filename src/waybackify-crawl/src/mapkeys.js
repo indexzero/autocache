@@ -31,17 +31,17 @@
  * accepts (recordDynamic THROWS otherwise).
  */
 
-import { parseWaybackPath } from '@charlie.dev/waybackify-serve/path';
-import { parseWaybackUrl } from '@charlie.dev/waybackify/audit.js';
-import { isTrackingBeacon } from '@charlie.dev/waybackify/beacons.js';
-import { captureKey } from '@charlie.dev/waybackify/key.js';
+import { parseWaybackPath } from '@autocache/waybackify-serve/path';
+import { parseWaybackUrl } from '@autocache/waybackify/audit.js';
+import { isTrackingBeacon } from '@autocache/waybackify/beacons.js';
+import { captureKey } from '@autocache/waybackify/key.js';
 
 // The tracking-beacon denylist lives in the CORE (waybackify/beacons.js), not
 // here: the gate (fsck.js) needs the SAME predicate, and the crawl depends on
 // the core, so the definition sits below the dependency edge and both sides
 // import it. Re-export it so crawl.js's `import { isTrackingBeacon } from
 // './mapkeys.js'` — and this module's own use below — keep resolving unchanged.
-export { isTrackingBeacon } from '@charlie.dev/waybackify/beacons.js';
+export { isTrackingBeacon } from '@autocache/waybackify/beacons.js';
 
 /** Raw-byte replay flags a `dynamic[]` entry may carry (design; core enum). */
 const RAW_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);

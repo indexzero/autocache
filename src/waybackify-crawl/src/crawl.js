@@ -26,23 +26,23 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { classifyContentType } from '@charlie.dev/waybackify/rewrite.js';
+import { classifyContentType } from '@autocache/waybackify/rewrite.js';
 import {
   cacheCapture as coreCacheCapture,
   recordDynamic as coreRecordDynamic,
   readSidecar as coreReadSidecar,
   dynamicEntryError,
   SIDECAR_VERSION
-} from '@charlie.dev/waybackify/cache.js';
-import { RULE_VERSION } from '@charlie.dev/waybackify/rewrite.js';
-import { captureKey } from '@charlie.dev/waybackify/key.js';
-import { parseWaybackUrl } from '@charlie.dev/waybackify/audit.js';
-import { WaybackMachine } from '@charlie.dev/waybackify';
-import { serveCacheRoot } from '@charlie.dev/waybackify-serve/node';
-import { loadCorpusKeySet } from '@charlie.dev/waybackify-serve/corpus';
+} from '@autocache/waybackify/cache.js';
+import { RULE_VERSION } from '@autocache/waybackify/rewrite.js';
+import { captureKey } from '@autocache/waybackify/key.js';
+import { parseWaybackUrl } from '@autocache/waybackify/audit.js';
+import { WaybackMachine } from '@autocache/waybackify';
+import { serveCacheRoot } from '@autocache/waybackify-serve/node';
+import { loadCorpusKeySet } from '@autocache/waybackify-serve/corpus';
 import { compilePolicy } from './policy.js';
 import { mapFindings } from './mapkeys.js';
-import { isUnmirrorable } from '@charlie.dev/waybackify/beacons.js';
+import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
 import { createBrowserProbe } from './probe.js';
 import { ensureCrawlDir, verifiedKeys, stampVerified, invalidateVerified, recordFlaky, writeHar } from './ledger.js';
 

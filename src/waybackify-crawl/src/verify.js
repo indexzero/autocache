@@ -38,9 +38,9 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { serveCacheRoot } from '@charlie.dev/waybackify-serve/node';
-import { BUILD_NAME, remaster } from '@charlie.dev/waybackify/remaster.js';
-import { classifyContentType } from '@charlie.dev/waybackify/rewrite.js';
+import { serveCacheRoot } from '@autocache/waybackify-serve/node';
+import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
+import { classifyContentType } from '@autocache/waybackify/rewrite.js';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
 
 // The library never constructs pino (design §1); default no-op.

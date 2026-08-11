@@ -26,7 +26,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
-import { parseWaybackPath } from '@charlie.dev/waybackify-serve/path';
+import { parseWaybackPath } from '@autocache/waybackify-serve/path';
 
 const execFileAsync = promisify(execFile);
 

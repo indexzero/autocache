@@ -118,7 +118,7 @@ so.
 ## Programmatic
 
 ```js
-import { crawl } from '@charlie.dev/waybackify-crawl';
+import { crawl } from '@autocache/waybackify-crawl';
 await crawl(urls, { root, maxIterations, policy, maxRequests, deps });
 ```
 

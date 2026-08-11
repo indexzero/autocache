@@ -1,5 +1,5 @@
 {
-  "name": "@charlie.dev/waybackify-cli",
+  "name": "@autocache/waybackify-cli",
   "version": "0.0.0",
   "description": "waybackify — manifest / rewrite / ledger / check / search / audit / remaster / bucket over the spv/waybackify library. Surface v2: manifest = generation, rewrite = application, ledger = the collection; audit surveys captures, remaster builds/verifies the standalone tier, bucket pushes/verifies the mirror.",
   "private": true,
@@ -17,11 +17,11 @@
     "cli"
   ],
   "author": "Charlie Robbins <npm@charlie.dev>",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
-    "@charlie.dev/waybackify": "workspace:*",
-    "@charlie.dev/waybackify-crawl": "workspace:*",
-    "@charlie.dev/waybackify-serve": "workspace:*",
+    "@autocache/waybackify": "workspace:*",
+    "@autocache/waybackify-crawl": "workspace:*",
+    "@autocache/waybackify-serve": "workspace:*",
     "paparam": "^1.10.1",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",

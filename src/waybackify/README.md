@@ -17,7 +17,7 @@ Transform a single URL into a Wayback Machine permalink.
 **Returns:** `Promise<string|null>` - Wayback URL or null if not found
 
 ```js
-import waybackify from '@charlie.dev/waybackify';
+import waybackify from '@autocache/waybackify';
 
 // Transform a dead link
 const waybackUrl = await waybackify('http://registry.nodejitsu.com/');
@@ -41,7 +41,7 @@ Transform multiple URLs into Wayback Machine permalinks.
 **Returns:** `Promise<Array<{url: string, waybackUrl: string|null}>>` - Results array
 
 ```js
-import { waybackifyBatch } from '@charlie.dev/waybackify';
+import { waybackifyBatch } from '@autocache/waybackify';
 
 const urls = [
   'http://registry.nodejitsu.com/',
@@ -69,7 +69,7 @@ Transform markdown content by replacing dead links with wayback URLs.
 **Returns:** `Promise<{content: string, replacements: Array}>` - Transformed content and replacement info
 
 ```js
-import { waybackifyMarkdown } from '@charlie.dev/waybackify';
+import { waybackifyMarkdown } from '@autocache/waybackify';
 
 const markdown = `
 # My Blog Post
@@ -101,7 +101,7 @@ dryRun.replacements.forEach(replacement => {
 Direct access to the Internet Archive Wayback Machine API.
 
 ```js
-import { WaybackMachine } from '@charlie.dev/waybackify';
+import { WaybackMachine } from '@autocache/waybackify';
 
 const wayback = new WaybackMachine();
 
@@ -149,7 +149,7 @@ console.log(existing); // https://web.archive.org/web/20210101000000/http://exam
 When migrating old blog posts, many external links become dead over time:
 
 ```js
-import { waybackifyMarkdown } from '@charlie.dev/waybackify';
+import { waybackifyMarkdown } from '@autocache/waybackify';
 import { readFile, writeFile } from 'fs/promises';
 
 const markdown = await readFile('old-blog-post.md', 'utf8');
@@ -173,7 +173,7 @@ console.log(`Updated ${result.replacements.length} dead links`);
 Find and report dead links without making changes:
 
 ```js
-import { waybackifyMarkdown } from '@charlie.dev/waybackify';
+import { waybackifyMarkdown } from '@autocache/waybackify';
 import { glob } from 'glob';
 
 const files = await glob('content/**/*.md');
@@ -198,7 +198,7 @@ whose captured content is itself a 404, soft-error page, or parked domain.
 `auditCapture` classifies one capture:
 
 ```js
-import { auditCapture } from '@charlie.dev/waybackify';
+import { auditCapture } from '@autocache/waybackify';
 
 const v = await auditCapture('https://web.archive.org/web/20081221144742/http://blogs.msdn.com:80/mharsh/archive/2008/03/05/slides-and-demos-from-my-mix-08-talk.aspx');
 // { verdict: 'good' | 'wayback404' | 'suspect',
@@ -259,9 +259,9 @@ canonical v2 (sorted keys, empty optional sections omitted).
 ### Operations
 
 ```js
-import { generate, apply, readManifest, writeManifest, sourceRefs } from '@charlie.dev/waybackify/manifest.js';
-import { readUniverse, subset } from '@charlie.dev/waybackify/universe.js';
-import { discover, flatten, against } from '@charlie.dev/waybackify/ledger.js';
+import { generate, apply, readManifest, writeManifest, sourceRefs } from '@autocache/waybackify/manifest.js';
+import { readUniverse, subset } from '@autocache/waybackify/universe.js';
+import { discover, flatten, against } from '@autocache/waybackify/ledger.js';
 
 // GENERATE: markdown + universe (+ seen) → manifest. Universe hits are
 // classified offline; previously seen urls are copied offline; only

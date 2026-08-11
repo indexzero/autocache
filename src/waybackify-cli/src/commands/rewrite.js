@@ -35,8 +35,8 @@ import fs from 'node:fs';
  */
 export function rewriteHandler(deps = {}) {
   return async ({ args, flags, logger }) => {
-    const apply = deps.apply ?? (await import('@charlie.dev/waybackify/manifest.js')).apply;
-    const readManifest = deps.readManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).readManifest;
+    const apply = deps.apply ?? (await import('@autocache/waybackify/manifest.js')).apply;
+    const readManifest = deps.readManifest ?? (await import('@autocache/waybackify/manifest.js')).readManifest;
 
     const source = fs.readFileSync(args.source, 'utf8');
     // --chrome-host threads the #453 host swap; omit it and apply defaults to

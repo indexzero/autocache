@@ -37,7 +37,7 @@ export function searchHandler(deps = {}) {
   return async ({ args, flags, logger, out = console.log }) => {
     let { getSnapshots } = deps;
     if (!getSnapshots) {
-      const { WaybackMachine } = await import('@charlie.dev/waybackify');
+      const { WaybackMachine } = await import('@autocache/waybackify');
       // baseUrl only shapes the emitted waybackUrl (the CDX host itself is
       // fixed inside the library); pin it to the canonical replay origin so
       // every row is a URL `waybackify check` can consume directly.

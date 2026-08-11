@@ -78,9 +78,9 @@ export function auditHandler(deps = {}) {
       throw new Error(`no such directory: ${args.dir}`);
     }
 
-    const discover = deps.discover ?? (await import('@charlie.dev/waybackify/ledger.js')).discover;
-    const flatten = deps.flatten ?? (await import('@charlie.dev/waybackify/ledger.js')).flatten;
-    const captureKey = deps.captureKey ?? (await import('@charlie.dev/waybackify/key.js')).captureKey;
+    const discover = deps.discover ?? (await import('@autocache/waybackify/ledger.js')).discover;
+    const flatten = deps.flatten ?? (await import('@autocache/waybackify/ledger.js')).flatten;
+    const captureKey = deps.captureKey ?? (await import('@autocache/waybackify/key.js')).captureKey;
 
     // Generic ledger discovery → the union manifest → the unique captures it
     // references. Entries are `<originalUrl> → { wayback, timestamp }`.
@@ -96,8 +96,8 @@ export function auditHandler(deps = {}) {
 
     out(`enumerated ${captures.length} unique captures from the ledger under ${args.dir}`);
 
-    const auditCapture = deps.auditCapture ?? (await import('@charlie.dev/waybackify')).auditCapture;
-    const WaybackMachine = deps.WaybackMachine ?? (await import('@charlie.dev/waybackify')).WaybackMachine;
+    const auditCapture = deps.auditCapture ?? (await import('@autocache/waybackify')).auditCapture;
+    const WaybackMachine = deps.WaybackMachine ?? (await import('@autocache/waybackify')).WaybackMachine;
     const runAudit = deps.runAudit ?? (await import('../audit-engine.js')).runAudit;
 
     const checkpointFile = flags.checkpoint

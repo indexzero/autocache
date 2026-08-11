@@ -24,7 +24,7 @@
  * making SigV4-signed origin fetches over a named backend.
  */
 
-import { capturePath } from '@charlie.dev/waybackify/key.js';
+import { capturePath } from '@autocache/waybackify/key.js';
 
 /**
  * What kind of capture an entry is — the cache-root sidecar's discriminator

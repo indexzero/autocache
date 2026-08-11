@@ -1,4 +1,4 @@
-# @charlie.dev/waybackify-cli
+# @autocache/waybackify-cli
 
 `waybackify` — the human-operable, `xargs`-composable front door over the
 [`waybackify`](../waybackify) library.
@@ -94,8 +94,8 @@ manifest applier is `manifest.js#apply`.)
 ## Development
 
 ```sh
-pnpm --filter @charlie.dev/waybackify-cli run test   # offline, zero network
-pnpm --filter @charlie.dev/waybackify-cli exec waybackify --help
+pnpm --filter @autocache/waybackify-cli run test   # offline, zero network
+pnpm --filter @autocache/waybackify-cli exec waybackify --help
 ```
 
 Help output is snapshot-tested (`test/fixtures/help/*.txt`). When the surface

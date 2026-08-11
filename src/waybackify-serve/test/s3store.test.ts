@@ -24,7 +24,7 @@
 
 import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { capturePath } from '@charlie.dev/waybackify/key.js';
+import { capturePath } from '@autocache/waybackify/key.js';
 import { S3Store } from '../src/s3store.ts';
 import type { Capture } from '../src/store.ts';
 import { runStoreConformance, type Seed } from './store-conformance.ts';

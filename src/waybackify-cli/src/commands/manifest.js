@@ -42,10 +42,10 @@ import fs from 'node:fs';
  */
 export function manifestHandler(deps = {}) {
   return async ({ args, flags, logger, out = console.log }) => {
-    const generate = deps.generate ?? (await import('@charlie.dev/waybackify/manifest.js')).generate;
-    const readManifest = deps.readManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).readManifest;
-    const writeManifest = deps.writeManifest ?? (await import('@charlie.dev/waybackify/manifest.js')).writeManifest;
-    const readUniverse = deps.readUniverse ?? (await import('@charlie.dev/waybackify/universe.js')).readUniverse;
+    const generate = deps.generate ?? (await import('@autocache/waybackify/manifest.js')).generate;
+    const readManifest = deps.readManifest ?? (await import('@autocache/waybackify/manifest.js')).readManifest;
+    const writeManifest = deps.writeManifest ?? (await import('@autocache/waybackify/manifest.js')).writeManifest;
+    const readUniverse = deps.readUniverse ?? (await import('@autocache/waybackify/universe.js')).readUniverse;
 
     const source = fs.readFileSync(args.source, 'utf8');
     const universe = readUniverse(flags.universe);

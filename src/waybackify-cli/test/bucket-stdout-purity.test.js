@@ -11,8 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { commitEntry } from '@charlie.dev/waybackify/cache.js';
-import { captureKey } from '@charlie.dev/waybackify/key.js';
+import { commitEntry } from '@autocache/waybackify/cache.js';
+import { captureKey } from '@autocache/waybackify/key.js';
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'waybackify.js');
 

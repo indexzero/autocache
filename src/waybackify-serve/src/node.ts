@@ -15,7 +15,7 @@
  *        [--region <r>] [--prefix <p>] [--port N]
  *
  * (bin/serve.js is this package's own entry; render/wayback re-launches it
- * for local dev through bin/localdev.js over @charlie.dev/waybackify-serve/node.)
+ * for local dev through bin/localdev.js over @autocache/waybackify-serve/node.)
  *
  * The two modes are mutually exclusive — except under `--index`, where
  * `--bucket` (the serve store) and `--root` (the /_index catalog) combine;

@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { capturePath } from '@charlie.dev/waybackify/key.js';
+import { capturePath } from '@autocache/waybackify/key.js';
 import {
   MemoryStore,
   R2Store,

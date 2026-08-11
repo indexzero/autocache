@@ -39,7 +39,7 @@ import fs from 'node:fs';
  */
 export function ledgerHandler(deps = {}) {
   return async ({ args, flags, out = console.log }) => {
-    const discover = deps.discover ?? (await import('@charlie.dev/waybackify/ledger.js')).discover;
+    const discover = deps.discover ?? (await import('@autocache/waybackify/ledger.js')).discover;
 
     if (!fs.existsSync(args.dir) || !fs.statSync(args.dir).isDirectory()) {
       // Domain failure via the root bail handler → exit 1.
@@ -49,8 +49,8 @@ export function ledgerHandler(deps = {}) {
     const discovered = discover(args.dir);
 
     if (flags.flatten) {
-      const flatten = deps.flatten ?? (await import('@charlie.dev/waybackify/ledger.js')).flatten;
-      const canonicalize = deps.canonicalize ?? (await import('@charlie.dev/waybackify/manifest.js')).canonicalize;
+      const flatten = deps.flatten ?? (await import('@autocache/waybackify/ledger.js')).flatten;
+      const canonicalize = deps.canonicalize ?? (await import('@autocache/waybackify/manifest.js')).canonicalize;
       // ONE canonical JSON document (not JSONL): the same serialization
       // writeManifest uses, so `ledger <dir> --flatten > seen.json` yields a
       // file byte-compatible with what `manifest -s` writes back.
@@ -61,7 +61,7 @@ export function ledgerHandler(deps = {}) {
     // --root|-r is canonical; --against is the deprecated alias (cli.js).
     const root = flags.root ?? flags.against;
     if (root) {
-      const against = deps.against ?? (await import('@charlie.dev/waybackify/ledger.js')).against;
+      const against = deps.against ?? (await import('@autocache/waybackify/ledger.js')).against;
       const worklists = await against(discovered, root);
       const rows = [];
       for (const [state, items] of Object.entries(worklists)) {

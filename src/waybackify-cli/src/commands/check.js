@@ -29,7 +29,7 @@ import { EXIT } from '../cli.js';
  */
 export function checkHandler(deps = {}) {
   return async ({ args, logger, out = console.log }) => {
-    const auditCapture = deps.auditCapture ?? (await import('@charlie.dev/waybackify/audit.js')).auditCapture;
+    const auditCapture = deps.auditCapture ?? (await import('@autocache/waybackify/audit.js')).auditCapture;
 
     // The library's verdict object, printed VERBATIM — one JSON line on
     // stdout, jq/xargs-friendly. Do NOT reshape: `check | jq -r .verdict`

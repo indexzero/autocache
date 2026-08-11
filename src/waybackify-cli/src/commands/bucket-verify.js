@@ -72,7 +72,7 @@ export function bucketVerifyHandler(deps = {}) {
     const credentials = sessionToken ? { accessKeyId, secretAccessKey, sessionToken } : { accessKeyId, secretAccessKey };
 
     // Load the engine (injected or lazy).
-    const parity = deps.parity ?? (await import('@charlie.dev/waybackify-serve/parity'));
+    const parity = deps.parity ?? (await import('@autocache/waybackify-serve/parity'));
     const { runParityCheck, formatReport, formatLayerVerdict, diagnoseFailure, DEFAULT_CONCURRENCY } = parity;
     const concurrency = currentConcurrency ?? DEFAULT_CONCURRENCY;
 
@@ -82,7 +82,7 @@ export function bucketVerifyHandler(deps = {}) {
     // Skipped when the engine is injected (offline wiring test).
     if (!deps.parity) {
       const setGlobalDispatcher = deps.setGlobalDispatcher ?? (await import('undici')).setGlobalDispatcher;
-      const createRetryAgent = deps.createRetryAgent ?? (await import('@charlie.dev/waybackify-serve/retry')).createRetryAgent;
+      const createRetryAgent = deps.createRetryAgent ?? (await import('@autocache/waybackify-serve/retry')).createRetryAgent;
       setGlobalDispatcher(createRetryAgent());
     }
 

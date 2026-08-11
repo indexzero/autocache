@@ -8,4 +8,4 @@
  * definition of "the chrome archive.org injects" for every consumer — this
  * serving core, remaster.js, and rewrite.js (which re-exports it too).
  */
-export { stripWaybackChrome } from '@charlie.dev/waybackify/strip.js';
+export { stripWaybackChrome } from '@autocache/waybackify/strip.js';

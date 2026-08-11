@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FsStore } from '../src/fsstore.ts';
-import { captureHash } from '@charlie.dev/waybackify/key.js';
+import { captureHash } from '@autocache/waybackify/key.js';
 import type { Capture } from '../src/store.ts';
 import { runStoreConformance, type Seed } from './store-conformance.ts';
 

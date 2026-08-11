@@ -24,7 +24,7 @@
  */
 export function bucketPushHandler(deps = {}) {
   return async ({ flags, logger, progressEvery, out = console.log }) => {
-    const emitBucketBatch = deps.emitBucketBatch ?? (await import('@charlie.dev/waybackify/bucket-batch.js')).emitBucketBatch;
+    const emitBucketBatch = deps.emitBucketBatch ?? (await import('@autocache/waybackify/bucket-batch.js')).emitBucketBatch;
 
     const { lines, summary } = await emitBucketBatch(flags.root, {
       bucket: flags.bucket,

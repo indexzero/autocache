@@ -81,9 +81,9 @@ export function cacheCrawlHandler(deps = {}) {
 
     // The engine + policy loaders: injected fakes (tests) or the crawl package
     // (lazy — hono + browser + network never load until we crawl for real).
-    const engine = deps.crawl ? deps : await import('@charlie.dev/waybackify-crawl');
+    const engine = deps.crawl ? deps : await import('@autocache/waybackify-crawl');
     const { crawl, enumerateHtmlDocKeys } = engine;
-    const policyMod = deps.loadPolicy ? deps : await import('@charlie.dev/waybackify-crawl/policy');
+    const policyMod = deps.loadPolicy ? deps : await import('@autocache/waybackify-crawl/policy');
     const { loadPolicy, compilePolicy, DEFAULT_POLICY_URL } = policyMod;
 
     // paparam's `rest` is greedy: once the first positional URL is consumed,

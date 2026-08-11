@@ -27,7 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { captureHash } from '@charlie.dev/waybackify/key.js';
+import { captureHash } from '@autocache/waybackify/key.js';
 import {
   checkDeterminism,
   enumerateRemastered,
@@ -37,7 +37,7 @@ import {
   scanEscapes
 } from '../src/verify.js';
 // The merged-in remaster engine (PR #369) — the build remaster verify validates.
-import { BUILD_NAME, remaster } from '@charlie.dev/waybackify/remaster.js';
+import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 

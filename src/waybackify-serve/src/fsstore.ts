@@ -44,7 +44,7 @@ import { Readable } from 'node:stream';
 // digest. The pinned digest of '20140403040000/http://example.com/' exists
 // in both packages' suites (and in the committed fixture root) precisely to
 // catch a consumer deriving its own variant.
-import { capturePath, metaPath } from '@charlie.dev/waybackify/key.js';
+import { capturePath, metaPath } from '@autocache/waybackify/key.js';
 import type { Capture, CaptureMeta, CaptureStatus, Store } from './store.ts';
 
 /**

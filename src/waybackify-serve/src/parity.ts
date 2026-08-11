@@ -35,7 +35,7 @@
 
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
-import { capturePath, metaPath } from '@charlie.dev/waybackify/key.js';
+import { capturePath, metaPath } from '@autocache/waybackify/key.js';
 import { S3Store } from './s3store.ts';
 import { serveBucket, serveCacheRoot, type RunningServer } from './node.ts';
 import { signRequest, type SigV4Credentials } from './sigv4.ts';

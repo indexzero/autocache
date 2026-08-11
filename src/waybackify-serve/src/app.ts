@@ -41,7 +41,7 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { classifyContentType, rewrite } from '@charlie.dev/waybackify/rewrite.js';
+import { classifyContentType, rewrite } from '@autocache/waybackify/rewrite.js';
 import { stripWaybackChrome } from './html.ts';
 import { decodeCapturePath, formatCapturePath, parseWaybackPath } from './path.ts';
 import type { Store } from './store.ts';

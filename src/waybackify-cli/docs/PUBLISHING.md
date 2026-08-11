@@ -11,15 +11,14 @@ publish**; it is the pre-flight.
 | package | `name` | version | `private` | bin |
 |---|---|---|---|---|
 | `spv/waybackify` | `waybackify` | 0.0.0 | `true` | — |
-| `spv/waybackify-cli` | `@charlie.dev/waybackify-cli` | 0.0.0 | `true` | `waybackify` |
+| `spv/waybackify-cli` | `@autocache/waybackify-cli` | 0.0.0 | `true` | `waybackify` |
 
 Registry availability, checked 2026-07-24 with `npm view <name> name`:
 
 - `waybackify` — **404 (unpublished; available)**
-- `@charlie.dev/waybackify-cli` — **404 (unpublished)**; a scoped name is
-  claimable only by the scope's owner, and the `@charlie.dev` npm org/user
-  does not obviously exist — whether npm accepts a dot in a scope name is an
-  open question to settle before relying on it
+- `@autocache/waybackify-cli` — **404 (unpublished)**; a scoped name is
+  claimable only by the scope's owner. `@autocache` (no dot) is a valid npm
+  scope and is the chosen home for these packages.
 - `waybackify-cli` (the plain fallback if the scope is dropped) —
   **404 (unpublished; available)**
 
@@ -71,7 +70,7 @@ tree, so spelling them out would trip the gate on itself.) A green gate on
 
 ## What publishing would still need (operator decisions)
 
-1. Settle the CLI's published name: `@charlie.dev/waybackify-cli` (requires
+1. Settle the CLI's published name: `@autocache/waybackify-cli` (requires
    the npm scope) or plain `waybackify-cli`.
 2. Flip `"private": true` → publishable, pick initial versions.
 3. `npm publish --dry-run` both packages and review the tarball file lists

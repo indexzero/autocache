@@ -56,7 +56,7 @@ test('--flatten: ONE canonical union manifest on stdout; first verdict per url w
 test('--flatten output is the seen-file bootstrap: byte-compatible with writeManifest', async () => {
   const { stdout } = await ledger([TREE, '--flatten']);
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'waybackify-ledger-')), 'seen.json');
-  const { readManifest, writeManifest } = await import('@charlie.dev/waybackify/manifest.js');
+  const { readManifest, writeManifest } = await import('@autocache/waybackify/manifest.js');
   fs.writeFileSync(file, `${stdout.join('\n')}\n`);
   const bytes = fs.readFileSync(file);
   writeManifest(file, readManifest(file)); // read + canonical rewrite

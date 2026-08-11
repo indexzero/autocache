@@ -1,0 +1,21 @@
+{
+  "name": "autocache",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Remaster the web for the future, together — a self-hosted, self-contained Wayback mirror toolkit.",
+  "license": "Apache-2.0",
+  "author": "Charlie Robbins <npm@charlie.dev>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indexzero/autocache.git"
+  },
+  "packageManager": "pnpm@10.34.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

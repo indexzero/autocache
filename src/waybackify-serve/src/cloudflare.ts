@@ -37,6 +37,16 @@ export interface CloudflareHandlerConfig {
    */
   liveFallbackVar?: string;
   /**
+   * Name of the `[vars]` entry holding the `--relax-content-csp` STOPGAP
+   * (#508). OFF by default (strict serving): the content CSP + chrome shell
+   * framing grants stay locked to `'self'`/the split origins. Set truthy
+   * ("1"/"true") to WIDEN those directives with the archive origins so
+   * un-localized web.archive.org references load live instead of being blocked
+   * (the mobile "content blocked" break) — self-containment is lost while on.
+   * Default `RELAX_CONTENT_CSP`.
+   */
+  relaxContentCspVar?: string;
+  /**
    * Names of the `[vars]` entries carrying the chrome/content split (#320):
    * the chrome host, the content host, and (optionally) the cross-origin
    * scheme. Both host vars must be set to enable Host-keyed serving (chrome =
@@ -146,6 +156,7 @@ function envSplit(chromeHostRaw: unknown, contentHostRaw: unknown, schemeRaw: un
 export function createCloudflareHandler(config: CloudflareHandlerConfig = {}): CloudflareHandler {
   const capturesBinding = config.capturesBinding ?? 'WAYBACK_CAPTURES';
   const liveFallbackVar = config.liveFallbackVar ?? 'LIVE_FALLBACK';
+  const relaxContentCspVar = config.relaxContentCspVar ?? 'RELAX_CONTENT_CSP';
   const chromeHostVar = config.chromeHostVar ?? 'CHROME_HOST';
   const contentHostVar = config.contentHostVar ?? 'CONTENT_HOST';
   const splitSchemeVar = config.splitSchemeVar ?? 'SPLIT_SCHEME';
@@ -157,6 +168,7 @@ export function createCloudflareHandler(config: CloudflareHandlerConfig = {}): C
       // var opts into the quiet, in which case leave it unset (app → no-op).
       app ??= createApp(new R2Store(env[capturesBinding] as R2BucketLike), {
         liveFallback: envFlag(env[liveFallbackVar]),
+        relaxContentCsp: envFlag(env[relaxContentCspVar]),
         // Pass the RAW bindings: presence must be decided on the binding, not a
         // string-coerced value, or a non-string var (Wrangler permits JSON
         // `[vars]`) would look ABSENT and silently disable the split.

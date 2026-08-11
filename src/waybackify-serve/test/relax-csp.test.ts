@@ -19,8 +19,9 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.ts';
+import { createCloudflareHandler } from '../src/cloudflare.ts';
 import { captureKey } from '../src/path.ts';
-import { MemoryStore } from '../src/store.ts';
+import { MemoryStore, type R2BucketLike } from '../src/store.ts';
 import type { SplitOptions } from '../src/app.ts';
 
 const TS = '20140403040000';
@@ -180,5 +181,41 @@ describe('--relax-content-csp (STOPGAP)', () => {
       assert.equal(res.headers.get('content-security-policy'), null);
       assert.equal(res.headers.get('content-security-policy-report-only'), RELAXED_DOCUMENT_CSP);
     });
+  });
+});
+
+describe('edge adapter — RELAX_CONTENT_CSP threads to the content CSP', () => {
+  /** A fake R2 bucket that always misses (get/head → null). */
+  const emptyBucket: R2BucketLike = {
+    async get() { return null; },
+    async head() { return null; }
+  } as unknown as R2BucketLike;
+
+  /** Whichever CSP header the miss response actually emits (enforce OR report-only). */
+  const cspOf = (res: Response) =>
+    res.headers.get('content-security-policy') ?? res.headers.get('content-security-policy-report-only') ?? '';
+
+  it('RELAX_CONTENT_CSP: "1" → the 404 document CSP admits the archive origins', async () => {
+    const handler = createCloudflareHandler();
+    const res = await handler.fetch(
+      new Request('https://x/20140403040000/http://x/none'),
+      { WAYBACK_CAPTURES: emptyBucket, RELAX_CONTENT_CSP: '1' }
+    );
+    assert.equal(res.status, 404);
+    const csp = cspOf(res);
+    // Matches the ARCHIVE origins constant: both web.archive.org and archive.org.
+    assert.ok(csp.includes('https://web.archive.org'), 'relaxed CSP admits web.archive.org');
+    assert.ok(csp.includes('https://archive.org'), 'relaxed CSP admits archive.org');
+    assert.ok(csp.includes(ARCHIVE), 'relaxed CSP carries the full ARCHIVE origins');
+  });
+
+  it('no relax var (default) → the 404 document CSP is strict, no archive origin', async () => {
+    const handler = createCloudflareHandler();
+    const res = await handler.fetch(
+      new Request('https://x/20140403040000/http://x/none'),
+      { WAYBACK_CAPTURES: emptyBucket }
+    );
+    assert.equal(res.status, 404);
+    assert.ok(!cspOf(res).includes('web.archive.org'), 'strict CSP names no archive origin');
   });
 });

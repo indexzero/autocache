@@ -68,6 +68,15 @@ export interface FastlyHandlerConfig {
    */
   liveFallback?: boolean;
   /**
+   * The `--relax-content-csp` STOPGAP (#508), off by default: widen the content
+   * CSP + the chrome shell framing grants with the archive origins so
+   * un-localized web.archive.org references load live instead of being blocked
+   * (the mobile "content blocked" break). A config boolean — Compute has no
+   * `[vars]`, so this is the Fastly analogue of Cloudflare's `RELAX_CONTENT_CSP`
+   * var. Self-containment is lost while on.
+   */
+  relaxContentCsp?: boolean;
+  /**
    * The chrome/content split (#320): chrome host (attribution shell, no bytes)
    * and content host (capture bytes + `frame-ancestors`), the Fastly analogue
    * of the Cloudflare `CHROME_HOST`/`CONTENT_HOST` vars. Fastly has no runtime
@@ -118,6 +127,7 @@ async function handle(request: Request, config: FastlyHandlerConfig): Promise<Re
   // shape `liveFallback` already uses.
   return createApp(store, {
     liveFallback: config.liveFallback ?? false,
+    relaxContentCsp: config.relaxContentCsp ?? false,
     split: config.split,
     copy: config.copy,
     logger: config.logSilent ? undefined : edgeConsoleLogger()

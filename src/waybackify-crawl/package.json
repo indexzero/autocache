@@ -2,7 +2,6 @@
   "name": "@autocache/waybackify-crawl",
   "version": "0.0.0",
   "description": "The wayback mirror completeness crawler — drives the `remaster verify` dynamic probe (strict-serving browser render, archive.org abort-routed) to a fixpoint, recording browser-discovered dynamic[] requisites until a render makes zero unexpected web.archive.org requests. Depends down on waybackify (facts) + waybackify-serve (the shared serving core); never on render/wayback.",
-  "private": true,
   "type": "module",
   "main": "src/crawl.js",
   "exports": {

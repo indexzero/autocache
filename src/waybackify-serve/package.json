@@ -1,31 +1,120 @@
 {
   "name": "@autocache/waybackify-serve",
   "version": "0.0.0",
-  "description": "The wayback mirror serving core \u2014 one Hono app (/web/<ts><flag?>/<url> router + chrome strip + standalone CSP), the Store abstraction (FsStore/S3Store/R2Store/MemoryStore), and the Node listener (serveCacheRoot/serveBucket). Extracted from render/wayback so production and the crawl probe serve the identical router.",
+  "description": "The wayback mirror serving core — one Hono app (/web/<ts><flag?>/<url> router + chrome strip + standalone CSP), the Store abstraction (FsStore/S3Store/R2Store/MemoryStore), and the Node listener (serveCacheRoot/serveBucket). Extracted from render/wayback so production and the crawl probe serve the identical router.",
   "private": true,
   "type": "module",
   "bin": {
     "waybackify-serve": "./bin/serve.js"
   },
-  "main": "src/app.ts",
   "exports": {
-    ".": "./src/app.ts",
-    "./path": "./src/path.ts",
-    "./store": "./src/store.ts",
-    "./fsstore": "./src/fsstore.ts",
-    "./s3store": "./src/s3store.ts",
-    "./sigv4": "./src/sigv4.ts",
-    "./node": "./src/node.ts",
-    "./html": "./src/html.ts",
-    "./corpus": "./src/corpus.ts",
-    "./cloudflare": "./src/cloudflare.ts",
-    "./fastly": "./src/fastly.ts",
-    "./parity": "./src/parity.ts",
-    "./retry": "./src/retry.ts"
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/esm/app.d.ts",
+        "default": "./dist/esm/app.js"
+      }
+    },
+    "./path": {
+      "import": {
+        "types": "./dist/esm/path.d.ts",
+        "default": "./dist/esm/path.js"
+      }
+    },
+    "./store": {
+      "import": {
+        "types": "./dist/esm/store.d.ts",
+        "default": "./dist/esm/store.js"
+      }
+    },
+    "./fsstore": {
+      "import": {
+        "types": "./dist/esm/fsstore.d.ts",
+        "default": "./dist/esm/fsstore.js"
+      }
+    },
+    "./s3store": {
+      "import": {
+        "types": "./dist/esm/s3store.d.ts",
+        "default": "./dist/esm/s3store.js"
+      }
+    },
+    "./sigv4": {
+      "import": {
+        "types": "./dist/esm/sigv4.d.ts",
+        "default": "./dist/esm/sigv4.js"
+      }
+    },
+    "./node": {
+      "import": {
+        "types": "./dist/esm/node.d.ts",
+        "default": "./dist/esm/node.js"
+      }
+    },
+    "./html": {
+      "import": {
+        "types": "./dist/esm/html.d.ts",
+        "default": "./dist/esm/html.js"
+      }
+    },
+    "./corpus": {
+      "import": {
+        "types": "./dist/esm/corpus.d.ts",
+        "default": "./dist/esm/corpus.js"
+      }
+    },
+    "./cloudflare": {
+      "import": {
+        "types": "./dist/esm/cloudflare.d.ts",
+        "default": "./dist/esm/cloudflare.js"
+      }
+    },
+    "./fastly": {
+      "import": {
+        "types": "./dist/esm/fastly.d.ts",
+        "default": "./dist/esm/fastly.js"
+      }
+    },
+    "./parity": {
+      "import": {
+        "types": "./dist/esm/parity.d.ts",
+        "default": "./dist/esm/parity.js"
+      }
+    },
+    "./retry": {
+      "import": {
+        "types": "./dist/esm/retry.d.ts",
+        "default": "./dist/esm/retry.js"
+      }
+    }
   },
   "scripts": {
+    "build": "tshy",
+    "prepare": "tshy",
     "test": "node --test ./test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.fastly.json"
+  },
+  "tshy": {
+    "project": "tsconfig.build.json",
+    "dialects": [
+      "esm"
+    ],
+    "exports": {
+      "./package.json": "./package.json",
+      ".": "./src/app.ts",
+      "./path": "./src/path.ts",
+      "./store": "./src/store.ts",
+      "./fsstore": "./src/fsstore.ts",
+      "./s3store": "./src/s3store.ts",
+      "./sigv4": "./src/sigv4.ts",
+      "./node": "./src/node.ts",
+      "./html": "./src/html.ts",
+      "./corpus": "./src/corpus.ts",
+      "./cloudflare": "./src/cloudflare.ts",
+      "./fastly": "./src/fastly.ts",
+      "./parity": "./src/parity.ts",
+      "./retry": "./src/retry.ts"
+    }
   },
   "author": "Charlie Robbins <npm@charlie.dev>",
   "license": "Apache-2.0",
@@ -38,6 +127,8 @@
   "devDependencies": {
     "@fastly/js-compute": "^3.43.1",
     "@types/node": "^24.13.2",
+    "tshy": "^4.1.3",
     "typescript": "^6.0.2"
-  }
+  },
+  "module": "./dist/esm/app.js"
 }

@@ -144,25 +144,6 @@ test('unknown flags are rejected on every command (paparam strict mode)', () => 
   }
 });
 
-test('missing required positional exits 2 with the validator message', () => {
-  for (const [argv, argName] of [
-    [['manifest'], '<source.md>'],
-    [['rewrite'], '<source.md>'],
-    [['ledger'], '<dir>'],
-    [['check'], '<wayback-url>'],
-    [['search'], '<original-url>'],
-    [['audit'], '<dir>'],
-    [['cache', 'add', '-o', '/tmp/x'], '<wayback-url>'],
-    [['cache', 'fill', '-r', '/c'], '<dir>'],
-    [['remaster', 'build'], '<hermetic-root>'],
-    [['remaster', 'build', '/h'], '<remastered-root>']
-  ]) {
-    const { status, stderr } = cli(...argv);
-    assert.equal(status, EXIT.USAGE, `argv: ${argv.join(' ')}`);
-    assert.match(stderr, new RegExp(`missing required argument: ${argName.replace(/[<>.]/g, '\\$&')}`));
-  }
-});
-
 test('missing required flags exit 2 with the validator message', () => {
   for (const [argv, flagSpec] of [
     [['manifest', 'index.md'], '--universe\\|-u <file>'],

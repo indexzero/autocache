@@ -138,9 +138,6 @@ Design and operations docs under [`docs/`](docs):
 - [SYNC.md](docs/SYNC.md) — the runbook for projecting a cache root onto Cloudflare R2 and Fastly Object Storage.
 - [GC.md](docs/GC.md) — the garbage-collection design for pruning bucket projections (design only, unimplemented).
 - [SCENE.GRAPH.md](docs/SCENE.GRAPH.md) — the multi-representation crawl model: a URL is a family of renderings, not one artifact.
-- [CRAWLERS.md](docs/CRAWLERS.md) — a survey of prior art from other web crawlers and archivers.
-- [WEBRECORDER.md](docs/WEBRECORDER.md) — an evaluation of Webrecorder-ecosystem tools against this pipeline.
-- [PUBLISHING.md](docs/PUBLISHING.md) — the publish-readiness status of the packages.
 
 ## Tests
 

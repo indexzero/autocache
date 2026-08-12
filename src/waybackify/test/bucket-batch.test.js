@@ -18,7 +18,7 @@ import { emitBucketBatch, emitLine, shellQuote } from '../bucket-batch.js';
 // The stdout/stderr + --dry-run behavior formerly smoke-tested through the
 // library bin now lives in the CLI's `bucket push` command tests — the library
 // ships no bin.
-const FIXTURE_ROOT = fileURLToPath(new URL('../../../render/wayback/test/fixtures/cache-root', import.meta.url));
+const FIXTURE_ROOT = fileURLToPath(new URL('fixtures/cache-root', import.meta.url));
 
 async function mkRoot() {
   return fsp.mkdtemp(path.join(os.tmpdir(), 'bucket-batch-'));

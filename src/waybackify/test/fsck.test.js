@@ -15,7 +15,7 @@ import { commitEntry, entryPaths } from '../cache.js';
 import { fsck, totalFindings, unresolvedFindings, CATEGORIES } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE_ROOT = path.resolve(HERE, '../../../render/wayback/test/fixtures/cache-root');
+const FIXTURE_ROOT = path.resolve(HERE, 'fixtures/cache-root');
 const WRAPPER = fs.readFileSync(path.join(HERE, 'fixtures/interstitial/wrapper-stub.html'), 'utf8');
 
 const mkroot = () => fsp.mkdtemp(path.join(os.tmpdir(), 'waybackify-fsck-'));

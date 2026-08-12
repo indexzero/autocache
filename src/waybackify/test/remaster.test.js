@@ -22,7 +22,7 @@ import { BUILD_NAME, ENGINE_VERSION, remaster } from '../remaster.js';
 // The `remaster <hermetic> <out>` bin smoke now lives in the CLI's
 // `remaster build` command tests — the library ships no bin.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURE_ROOT = path.resolve(HERE, '../../../render/wayback/test/fixtures/cache-root');
+const FIXTURE_ROOT = path.resolve(HERE, 'fixtures/cache-root');
 
 const mkroot = prefix => fsp.mkdtemp(path.join(os.tmpdir(), prefix));
 const bytesOf = s => Buffer.from(s, 'latin1');

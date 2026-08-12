@@ -16,9 +16,7 @@ Use one of these two private channels.
 
 1. Open a private security advisory through GitHub. Go to the Security tab of
    the repository and select "Report a vulnerability".
-2. Email the maintainer at
-   <!-- PLACEHOLDER: replace with a monitored contact -->
-   security@autocache.dev.
+2. Email the maintainer at npm@charlie.dev.
 
 Include these details in your report.
 

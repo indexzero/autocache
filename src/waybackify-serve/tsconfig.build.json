@@ -1,0 +1,26 @@
+{
+  // Emit-oriented base that tshy extends (via the package.json `tshy.project`
+  // field) when it builds src/*.ts -> dist/esm/*.js + *.d.ts. The default
+  // tsconfig.json is deliberately noEmit (it backs `pnpm typecheck` and Node's
+  // native .ts type-stripping for the tests), so tshy can't inherit it without
+  // emitting nothing. This config keeps the same strictness but turns emit on
+  // and — because the sources import each other with explicit .ts extensions —
+  // rewrites those relative .ts specifiers to .js in the output
+  // (rewriteRelativeImportExtensions) so the built .js/.d.ts resolve under
+  // Node's real (extensioned) ESM resolver. tshy overrides module,
+  // moduleResolution, rootDir and outDir on top of this.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  }
+}

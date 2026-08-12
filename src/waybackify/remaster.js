@@ -4,7 +4,7 @@
 //
 // The hermetic root is the sealed truth — captures exactly as archive.org's
 // replay returned them (cache.js's write protocol; layout in
-// spv/waybackify-cli/docs/CACHE.md). The remastered root is the same layout
+// docs/CACHE.md). The remastered root is the same layout
 // with text-bearing bodies rewritten for standalone serving (rewrite.js):
 // chrome stripped, wayback references localized to the root-relative
 // `/web/<ts><flag>/<orig>` form. Everything an FsStore needs to serve —

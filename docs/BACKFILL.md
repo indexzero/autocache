@@ -4,7 +4,7 @@
 wayback mirror bucket image, see [CACHE.md](CACHE.md)) with **every capture
 the ledger under `<dir>` references** — each referenced page **and its
 requisites** (the `im_`/`cs_`/`js_`/`oe_` images, stylesheets, scripts), not just
-the HTML. It is the bulk, resumable form of [`cache add`](../README.md): where
+the HTML. It is the bulk, resumable form of [`cache add`](../src/waybackify-cli/README.md): where
 `cache add` fetches one capture, `cache fill` walks a whole ledger to completion,
 politely and convergently.
 
@@ -32,7 +32,7 @@ waybackify cache fill <dir> --root <root>
    otherwise already-`cached` pages with short closures are never enqueued and
    the run reports "converged" while `cache verify` still flags `incompleteClosure`.
    (`interstitial`/`error` captures are excluded — they need a re-*pick* via
-   [`search`](../README.md) + `cache`, not a refetch of the same URL.)
+   [`search`](../src/waybackify-cli/README.md) + `cache`, not a refetch of the same URL.)
 
 2. **Process the worklist, paced.** Each capture goes through `cacheCapture`
    in-process. A fully-closed page is a free skip (local sidecar reads, no
@@ -97,8 +97,8 @@ waybackify cache fill path/to/your/posts --root /var/cache/wayback --refresh
 
 ## Relationship to the rest of the pipeline
 
-- [`cache add`](../README.md) — one capture; `cache fill` is the whole-ledger form.
-- [`ledger --root`](../README.md) — the audit join `cache fill` builds its
+- [`cache add`](../src/waybackify-cli/README.md) — one capture; `cache fill` is the whole-ledger form.
+- [`ledger --root`](../src/waybackify-cli/README.md) — the audit join `cache fill` builds its
   worklist from (the same rows `ledger --root` prints).
 - [SYNC.md](SYNC.md) — projecting the populated cache root out to R2 / Fastly.
   `bucket push` pushes the bucket *out*; `cache fill` pulls it *in* from the archive.

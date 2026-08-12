@@ -28,7 +28,7 @@ One population is **two passes, treated as ONE operation** — running only one
 leaves the `cap/` and `meta/` layers drift-inconsistent (a bodied object with
 no sidecar, or vice versa):
 
-1. **`cap/`** — [`bucket push`](../src/commands/bucket-push.js)
+1. **`cap/`** — [`bucket push`](../src/waybackify-cli/src/commands/bucket-push.js)
    lists `meta/` and emits `s5cmd run` `cp` lines (bodies + zero-byte bodiless
    objects), each carrying native `Content-Type` + `x-amz-meta-status`. Piped
    to `s5cmd run`.

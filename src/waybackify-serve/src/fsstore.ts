@@ -4,9 +4,9 @@
  * Storage).
  *
  * Reads the position-E cache-root layout the `waybackify cache` writer
- * produces (data structure: spv/waybackify-cli/docs/CACHE.md; the consumer
+ * produces (data structure: docs/CACHE.md; the consumer
  * contract this class implements, clause by clause:
- * spv/waybackify-cli/docs/SERVE.md):
+ * docs/SERVE.md):
  *
  *   <root>/cap/<aa>/<hash>          body bytes, verbatim, no extension
  *   <root>/meta/<aa>/<hash>.json    authoritative sidecar (canonical JSON)

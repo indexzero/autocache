@@ -1,5 +1,5 @@
 // Bucket-population batch emitter — the cap/ half of "project the cache root
-// onto a bucket" (see spv/waybackify-cli/docs/SYNC.md for the end-to-end
+// onto a bucket" (see docs/SYNC.md for the end-to-end
 // runbook; the projection contract is CACHE.md#bucket-projection).
 //
 // Walks the root's meta/ tree and emits one `s5cmd run` command line per

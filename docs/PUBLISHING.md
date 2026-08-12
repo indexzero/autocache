@@ -44,15 +44,15 @@ MIT file is what travels with a tarball (`npm pack` includes a package-level
 
 Both READMEs read correctly outside this repo:
 
-- [`spv/waybackify/README.md`](../../waybackify/README.md) — API usage, the
+- [`spv/waybackify/README.md`](../src/waybackify/README.md) — API usage, the
   Manifest / Universe / Ledger model, schema v2. No repo paths.
-- [`spv/waybackify-cli/README.md`](../README.md) — the pinned surface-v2
+- [`spv/waybackify-cli/README.md`](../src/waybackify-cli/README.md) — the pinned surface-v2
   command table, exit codes, the thin-wrapper rule. References the library as
   `waybackify` (a sibling-relative link that survives extraction), not by this
   repo's `spv/` layout.
 
 The living docs in this directory (CACHE / REMASTER / SERVE / SYNC / GC)
-still cross-link `render/wayback` sources for context; they document the
+still cross-link `src/waybackify-serve` sources for context; they document the
 serving system as much as the packages and are expected to be re-homed or
 trimmed at extraction time.
 

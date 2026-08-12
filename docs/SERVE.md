@@ -27,11 +27,11 @@ to rebuild.
 ## Key → path derivation
 
 Given a capture key `key = ${timestamp}/${originalUrl}` (what
-`render/wayback/src/path.ts` parses out of a request path — flagless: one
+`src/waybackify-serve/src/path.ts` parses out of a request path — flagless: one
 body per (timestamp, url) however the replay framed it):
 
 ```js
-import { capturePath, metaPath } from 'spv/waybackify/key.js'; // or the render/wayback/src/key.ts shim
+import { capturePath, metaPath } from 'spv/waybackify/key.js';
 
 const meta = `${root}/${await metaPath(key)}`;    // <root>/meta/<aa>/<hash>.json
 const body = `${root}/${await capturePath(key)}`; // <root>/cap/<aa>/<hash>
@@ -53,7 +53,7 @@ case EC-2).
 ## `head(key)` / `get(key)`
 
 O(1), one or two syscalls, zero index — this satisfies the
-`Store` interface in `render/wayback/src/store.ts`
+`Store` interface in `src/waybackify-serve/src/store.ts`
 (`head(key) → CaptureMeta | null`, `get(key) → Capture | null`):
 
 ```
@@ -187,5 +187,5 @@ Safe by construction — this is the debate's composability constraint:
 ## Sources
 
 - [CACHE.md](./CACHE.md) — producer-side data structure (layout, schema, write protocol, dissents).
-- Contracts in code: `render/wayback/src/store.ts` (Store/R2Store shapes) · `render/wayback/src/s3store.ts` (the S3 remote read path) · `render/wayback/src/path.ts` (request → capture key) · `spv/waybackify/key.js` (key/hash derivation).
+- Contracts in code: `src/waybackify-serve/src/store.ts` (Store/R2Store shapes) · `src/waybackify-serve/src/s3store.ts` (the S3 remote read path) · `src/waybackify-serve/src/path.ts` (request → capture key) · `spv/waybackify/key.js` (key/hash derivation).
 - External: [Cloudflare R2 limits](https://developers.cloudflare.com/r2/reference/limits/) · [Fastly Compute resource limits](https://docs.fastly.com/products/compute-resource-limits) · [W3C SRI](https://www.w3.org/TR/sri-1/#integrity-metadata-description) · [POSIX rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html).

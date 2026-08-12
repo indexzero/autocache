@@ -3,7 +3,7 @@
 // wrapper over cacheCapture() below; everything load-bearing lives here.
 //
 // ON-DISK LAYOUT (normative — the design debate's position E;
-// field-by-field docs in spv/waybackify-cli/docs/CACHE.md):
+// field-by-field docs in docs/CACHE.md):
 //
 //   <root>/cap/<aa>/<hash>        body bytes, verbatim, NO extension
 //   <root>/meta/<aa>/<hash>.json  authoritative sidecar (canonical JSON)

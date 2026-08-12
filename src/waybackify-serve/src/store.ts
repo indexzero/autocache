@@ -28,7 +28,7 @@ import { capturePath } from '@autocache/waybackify/key.js';
 
 /**
  * What kind of capture an entry is — the cache-root sidecar's discriminator
- * (spv/waybackify-cli/docs/SERVE.md, "Status discriminators"). Body bytes
+ * (docs/SERVE.md, "Status discriminators"). Body bytes
  * exist iff `body`. Stores that predate statuses (R2/KV as populated today)
  * simply omit the field; consumers treat absence as `body`.
  *

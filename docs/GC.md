@@ -5,8 +5,7 @@ This is the mark-and-sweep the hybrid bucket layout was built to enable, plus
 the hard precondition that gates any sweep. It is a sibling to
 [CACHE.md](./CACHE.md) (the on-disk store) and [SERVE.md](./SERVE.md) (the
 consumer contract); a cross-reference from those files lands with the
-docs-home / sync work ([#284](https://github.com/indexzero/charlie.dev/issues/284),
-[#291](https://github.com/indexzero/charlie.dev/issues/291)), not here.
+docs-home / sync work, not here.
 
 ## Contents
 
@@ -26,7 +25,7 @@ bucket-sync architecture. GC never touches the root. GC prunes projections.
 
 Without reachability data, a bucket grows unbounded. The population runbook is
 **copy-only by design** (`s5cmd cp` for `cap/`, `rclone copy` — never `sync` —
-for `meta/`; [#291](https://github.com/indexzero/charlie.dev/issues/291)):
+for `meta/`):
 remote deletion is exclusively GC's job, so a copy-only sync can only ever add
 objects. Re-pointed captures, de-waybacked posts, and extraction-rule churn
 each strand `cap/`+`meta/` object pairs that no reader will ever request and
@@ -48,12 +47,11 @@ Standard tri-color reachability over the capture DAG.
   `web.archive.org/web/…` references in the content tree's published sources
   plus the `wayback.json` manifest entries — all committed — are the set of
   captures the site actually points at
-  ([`ledger.js`](../../waybackify/ledger.js) discovery ∪ the project's own
-  inline enumeration; [#255](https://github.com/indexzero/charlie.dev/issues/255) /
-  [#385](https://github.com/indexzero/charlie.dev/issues/385)). Each root
+  ([`ledger.js`](../src/waybackify/ledger.js) discovery ∪ the project's own
+  inline enumeration). Each root
   reference is a `(timestamp, originalUrl)` pair → a `captureKey` →
   `hash = sha256hex(captureKey)`
-  ([`key.js`](../../waybackify/key.js)). The root set is a set of hashes.
+  ([`key.js`](../src/waybackify/key.js)). The root set is a set of hashes.
 - **Edges — sidecar `requisites[]`.** For a marked hash, read
   `meta/<aa>/<hash>.json`; each entry of its `requisites[]` is a child's
   **verbatim captureKey**; hash it to get the child's object pair. This is the
@@ -69,8 +67,7 @@ Standard tri-color reachability over the capture DAG.
   lone `cap/` is an unservable orphan
   ([SERVE.md §The orphan-body rule](./SERVE.md#the-orphan-body-rule)). The two
   layers move together, the same "treated as ONE operation" rule the
-  population runbook applies to cap↔meta
-  ([#291](https://github.com/indexzero/charlie.dev/issues/291)).
+  population runbook applies to cap↔meta.
 - **Bodiless entries** (`status != "body"`: redirect/error/empty) own no `cap/`
   object — the sidecar is the entire entry. They are marked and swept by
   `meta/` alone.
@@ -131,7 +128,7 @@ importantly — to fence the one that **looks** like an orphan but is reachable.
   null, or an inline ref deleted from prose. The root disappears; its unshared
   subtree becomes unreachable. Same shared-requisite caveat.
 - **Extraction-rule evolution (FALSE orphan — reachable, NOT swept).** The
-  requisite extractor ([`requisites.js`](../../waybackify/requisites.js):
+  requisite extractor ([`requisites.js`](../src/waybackify/requisites.js):
   `im_`/`cs_`/`js_`/`oe_`) changes such that today's rules would no longer
   extract some ref that an **old** document sidecar still lists in
   `requisites[]`. That requisite is **still reachable**, because reachability is
@@ -168,9 +165,7 @@ importantly — to fence the one that **looks** like an orphan but is reachable.
 - **Blast radius is bounded by the archive of record.** Every bucket object is
   reproducible from the local cache-root. The worst case for *any* GC bug —
   over-deletion, divergence, partial sweep — is: re-run the population runbook
-  (copy-only, ~pennies at this corpus size,
-  [#291](https://github.com/indexzero/charlie.dev/issues/291) /
-  [#292](https://github.com/indexzero/charlie.dev/issues/292)). GC can never
+  (copy-only, ~pennies at this corpus size). GC can never
   destroy the only copy, because it never runs against the root. It deletes
   remote projections only.
 
@@ -188,30 +183,21 @@ carry:*
   corpus-ledger generation or the bucket generation has moved since the
   manifest was computed; honors the min-age grace window; deletes `cap/`+`meta/`
   as an atomic pair per hash.
-- Roots from ledger discovery ([`ledger.js`](../../waybackify/ledger.js))
-  joined with the project's inline-reference enumeration
-  ([#255](https://github.com/indexzero/charlie.dev/issues/255) /
-  [#385](https://github.com/indexzero/charlie.dev/issues/385)).
+- Roots from ledger discovery ([`ledger.js`](../src/waybackify/ledger.js))
+  joined with the project's inline-reference enumeration.
 - Reachability defined **solely** by roots + sidecar `requisites[]`. A test
   pins that an extraction-rule change does **not** orphan a still-referenced
   requisite (the false-orphan fence).
 - Idempotent re-runs; a partial sweep is resumable.
 - Post-sweep verification: a fresh mark reports zero reachable objects missing
-  (no live object was deleted) — pairs with the parity gate
-  ([#292](https://github.com/indexzero/charlie.dev/issues/292)).
+  (no live object was deleted) — pairs with the parity gate.
 - No code path deletes the local root. GC targets a bucket only.
 
 ## Sources
 
 - Store: [CACHE.md](./CACHE.md) (layout, sidecar schema, requisite DAG, the
   GC-safety dissent) · [SERVE.md](./SERVE.md) (orphans, copy-only sync loops).
-- Code: [`cache.js`](../../waybackify/cache.js) (`commitEntry`, `requisites[]`)
-  · [`key.js`](../../waybackify/key.js) (`captureKey` → `hash`) ·
-  [`ledger.js`](../../waybackify/ledger.js) (corpus ledger roots) ·
-  [`requisites.js`](../../waybackify/requisites.js) (extraction rules).
-- Bucket-sync milestone: shared layout contract
-  [#284](https://github.com/indexzero/charlie.dev/issues/284) · sync emitter +
-  copy-only runbook [#291](https://github.com/indexzero/charlie.dev/issues/291)
-  · population + parity gate
-  [#292](https://github.com/indexzero/charlie.dev/issues/292) · this spec
-  [#293](https://github.com/indexzero/charlie.dev/issues/293).
+- Code: [`cache.js`](../src/waybackify/cache.js) (`commitEntry`, `requisites[]`)
+  · [`key.js`](../src/waybackify/key.js) (`captureKey` → `hash`) ·
+  [`ledger.js`](../src/waybackify/ledger.js) (corpus ledger roots) ·
+  [`requisites.js`](../src/waybackify/requisites.js) (extraction rules).

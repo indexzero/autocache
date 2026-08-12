@@ -26,11 +26,11 @@ Requires Node ≥ 24 (the serve tests run TypeScript directly) and pnpm 10.
 
 ## Design docs
 
-Under [`src/waybackify-cli/docs/`](src/waybackify-cli/docs):
+Under [`docs/`](docs):
 
-- [SCENE.GRAPH.md](src/waybackify-cli/docs/SCENE.GRAPH.md) — the multi-representation crawl model: a URL is a family of renderings, not one artifact
-- [REMASTER.md](src/waybackify-cli/docs/REMASTER.md) — the standalone remaster tier (no archive.org byte survives)
-- [CACHE.md](src/waybackify-cli/docs/CACHE.md) · [CRAWLERS.md](src/waybackify-cli/docs/CRAWLERS.md) · [SERVE.md](src/waybackify-cli/docs/SERVE.md) · [SYNC.md](src/waybackify-cli/docs/SYNC.md) · [GC.md](src/waybackify-cli/docs/GC.md)
+- [SCENE.GRAPH.md](docs/SCENE.GRAPH.md) — the multi-representation crawl model: a URL is a family of renderings, not one artifact
+- [REMASTER.md](docs/REMASTER.md) — the standalone remaster tier (no archive.org byte survives)
+- [CACHE.md](docs/CACHE.md) · [CRAWLERS.md](docs/CRAWLERS.md) · [SERVE.md](docs/SERVE.md) · [SYNC.md](docs/SYNC.md) · [GC.md](docs/GC.md)
 
 ## License
 

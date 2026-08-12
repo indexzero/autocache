@@ -12,7 +12,7 @@ identity-keyed body + authoritative sidecar recording a content hash
 record-on-write integrity, minus cacache's authoritative index"). The
 decisions, dissents, and edge cases that debate produced are reproduced in
 full throughout this document. Implementation:
-[`spv/waybackify/cache.js`](../../waybackify/cache.js). Consumer contract:
+[`spv/waybackify/cache.js`](../src/waybackify/cache.js). Consumer contract:
 [SERVE.md](./SERVE.md).
 
 ## Contents
@@ -78,9 +78,8 @@ captureKey  = `${timestamp}/${originalUrl}`      (verbatim, UTF-8)
 hash        = sha256hex(captureKey)              (64 lowercase hex chars)
 ```
 
-Derived by ONE shared module — [`spv/waybackify/key.js`](../../waybackify/key.js),
-extracted from `render/wayback/src/key.ts` (now a re-export shim), so
-the writer (this CLI) and the server derive **byte-identical** names. The
+Derived by ONE shared module — [`spv/waybackify/key.js`](../src/waybackify/key.js),
+so the writer (this CLI) and the server derive **byte-identical** names. The
 pinned digest `sha256('20140403040000/http://example.com/') = 77c4b856…` is
 tested on both sides as the cross-package tripwire.
 
@@ -148,7 +147,7 @@ text/html), a **redirect interstitial** (archive navbar chrome plus a
 replay lies with a 200. `commitEntry` **refuses** to store any of these as a
 body: the signature fires, and the entry commits `interstitial` — bodiless,
 recording `signature` (and a redirect's `target`). The detection lives in
-[`spv/waybackify/interstitial.js`](../../waybackify/interstitial.js); the
+[`spv/waybackify/interstitial.js`](../src/waybackify/interstitial.js); the
 `archived-error` signature is network-derived and arrives INJECTED (`cdxStatus`),
 so detection itself never touches the wire. Wrapper-stub remediation refetches
 the raw bytes with wayback's `id_` flag (`refetchRaw`); the corpus-wide run is
@@ -173,7 +172,7 @@ sorted and stringifies; control characters in strings are escaped by
 ## Write / atomicity protocol
 
 Per entry — this is normative; `commitEntry()` in
-[`cache.js`](../../waybackify/cache.js) is the only writer:
+[`cache.js`](../src/waybackify/cache.js) is the only writer:
 
 ```
 1. stream body → tmp/<hash>.<pid>-<rand>.part      hashing as bytes flow
@@ -252,7 +251,7 @@ keys never share paths. Acceptance criterion EC-3 pins this.
 For an HTML document, every `im_`/`cs_`/`js_`/`oe_`-flagged wayback ref in
 the replayed body is a **page requisite** — the asset URLs the replay itself
 rewrote to point back into the archive
-([`requisites.js`](../../waybackify/requisites.js); `if_`/`id_` frame the
+([`requisites.js`](../src/waybackify/requisites.js); `if_`/`id_` frame the
 page and are not requisites).
 
 - Edges live in the document sidecar's `requisites[]` — written atomically
@@ -273,7 +272,7 @@ page and are not requisites).
 - Requisite *fetch* URLs keep the replay flag (`…/web/<ts>im_/<original>` —
   the flagged replay serves the raw asset bytes); requisite *identity* is
   flagless (`key = <ts>/<original>` — one body per (timestamp, url) however
-  it's framed, per `render/wayback/src/path.ts`). On resume the flags are
+  it's framed, per `src/waybackify-serve/src/path.ts`). On resume the flags are
   recovered by re-extracting from the stored document body — the normative
   edge list stays flagless.
 
@@ -411,8 +410,8 @@ everything you see is `cap/` + `meta/` + `tmp/`.
 Verification dissent below): a store without a verify pass rots silently,
 because `contentHash` recorded at write only pays off when something later
 re-checks it. It is exposed as **`waybackify cache verify`** (handler:
-[`spv/waybackify-cli/src/commands/cache-verify.js`](../src/commands/cache-verify.js);
-engine: [`spv/waybackify/fsck.js`](../../waybackify/fsck.js)).
+[`spv/waybackify-cli/src/commands/cache-verify.js`](../src/waybackify-cli/src/commands/cache-verify.js);
+engine: [`spv/waybackify/fsck.js`](../src/waybackify/fsck.js)).
 
 ```
 waybackify cache verify --root <store> [--fix] [--json] [--quiet]

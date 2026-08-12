@@ -1,9 +1,9 @@
 # The remaster build — hermetic in, remastered out
 
 Living documentation for `waybackify remaster build <hermetic-root> <remastered-root>`
-(handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/commands/remaster-build.js);
-engine: [`spv/waybackify/rewrite.js`](../../waybackify/rewrite.js);
-build: [`spv/waybackify/remaster.js`](../../waybackify/remaster.js)).
+(handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js);
+engine: [`spv/waybackify/rewrite.js`](../src/waybackify/rewrite.js);
+build: [`spv/waybackify/remaster.js`](../src/waybackify/remaster.js)).
 
 This is the heart of **standalone**. The #292 milestone proved the buckets
 faithfully mirror the corpus; a browser sweep then proved the mirror is a
@@ -54,7 +54,7 @@ Mechanism classes (from the sweep):
 
 Every rewrite targets the **root-relative `/web/<ts><flag>/<orig>` form** —
 the one shape that resolves against any host, because the serving path parser
-([`render/wayback/src/path.ts`](../../../render/wayback/src/path.ts)) accepts
+([`src/waybackify-serve/src/path.ts`](../src/waybackify-serve/src/path.ts)) accepts
 the optional `/web` prefix as a first-class capture request. A reference is
 rewritten **only when its capture exists in the corpus**; anything
 unsatisfiable is left byte-for-byte **foreign**, so a strict serve or remaster verify
@@ -68,7 +68,7 @@ it" — the tightest possible coupling between what we rewrite to and what
 resolves.
 
 The **toolbar strip** is a faithful port of the serve-time transform
-([`render/wayback/src/html.ts#stripWaybackChrome`](../../../render/wayback/src/html.ts)):
+([`src/waybackify-serve/src/html.ts#stripWaybackChrome`](../src/waybackify-serve/src/html.ts)):
 the comment-delimited toolbar block, the `_static` script/CSS includes, the
 `__wm` / analytics / Ruffle bootstrap, and the injector's marker comment. The
 one intentional difference: **no attribution banner is injected**. Capture
@@ -117,7 +117,7 @@ tracks the reference-rewriting behavior; `engineVersion` tracks the build's
 output contract. remaster verify reads this record to prove a remastered tree is a
 current, faithful derivation of its hermetic source. (It is deliberately not
 called a "manifest": in waybackify a
-[Manifest](../../waybackify/README.md#manifest--universe--ledger) is a
+[Manifest](../src/waybackify/README.md#manifest--universe--ledger) is a
 `wayback.json` rewrite program — this file is a build artifact.)
 
 ## Determinism
@@ -141,8 +141,8 @@ the deterministic rewrite engine, the build record sorts its entries. Proven in
 
 ## Sources
 
-- Engine: [`spv/waybackify/rewrite.js`](../../waybackify/rewrite.js),
-  strip port: [`spv/waybackify/strip.js`](../../waybackify/strip.js)
-- Build: [`spv/waybackify/remaster.js`](../../waybackify/remaster.js),
-  handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/commands/remaster-build.js)
+- Engine: [`spv/waybackify/rewrite.js`](../src/waybackify/rewrite.js),
+  strip port: [`spv/waybackify/strip.js`](../src/waybackify/strip.js)
+- Build: [`spv/waybackify/remaster.js`](../src/waybackify/remaster.js),
+  handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js)
 - Serving contract: [SERVE.md](./SERVE.md) · store: [CACHE.md](./CACHE.md)

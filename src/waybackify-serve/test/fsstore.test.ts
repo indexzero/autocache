@@ -1,6 +1,6 @@
 /**
  * FsStore contract tests — the cache-root consumer semantics, clause by
- * clause (spv/waybackify-cli/docs/SERVE.md):
+ * clause (docs/SERVE.md):
  *
  * - the sidecar is the entry: orphan cap/ files are ABSENT, bodiless
  *   statuses are COMPLETE;

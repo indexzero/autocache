@@ -90,7 +90,9 @@
   "scripts": {
     "build": "tshy",
     "prepare": "tshy",
+    "pretest": "tshy",
     "test": "node --test ./test/*.test.ts",
+    "pretypecheck": "tshy",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.fastly.json"
   },
   "tshy": {
@@ -117,6 +119,11 @@
   },
   "author": "Charlie Robbins <npm@charlie.dev>",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indexzero/autocache.git",
+    "directory": "src/waybackify-serve"
+  },
   "dependencies": {
     "@hono/node-server": "^2.0.8",
     "hono": "^4.12.29",

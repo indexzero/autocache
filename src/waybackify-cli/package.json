@@ -17,6 +17,11 @@
   ],
   "author": "Charlie Robbins <npm@charlie.dev>",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indexzero/autocache.git",
+    "directory": "src/waybackify-cli"
+  },
   "dependencies": {
     "@autocache/waybackify": "workspace:*",
     "@autocache/waybackify-crawl": "workspace:*",

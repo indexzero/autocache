@@ -18,6 +18,8 @@
     "build": "pnpm -r build",
     "pretest": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "presmoke:pack": "pnpm -r --if-present build",
+    "smoke:pack": "node scripts/smoke-pack.mjs"
   }
 }

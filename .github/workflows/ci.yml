@@ -35,3 +35,14 @@ jobs:
 
       - name: Typecheck
         run: pnpm -r typecheck
+
+      # The two smokes cover the layer tsc and the tests cannot: what actually
+      # ships. Pack proves every manifest entry-point claim (exports/main/bin)
+      # names a file inside the tarball npm would publish; edge proves the
+      # ./fastly and ./cloudflare graphs bundle from the built dist under the
+      # real deploy bundlers (js-compute-runtime, esbuild-with-worker-conditions).
+      - name: Pack smoke
+        run: pnpm run smoke:pack
+
+      - name: Edge bundle smoke
+        run: pnpm --filter @autocache/waybackify-serve run smoke:edge

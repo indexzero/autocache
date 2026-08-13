@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.tshy/
+.tshy-build/
 *.tsbuildinfo
 coverage/
 .DS_Store

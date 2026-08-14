@@ -1,0 +1,16 @@
+{
+  "name": "@autocache/example-hypertext",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An homage corpus — the voices that led to autocache, mirrored by autocache. Doubles as the standalone go/no-go: the pipeline runs against the packed tarballs through npm, never the workspace.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "pipeline": "bash ./pipeline.sh",
+    "smoke": "node ./smoke.mjs"
+  },
+  "dependencies": {
+    "@autocache/waybackify-cli": "0.0.0",
+    "@autocache/waybackify-serve": "0.0.0"
+  }
+}

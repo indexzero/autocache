@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "entries": {
+    "https://www.karlton.org/2017/12/naming-things-hard/": {
+      "wayback": "https://web.archive.org/web/20190429012020/http://www.karlton.org:80/2017/12/naming-things-hard/",
+      "timestamp": "20190429012020",
+      "checkedAt": "2026-08-13T20:51:52.278Z"
+    },
+    "https://www.martinfowler.com/bliki/TwoHardThings.html": {
+      "wayback": "https://web.archive.org/web/20090816174451/http://www.martinfowler.com:80/bliki/TwoHardThings.html",
+      "timestamp": "20090816174451",
+      "checkedAt": "2026-08-13T20:51:03.391Z"
+    },
+    "https://www.rfc-editor.org/rfc/rfc3986": {
+      "wayback": "https://web.archive.org/web/20190826051105/https://www.rfc-editor.org/rfc/rfc3986",
+      "timestamp": "20190826051105",
+      "checkedAt": "2026-08-13T20:50:39.917Z"
+    },
+    "https://www.rfc-editor.org/rfc/rfc9111": {
+      "wayback": "https://web.archive.org/web/20220213082001/https://www.rfc-editor.org/rfc/rfc9111",
+      "timestamp": "20220213082001",
+      "checkedAt": "2026-08-13T20:50:57.378Z"
+    }
+  }
+}

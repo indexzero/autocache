@@ -1,0 +1,6 @@
+{
+  "rewrites": {},
+  "exclude": [
+    "https://web.archive.org/"
+  ]
+}

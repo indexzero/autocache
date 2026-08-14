@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "entries": {
+    "https://slsa.dev": {
+      "wayback": "https://web.archive.org/web/20210630235326/https://slsa.dev/",
+      "timestamp": "20210630235326",
+      "checkedAt": "2026-08-13T20:49:27.501Z"
+    },
+    "https://www.nature.com/articles/218019a0": {
+      "wayback": "https://web.archive.org/web/20211121012721/https://www.nature.com/articles/218019a0",
+      "timestamp": "20211121012721",
+      "checkedAt": "2026-08-13T20:48:22.238Z"
+    },
+    "https://www.w3.org/TR/prov-overview/": {
+      "wayback": "https://web.archive.org/web/20130120155649/http://www.w3.org/TR/prov-overview/",
+      "timestamp": "20130120155649",
+      "checkedAt": "2026-08-13T20:49:59.500Z"
+    }
+  }
+}

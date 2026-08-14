@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "entries": {
+    "https://dl.acm.org/doi/10.1145/800197.806036": {
+      "wayback": "https://web.archive.org/web/20200604090248/https://dl.acm.org/doi/10.1145/800197.806036",
+      "timestamp": "20200604090248",
+      "checkedAt": "2026-08-13T20:39:53.658Z"
+    },
+    "https://en.wikipedia.org/wiki/HyperCard": {
+      "wayback": "https://web.archive.org/web/20031222104102/http://en.wikipedia.org/wiki/Hypercard",
+      "timestamp": "20031222104102",
+      "checkedAt": "2026-08-13T20:37:39.642Z"
+    },
+    "https://en.wikipedia.org/wiki/Transclusion": {
+      "wayback": "https://web.archive.org/web/20040111083359/http://en.wikipedia.org:80/wiki/Transclusion",
+      "timestamp": "20040111083359",
+      "checkedAt": "2026-08-13T20:35:12.102Z"
+    },
+    "https://ics.uci.edu/~fielding/pubs/dissertation/top.htm": {
+      "wayback": "https://web.archive.org/web/20011012065427/http://www.ics.uci.edu:80/~fielding/pubs/dissertation/top.htm",
+      "timestamp": "20011012065427",
+      "checkedAt": "2026-08-13T20:42:28.703Z"
+    },
+    "https://www.dougengelbart.org/content/view/138/": {
+      "wayback": "https://web.archive.org/web/20181109144946/http://www.dougengelbart.org:80/content/view/138/",
+      "timestamp": "20181109144946",
+      "checkedAt": "2026-08-13T20:43:43.175Z"
+    },
+    "https://www.theatlantic.com/magazine/archive/1945/07/as-we-may-think/303881/": {
+      "wayback": "https://web.archive.org/web/20120819084741/http://www.theatlantic.com:80/magazine/archive/1945/07/as-we-may-think/303881/",
+      "timestamp": "20120819084741",
+      "checkedAt": "2026-08-13T20:34:10.652Z"
+    },
+    "https://www.w3.org/History/1989/proposal.html": {
+      "wayback": "https://web.archive.org/web/19970605093430/http://www.w3.org:80/History/1989/proposal.html",
+      "timestamp": "19970605093430",
+      "checkedAt": "2026-08-13T20:38:01.211Z"
+    },
+    "https://xanadu.net": {
+      "wayback": "https://web.archive.org/web/19970411224740/http://xanadu.net:80/",
+      "timestamp": "19970411224740",
+      "checkedAt": "2026-08-13T20:42:46.483Z"
+    }
+  }
+}

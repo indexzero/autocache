@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "entries": {
+    "https://dl.acm.org/doi/10.1145/359545.359563": {
+      "wayback": "https://web.archive.org/web/20200219214434/https://dl.acm.org/doi/10.1145/359545.359563",
+      "timestamp": "20200219214434",
+      "checkedAt": "2026-08-13T20:46:06.870Z"
+    },
+    "https://en.wikipedia.org/wiki/Temporal_database": {
+      "wayback": "https://web.archive.org/web/20050112102752/http://en.wikipedia.org:80/wiki/Temporal_database",
+      "timestamp": "20050112102752",
+      "checkedAt": "2026-08-13T20:44:15.448Z"
+    },
+    "https://inria.hal.science/inria-00555588": {
+      "wayback": "https://web.archive.org/web/20230503181436/http://inria.hal.science/inria-00555588",
+      "timestamp": "20230503181436",
+      "checkedAt": "2026-08-13T20:45:05.290Z"
+    },
+    "https://martinfowler.com/eaaDev/EventSourcing.html": {
+      "wayback": "https://web.archive.org/web/20051215101256/http://www.martinfowler.com:80/eaaDev/EventSourcing.html",
+      "timestamp": "20051215101256",
+      "checkedAt": "2026-08-13T20:44:26.835Z"
+    },
+    "https://www.rfc-editor.org/rfc/rfc7089": {
+      "wayback": "https://web.archive.org/web/20190606185719/https://www.rfc-editor.org/rfc/rfc7089",
+      "timestamp": "20190606185719",
+      "checkedAt": "2026-08-13T20:43:53.654Z"
+    },
+    "https://www.rfc-editor.org/rfc/rfc9110": {
+      "wayback": "https://web.archive.org/web/20220213082000/https://www.rfc-editor.org/rfc/rfc9110",
+      "timestamp": "20220213082000",
+      "checkedAt": "2026-08-13T20:44:06.584Z"
+    }
+  },
+  "exclude": [
+    "https://web.archive.org/"
+  ]
+}

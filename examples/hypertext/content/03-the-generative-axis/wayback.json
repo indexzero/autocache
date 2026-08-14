@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "entries": {
+    "https://arxiv.org/abs/1904.09751": {
+      "wayback": "https://web.archive.org/web/20190510101827/https://arxiv.org/abs/1904.09751",
+      "timestamp": "20190510101827",
+      "checkedAt": "2026-08-13T20:46:45.874Z"
+    },
+    "https://arxiv.org/abs/2005.11401": {
+      "wayback": "https://web.archive.org/web/20200607223030/https://arxiv.org/abs/2005.11401",
+      "timestamp": "20200607223030",
+      "checkedAt": "2026-08-13T20:47:21.244Z"
+    },
+    "https://generative.ink/posts/loom-interface-to-the-multiverse/": {
+      "wayback": "https://web.archive.org/web/20210303135619/https://generative.ink/posts/loom-interface-to-the-multiverse/",
+      "timestamp": "20210303135619",
+      "checkedAt": "2026-08-13T20:46:29.728Z"
+    },
+    "https://github.com/mxgmn/WaveFunctionCollapse": {
+      "wayback": "https://web.archive.org/web/20160930155435/https://github.com/mxgmn/WaveFunctionCollapse",
+      "timestamp": "20160930155435",
+      "checkedAt": "2026-08-13T20:48:08.020Z"
+    },
+    "https://github.com/socketteer/loom": {
+      "wayback": "https://web.archive.org/web/20210702133512/https://github.com/socketteer/loom",
+      "timestamp": "20210702133512",
+      "checkedAt": "2026-08-13T20:46:17.679Z"
+    }
+  }
+}

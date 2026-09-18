@@ -4,8 +4,15 @@ on:
   release:
     types: [published]
 
+# Trusted publishing: the job authenticates to npm with a short-lived OIDC
+# token (id-token: write), matched against each package's Trusted Publisher
+# binding (this repo + this workflow file) on npmjs.com. No NPM_TOKEN secret
+# is needed, and provenance attestations come with it for free. pnpm 10
+# speaks the OIDC exchange natively (the packageManager pin governs; pnpm 11
+# needs >= 11.1.3).
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -32,5 +39,3 @@ jobs:
 
       - name: Publish to npm
         run: pnpm -r publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

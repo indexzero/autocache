@@ -11,16 +11,17 @@
 //   2. If the root redirects to another repo, graft the original path
 //      verbatim onto the new owner/repo, and re-verify the grafted URL.
 //   3. A grafted URL that answers is a rename: a rewrite candidate.
-//   4. A conclusive reply leaves the 404 standing: a root that answers 2xx
-//      itself, a root or a grafted URL that answers 404 or 410, or a redirect
-//      to the same repo. Only then can a caller record a terminal verdict.
+//   4. A conclusive reply leaves the 404 standing. The root answers 2xx
+//      itself, the root or the grafted URL answers 404 or 410, or the root
+//      redirects to the same repo. Only then can a caller record a terminal
+//      verdict.
 //
-// Every other reply is inconclusive and THROWS: a 403, a 408, a 429, a 5xx, a
-// redirect off GitHub or without a Location, a grafted URL that redirects out
-// of the renamed repo, a 3xx that is not a redirect, or a network error. Thus
-// no caller records a verdict on a guess, and the caller defers the link.
-// Backfill (gone.jsonl) and manifest generation (the `exclude` verdict) share
-// this one helper.
+// Every other reply is inconclusive and THROWS. That covers a 403, a 408, a
+// 429, a 5xx, a 3xx that is not a redirect, and a network error. It also
+// covers a redirect off GitHub or without a Location, and a grafted URL that
+// redirects out of the renamed repo. Thus no caller records a verdict on a
+// guess, and the caller defers the link. Backfill (gone.jsonl) and manifest
+// generation (the `exclude` verdict) share this one helper.
 
 const ORIGIN = 'https://github.com';
 const HOST_RE = /^(?:www\.)?github\.com$/;
@@ -149,12 +150,13 @@ const MAX_GRAFT_HOPS = 5;
  * Fetch the grafted URL and walk its redirects by hand, one hop at a time.
  * Every hop must stay inside the renamed repo: a deep link on github.com's
  * default port under the same owner/repo, or that repo's root. A
- * `redirect: 'follow'` fetch hides the chain, so a login page that answers
- * 200 looks like a verdict about the graft, whether it sits on another host
- * or at `github.com/login`. The walk keeps the final reply attributable to
- * the repo. A hop off GitHub, a hop to a GitHub route or another repo, a hop
- * with no Location, or a chain longer than MAX_GRAFT_HOPS is inconclusive.
- * So is a grafted URL that resolves outside `target` before the first fetch.
+ * `redirect: 'follow'` fetch hides the chain. A login page that answers 200
+ * then looks like a verdict about the graft, on another host or at
+ * `github.com/login` alike. The walk keeps the final reply attributable to
+ * the repo. A hop off GitHub, to a GitHub route, or to another repo is
+ * inconclusive. So is a hop with no Location, a chain longer than
+ * MAX_GRAFT_HOPS, and a grafted URL that resolves outside `target` before
+ * the first fetch.
  * @param {Function} fetch
  * @param {string} to - the grafted URL
  * @param {{ owner: string, repo: string }} target - the renamed repo

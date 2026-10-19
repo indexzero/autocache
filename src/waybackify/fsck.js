@@ -92,9 +92,12 @@
 // same size, and a status rotted to a bodiless value that also drops
 // contentHash and contentLength. No check can see either one. So --fix never
 // deletes a body file. It MOVES each orphan into the quarantine directory
-// trash/<run>/cap/<dd>/<digest> inside the root (same filesystem, one
-// rename), keeps the relative path, and reports each move. A later run never
-// scans trash/ as live content. An operator restores a body by moving it back
+// trash/<run>/cap/<dd>/<digest> inside the root, keeps the relative path, and
+// reports each move. <run> is `<ISO timestamp>-<pid>-<random>`, created with
+// an exclusive mkdir, so two runs never share a directory, and the move is a
+// hard link plus an unlink, so it never replaces an existing file. A move that
+// fails stays a finding. trash/ carries a marker file (TRASH_MARKER) that says
+// this tool created it. A later run never scans trash/ as live content. An operator restores a body by moving it back
 // to cap/<dd>/<digest>, and empties the quarantine with `cache verify
 // --empty-trash` (emptyTrash below). Stale tmp/ files are still deleted: a
 // tmp file was never renamed into place, so nothing can name it.
@@ -141,6 +144,8 @@ const REAPABLE = new Set(CATEGORIES.filter(c => c.severity === 'reapable').map(c
 
 /** The quarantine directory inside a root. fsck never scans it as live content. */
 export const TRASH_DIR = 'trash';
+/** The marker file inside trash/ that says this tool created the quarantine. */
+export const TRASH_MARKER = '.fsck-quarantine';
 
 /** Every legal sidecar.status (SERVE.md). A sidecar outside this set is malformed. */
 const STATUSES = new Set(['body', 'empty', 'redirect', 'error', 'interstitial']);
@@ -188,6 +193,54 @@ async function walkFiles(dir) {
     else if (ent.isFile()) out.push({ path: full, size: (await fsp.stat(full)).size });
   }
   return out;
+}
+
+/**
+ * Move a file without ever replacing an existing destination. A hard link
+ * fails with EEXIST when the destination exists, and an unlink of the source
+ * completes the move. A filesystem without hard links gets a copy with
+ * COPYFILE_EXCL, which fails the same way. Exported for its own tests.
+ * @param {string} from
+ * @param {string} to
+ */
+export async function moveNoReplace(from, to) {
+  try {
+    await fsp.link(from, to);
+  } catch (error) {
+    if (!['EPERM', 'ENOTSUP', 'EXDEV', 'ENOSYS', 'EOPNOTSUPP'].includes(error.code)) throw error;
+    await fsp.copyFile(from, to, fs.constants.COPYFILE_EXCL);
+  }
+  await fsp.unlink(from);
+}
+
+/**
+ * Create this run's quarantine directory, `trash/<ISO timestamp>-<pid>-<random>`,
+ * with an exclusive mkdir, so two runs (even in the same millisecond) never
+ * share one. Writes the quarantine marker when trash/ is new. Refuses a
+ * trash/ that this tool did not create (no marker) or that is a symlink.
+ * @param {string} root
+ * @returns {Promise<string>} the run directory
+ */
+async function createRunDir(root) {
+  const trash = path.join(root, TRASH_DIR);
+  await fsp.mkdir(trash, { recursive: true });
+  const marker = path.join(trash, TRASH_MARKER);
+  try {
+    await fsp.writeFile(marker, `${JSON.stringify({ tool: 'waybackify cache verify', created: new Date().toISOString() })}\n`, { flag: 'wx' });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const runDir = path.join(trash, `${stamp}-${process.pid}-${crypto.randomBytes(3).toString('hex')}`);
+    try {
+      await fsp.mkdir(runDir);
+      return runDir;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+  throw new Error(`fsck: could not create a unique quarantine directory under ${trash}`);
 }
 
 /**
@@ -279,7 +332,7 @@ export async function fsck(root, options = {}) {
   }
   // The quarantine is inventoried, never verified: a body in trash/ is not
   // live content, and nothing in it is a finding.
-  const trashFiles = (await walkFiles(path.join(root, TRASH_DIR))).length;
+  const trashFiles = (await walkFiles(path.join(root, TRASH_DIR))).filter(f => path.basename(f.path) !== TRASH_MARKER).length;
 
   // ---- sidecar sweep (the authority) ---------------------------------------
   const metaFiles = (await walkShards(root, 'meta')).filter(f => f.name.endsWith('.json'));
@@ -482,23 +535,33 @@ export async function fsck(root, options = {}) {
 
   // ---- --fix: act ONLY on the safe classes ----------------------------------
   // An orphan body is MOVED into this run's quarantine directory, under its
-  // own relative path (trash/<run>/cap/<dd>/<digest>), by one rename on the
-  // same filesystem. A stale tmp/ file is deleted. See QUARANTINE, NOT
-  // DELETION in the header for why a body is never deleted.
+  // own relative path (trash/<run>/cap/<dd>/<digest>). The directory is
+  // created exclusively (createRunDir) and the move never replaces a file
+  // (moveNoReplace), so one run can never overwrite another run's evidence. A
+  // stale tmp/ file is deleted. See QUARANTINE, NOT DELETION in the header.
   let reaped = null;
   if (fix) {
     reaped = { orphanCap: [], staleTmp: [], trash: null, moves: [] };
-    const runDir = path.join(root, TRASH_DIR, new Date().toISOString().replace(/[:.]/g, '-'));
-    for (const f of findings.orphanCap) {
+    let runDir = null;
+    if (findings.orphanCap.length > 0) {
+      try {
+        runDir = await createRunDir(root);
+      } catch (error) {
+        // No quarantine directory, no moves: every orphan stays a finding.
+        for (const f of findings.orphanCap) f.reapError = error.message;
+      }
+    }
+    for (const f of runDir === null ? [] : findings.orphanCap) {
       const to = path.join(runDir, 'cap', f.aa, f.hash);
       try {
         await fsp.mkdir(path.dirname(to), { recursive: true });
-        await fsp.rename(f.path, to);
+        await moveNoReplace(f.path, to);
         reaped.orphanCap.push(f.path);
         reaped.moves.push({ from: f.path, to });
         reaped.trash = runDir;
       } catch (error) {
-        // A move that fails (permissions, race) stays a finding — surface it.
+        // A move that fails (permissions, an existing destination) stays a
+        // finding — surface it. Nothing was replaced.
         f.reapError = error.message;
       }
     }
@@ -533,7 +596,7 @@ export async function fsck(root, options = {}) {
  */
 export async function emptyTrash(root) {
   const dir = path.join(root, TRASH_DIR);
-  const files = await walkFiles(dir);
+  const files = (await walkFiles(dir)).filter(f => path.basename(f.path) !== TRASH_MARKER);
   await fsp.rm(dir, { recursive: true, force: true });
   return { path: dir, files: files.length, bytes: files.reduce((n, f) => n + f.size, 0) };
 }

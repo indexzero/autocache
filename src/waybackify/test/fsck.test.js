@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bodyFile, commitEntry, entryPaths } from '../cache.js';
-import { emptyTrash, fsck, totalFindings, unresolvedFindings, CATEGORIES, TRASH_DIR } from '../fsck.js';
+import { emptyTrash, fsck, moveNoReplace, totalFindings, unresolvedFindings, CATEGORIES, TRASH_DIR, TRASH_MARKER } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.resolve(HERE, 'fixtures/cache-root');
@@ -396,8 +396,51 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     assert.deepEqual(await emptyTrash(root), { path: path.join(root, TRASH_DIR), files: 0, bytes: 0 }, 'emptying an empty quarantine is a no-op');
   });
 
+  it('two --fix runs in the same millisecond get distinct quarantine directories, and both evidences survive', async () => {
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'first orphan evidence');
+    // Pin the clock: both runs observe the same ISO timestamp.
+    const RealDate = Date;
+    globalThis.Date = class extends RealDate {
+      constructor(...args) {
+        super(...(args.length ? args : ['2026-10-19T16:00:00.000Z']));
+      }
+    };
+    let first, second;
+    try {
+      first = await fsck(root, { fix: true });
+      await fsp.writeFile(orphan, 'second orphan evidence'); // the same cap/ path, new bytes
+      second = await fsck(root, { fix: true });
+    } finally {
+      globalThis.Date = RealDate;
+    }
+    assert.notEqual(first.reaped.trash, second.reaped.trash, 'distinct run directories');
+    assert.notEqual(first.reaped.moves[0].to, second.reaped.moves[0].to, 'distinct destinations');
+    assert.equal(fs.readFileSync(first.reaped.moves[0].to, 'utf8'), 'first orphan evidence', 'the first evidence survives');
+    assert.equal(fs.readFileSync(second.reaped.moves[0].to, 'utf8'), 'second orphan evidence');
+    assert.equal((await fsck(root)).counts.trashFiles, 2);
+    assert.ok(fs.existsSync(path.join(root, TRASH_DIR, TRASH_MARKER)), 'the quarantine carries the tool marker');
+  });
+
+  it('moveNoReplace never replaces an existing destination, and leaves the source in place when it refuses', async () => {
+    const from = path.join(root, 'from');
+    const to = path.join(root, 'to');
+    await fsp.writeFile(from, 'source bytes');
+    await fsp.writeFile(to, 'destination bytes');
+    await assert.rejects(moveNoReplace(from, to), { code: 'EEXIST' });
+    assert.equal(fs.readFileSync(from, 'utf8'), 'source bytes');
+    assert.equal(fs.readFileSync(to, 'utf8'), 'destination bytes');
+    await fsp.unlink(to);
+    await moveNoReplace(from, to);
+    assert.ok(!fs.existsSync(from));
+    assert.equal(fs.readFileSync(to, 'utf8'), 'source bytes');
+  });
+
   it('trash/ is part of the root contract: never a foreignRoot finding', async () => {
     await fsp.mkdir(path.join(root, TRASH_DIR, 'old-run', 'cap', 'ab'), { recursive: true });
+    await fsp.writeFile(path.join(root, TRASH_DIR, TRASH_MARKER), '{}\n');
     await fsp.writeFile(path.join(root, TRASH_DIR, 'old-run', 'cap', 'ab', 'abcd'), 'quarantined');
     const report = await fsck(root);
     assert.equal(totalFindings(report), 0);

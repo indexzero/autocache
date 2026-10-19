@@ -59,8 +59,9 @@ waybackify cache fill <dir> --root <root>
      path that answers makes the capture a rewrite candidate. The engine
      records it in `<root>/.refetch/renamed.jsonl` and logs it as `rename`,
      never as gone. The engine probes an original with an explicit default
-     port (`http://github.com:80/...`) like any other. A GitHub route such as
-     `/orgs/...` or `/login` is not a deep link, and neither is a path the URL
+     port (`http://github.com:80/...`) like any other. A repo home page with
+     only a query or a fragment is not a deep link. Neither is a GitHub route
+     such as `/orgs/...` or `/login`, nor a path the URL
      parser spells differently from the text (a dot segment, a backslash, a
      tab). The engine never probes either. A grafted path that redirects to
      the renamed repo's root follows it, and the root's answer settles the

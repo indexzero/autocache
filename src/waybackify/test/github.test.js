@@ -59,6 +59,12 @@ describe('githubRepo: which URLs the probe applies to', () => {
   it('returns null for a repo root, a user page, and other hosts', () => {
     assert.equal(githubRepo(OLD), null);
     assert.equal(githubRepo(`${OLD}/`), null);
+    // The root with only a query or a fragment is the home page, not a path.
+    for (const suffix of ['?tab=readme-ov-file', '/?tab=readme-ov-file', '#readme', '/#readme']) {
+      assert.equal(githubRepo(`${OLD}${suffix}`), null, suffix);
+      assert.equal(githubRepo(`${OLD}${suffix}`), null, suffix);
+    }
+    assert.equal(githubRepo(`${OLD}/issues?q=x`).rest, '/issues?q=x');
     assert.equal(githubRepo('https://github.com/old-owner'), null);
     assert.equal(githubRepo('https://gist.github.com/a/b/c'), null);
     assert.equal(githubRepo('https://example.com/a/b/c'), null);
@@ -207,8 +213,15 @@ describe('probeGithub: the repo-root probe', () => {
     const root = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: `${NEW}/` }, [`${NEW}/`]: { status: 200 } });
     assert.deepEqual(await probeGithub(wiki, { fetch: root, sleep: noSleep }), { renamed: true, from: wiki, to: `${NEW}/wiki` });
     assert.equal(root.calls.at(-1).url, `${NEW}/`, 'the root is fetched, not assumed');
-    const query = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: `${NEW}?tab=readme` }, [`${NEW}?tab=readme`]: { status: 200 } });
-    assert.equal((await probeGithub(wiki, { fetch: query, sleep: noSleep })).renamed, true);
+    for (const suffix of ['?tab=readme-ov-file', '/?tab=readme-ov-file', '#readme', '/#readme']) {
+      // A fetch drops the fragment, so the scripted reply sits at the URL the probe requests.
+      const requested = new URL(`${NEW}${suffix}`).href.replace(/#.*$/, '');
+      const home = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: `${NEW}${suffix}` }, [requested]: { status: 200 } });
+      assert.deepEqual(await probeGithub(wiki, { fetch: home, sleep: noSleep }), { renamed: true, from: wiki, to: `${NEW}/wiki` }, suffix);
+      assert.equal(home.calls.length, 3, `${suffix}: the root is fetched once and settles the graft`);
+      const homeGone = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: `${NEW}${suffix}` }, [requested]: { status: 404 } });
+      assert.deepEqual(await probeGithub(wiki, { fetch: homeGone, sleep: noSleep }), { renamed: false }, suffix);
+    }
     const gone = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: NEW }, [NEW]: { status: 404 } });
     assert.deepEqual(await probeGithub(wiki, { fetch: gone, sleep: noSleep }), { renamed: false });
     const otherRoot = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 302, location: 'https://github.com/third-owner/third-repo' } });
@@ -293,6 +306,8 @@ describe('probeGithub: the repo-root probe', () => {
   it('returns null without network for a URL that is not a deep GitHub link', async () => {
     const fetch = scriptedFetch({});
     assert.equal(await probeGithub('https://example.com/a/b/c', { fetch }), null);
+    assert.equal(await probeGithub(`${OLD}?tab=readme-ov-file`, { fetch }), null, 'a repo home page with a query is not probed');
+    assert.equal(await probeGithub(`${OLD}/#readme`, { fetch }), null, 'a repo home page with a fragment is not probed');
     assert.equal(fetch.calls.length, 0);
   });
 });

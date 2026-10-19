@@ -51,11 +51,12 @@ const RESERVED_OWNERS = new Set([
  * Split a deep github.com link into owner, repo, and the verbatim rest (path,
  * query, and fragment after the repo). The host matches in any letter case,
  * on its default port only. The archive spells many originals with an
- * explicit `:80`. A repo root, a user page, or any other host is not a deep
- * link: null. Neither is a GitHub route such as `/orgs/...` or `/login`, nor
- * a path the URL parser spells differently from the text: a `.` or `..`
- * segment (literal or `%2e`), a backslash, or a tab all resolve to another
- * page, so a fetch of the text is not a fetch of the path as written.
+ * explicit `:80`. A repo root, with or without a query or a fragment, a user
+ * page, or any other host is not a deep link: null. Neither is a GitHub
+ * route such as `/orgs/...` or `/login`. Nor is a path the URL parser spells
+ * differently from the text. A `.` or `..` segment (literal or `%2e`), a
+ * backslash, or a tab all resolve to another page. A fetch of such text is
+ * not a fetch of the path as written.
  * @param {string} url
  * @returns {{ owner: string, repo: string, rest: string } | null}
  */
@@ -74,11 +75,12 @@ export function githubRepo(url) {
   // way, so the verbatim rest resolves under a graft exactly as it does here.
   const afterHost = url.replace(AUTHORITY_RE, '');
   if (parsed.pathname !== afterHost.split(/[?#]/, 1)[0]) return null;
-  const [, owner = '', repo = ''] = parsed.pathname.split('/');
+  const [, owner = '', repo = '', ...deeper] = parsed.pathname.split('/');
   if (!owner || !repo || !validNames(owner, repo)) return null;
-  const rest = afterHost.slice(`/${owner}/${repo}`.length);
-  if (rest === '' || rest === '/') return null;
-  return { owner, repo, rest };
+  // A deep link names a path inside the repo. The root with only a trailing
+  // slash, a query, or a fragment is the repo's home page, not a deep link.
+  if (deeper.join('') === '') return null;
+  return { owner, repo, rest: afterHost.slice(`/${owner}/${repo}`.length) };
 }
 
 /** True when two deep links name the same owner/repo, in any letter case. */
@@ -177,6 +179,8 @@ async function verifyGraft(fetch, to, target) {
     const hopRepo = githubRepo(next.href);
     const inRepo = hopRepo ? sameRepo(hopRepo, target) : isRepoRoot(next, target);
     if (!inRepo) throw inconclusive('grafted URL redirect out of the repo', res.status, url);
+    // A fragment never goes on the wire, so the next request drops it.
+    next.hash = '';
     url = next.href;
   }
   throw new Error(`github probe: inconclusive, grafted URL redirected more than ${MAX_GRAFT_HOPS} times: ${to}`);

@@ -9,9 +9,11 @@
  *
  *   STATIC  — walk every text-bearing body in a remastered tree and scan for
  *             `web.archive.org` / `archive.org` / absolute `http(s)://…/web/<ts>`
- *             escapes. ZERO allowlist, zero tolerance: capture bytes carry
- *             nothing of ours, so nothing is exempt (root-relative `/web/<ts>/…`
- *             refs are the CORRECT remastered form and are never findings).
+ *             escapes. ZERO allowlist: every upstream URL is reported, deduped,
+ *             and classified. A rewriter miss, a fetchable gap, or a bare
+ *             archive.org reference fails. An out-of-scope page link is advisory
+ *             and a beacon is excluded (root-relative `/web/<ts>/…` refs are the
+ *             CORRECT remastered form and are never findings).
  *             Plus the determinism check: every remastered body must hash to
  *             its build-record outputHash (a tampered served body is caught
  *             here), and — given the hermetic source — a fresh rebuild must
@@ -40,7 +42,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { serveCacheRoot } from '@autocache/waybackify-serve/node';
 import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
-import { classifyContentType } from '@autocache/waybackify/rewrite.js';
+import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
+import { dynamicEntryError } from '@autocache/waybackify/cache.js';
+import { classifyContentType, refCaptureKey, WAYBACK_REF_RE } from '@autocache/waybackify/rewrite.js';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
 
 // The library never constructs pino (design §1); default no-op.
@@ -63,7 +67,12 @@ const NOOP_LOGGER = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, 
  * @property {string} [excerpt] - a sanitized window around an escape
  * @property {string} [expected]
  * @property {string} [actual]
- * @property {string} [url]   - dynamic tier: the offending request URL
+ * @property {string} [url]   - the offending request URL, or the upstream ref of an escape
+ * @property {string|null} [upstreamKey] - escape: the `<ts>/<original>` key the upstream ref resolves to
+ * @property {string} [original] - escape: the trimmed `<original>` token of the upstream ref
+ * @property {string|null} [flag] - escape: the replay flag of the upstream ref, e.g. `im_`
+ * @property {string} [class] - escape: the upstream class (see UPSTREAM_CLASSES)
+ * @property {number} [docs]  - escape: how many documents carry this distinct upstream URL
  *
  * @typedef {Object} LayerReport
  * @property {Tier} tier
@@ -75,6 +84,12 @@ const NOOP_LOGGER = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, 
  * @property {string} [skipped]
  * @property {Record<string, number>} [counts]
  * @property {DynamicDocResult[]} [documents]
+ * @property {UpstreamResidual} [residual] - escape layer: the distinct upstream URLs, by class
+ *
+ * @typedef {Object} UpstreamResidual
+ * @property {number} occurrences - every upstream-ref occurrence the scan saw
+ * @property {number} distinct    - the distinct upstream keys (or bare URLs)
+ * @property {Record<string, {status: 'fail'|'advisory'|'excluded', label: string, next: string, count: number, entries: Array<{key: string|null, url: string, docs: number}>}>} classes
  *
  * @typedef {Object} DynamicDocResult
  * @property {string} key
@@ -129,6 +144,8 @@ export async function enumerateRemastered(root) {
         aa,
         hash,
         status: sidecar.status,
+        requisites: Array.isArray(sidecar.requisites) ? sidecar.requisites : [],
+        dynamic: Array.isArray(sidecar.dynamic) ? sidecar.dynamic : [],
         contentType: sidecar.contentType,
         contentHash: sidecar.contentHash,
         contentLength: sidecar.contentLength,
@@ -150,8 +167,8 @@ function sri(bytes) {
  * ------------------------------------------------------------------------ */
 
 // Any occurrence of the archive.org host family — `web.archive.org`,
-// `web-static.archive.org`, or bare `archive.org`. One pattern subsumes them
-// all; ZERO allowlist means every hit is a finding.
+// `web-static.archive.org`, or bare `archive.org`. A hit that no wayback ref
+// owns is the residual `archive-org-bare` class.
 const ARCHIVE_ORG_RE = /archive\.org/gi;
 
 // An ABSOLUTE wayback-shaped URL to a NON-archive host: `http(s)://host/web/<ts>`.
@@ -184,24 +201,132 @@ function excerptAround(text, start, end) {
   return (from > 0 ? '…' : '') + window.replace(/[^\x20-\x7e]/g, '·') + (to < text.length ? '…' : '');
 }
 
+// The bytes of a bare reference token around a residual archive.org hit.
+const TOKEN_LEFT_STOP = /[\s"'<>()\\=]/;
+const TOKEN_RIGHT_STOP = /[\s"'<>)\\]/;
+
+/** The URL-ish token that contains `[start,end)`, capped at 300 chars a side. */
+function tokenAround(text, start, end) {
+  let from = start;
+  while (from > 0 && start - from < 300 && !TOKEN_LEFT_STOP.test(text[from - 1])) from--;
+  let to = end;
+  while (to < text.length && to - end < 300 && !TOKEN_RIGHT_STOP.test(text[to])) to++;
+  return text.slice(from, to);
+}
+
+// The raw-text content of an HTML <script> or <style> block. A browser does
+// not decode entities there, so a ref inside keeps its entity text in the key.
+const RAW_TEXT_OPEN_RE = /<(script|style)(?=[\s/>])/gi;
+
 /**
- * Scan one text body for escapes. Pure: (key, text) → findings. Non-overlapping
- * by construction — the archive-host scan owns every `archive.org` hit, and the
- * absolute-web-path scan skips any match whose host is in that family.
+ * The index just past the '>' that ends the open tag at `from`, or -1. Walks
+ * the attributes the way an HTML tokenizer does, so a '>' inside a quoted
+ * attribute value does not end the tag.
  */
-export function scanBody(key, text) {
+function openTagEnd(html, from) {
+  let i = from;
+  while (i < html.length) {
+    const ch = html[i];
+    if (ch === '>') return i + 1;
+    if (ch === '=') {
+      i++;
+      while (i < html.length && /\s/.test(html[i])) i++;
+      const quote = html[i];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, i + 1);
+        if (close === -1) return -1;
+        i = close + 1;
+        continue;
+      }
+      continue; // an unquoted value ends at whitespace or '>', which this loop handles
+    }
+    i++;
+  }
+  return -1;
+}
+
+/** The [start, end) spans of the raw-text blocks in an HTML body. */
+function rawTextSpans(html) {
+  const spans = [];
+  RAW_TEXT_OPEN_RE.lastIndex = 0;
+  for (let m = RAW_TEXT_OPEN_RE.exec(html); m !== null; m = RAW_TEXT_OPEN_RE.exec(html)) {
+    const start = openTagEnd(html, m.index + m[0].length);
+    if (start === -1) break; // an unterminated open tag has no content
+    const close = new RegExp(`</${m[1]}(?=[\\s/>])`, 'gi');
+    close.lastIndex = start;
+    const end = close.exec(html)?.index ?? html.length; // an unclosed block runs to the end
+    spans.push([start, end]);
+    RAW_TEXT_OPEN_RE.lastIndex = end;
+  }
+  return spans;
+}
+
+/**
+ * A capture key without its #fragment. A request never carries the fragment,
+ * so the upstream, store, and frontier keys all compare in this form.
+ */
+function stripFragment(key) {
+  return key.replace(/#[\s\S]*$/, '');
+}
+
+/**
+ * Scan one text body for escapes. Pure: (key, text) → one finding per
+ * occurrence. A hosted wayback ref (absolute or protocol-relative, the
+ * rewriter's own WAYBACK_REF_RE) is `archive-org` and carries the upstream `url`
+ * and the `upstreamKey` the server resolves. An archive.org byte run outside every
+ * such ref is `archive-org-bare`. The absolute-web-path scan skips any match
+ * whose host is in the archive family. Root-relative refs are never findings.
+ *
+ * @param {string} key
+ * @param {string} text
+ * @param {{ html?: boolean }} [options] - the body is HTML. A browser decodes
+ *   entities in its markup but not in its <script> or <style> text, so
+ *   `upstreamKey` decodes them only outside those blocks.
+ */
+export function scanBody(key, text, { html = false } = {}) {
   const findings = [];
-  for (const m of text.matchAll(ARCHIVE_ORG_RE)) {
+  const owned = [];
+  const raw = html ? rawTextSpans(text) : [];
+  for (const m of text.matchAll(WAYBACK_REF_RE)) {
+    const [full, host, ts, flag, rawOriginal] = m;
+    if (!host) continue; // root-relative: the correct remastered form
+    const decodeEntities = html && !raw.some(([start, end]) => start <= m.index && m.index < end);
+    const ref = refCaptureKey(ts, rawOriginal, { decodeEntities });
+    const url = full.slice(0, full.length - rawOriginal.length + ref.trimmed.length);
+    const offset = m.index + host.indexOf('archive.org');
+    owned.push([m.index, m.index + url.length]);
     findings.push({
       tier: 'static',
       layer: 'escape',
       key,
       kind: 'archive-org',
+      detail: `archive.org reference to ${url}`,
+      url,
+      original: ref.trimmed,
+      // A request never carries its #fragment, so the key the server resolves
+      // has none. The reported url keeps it.
+      upstreamKey: ref.key === null ? null : stripFragment(ref.key),
+      flag: flag ?? null,
+      offset,
+      excerpt: excerptAround(text, offset, offset + 'archive.org'.length)
+    });
+  }
+  let span = 0;
+  for (const m of text.matchAll(ARCHIVE_ORG_RE)) {
+    while (span < owned.length && owned[span][1] <= m.index) span++;
+    if (span < owned.length && owned[span][0] <= m.index) continue; // owned by a wayback ref above
+    findings.push({
+      tier: 'static',
+      layer: 'escape',
+      key,
+      kind: 'archive-org-bare',
       detail: `archive.org reference at byte ${m.index}`,
+      url: tokenAround(text, m.index, m.index + m[0].length),
       offset: m.index,
       excerpt: excerptAround(text, m.index, m.index + m[0].length)
     });
   }
+  findings.sort((a, b) => a.offset - b.offset);
   for (const m of text.matchAll(ABSOLUTE_WEB_PATH_RE)) {
     if (/archive\.org/i.test(m[0])) continue; // owned by the archive-host scan above
     findings.push({
@@ -217,9 +342,104 @@ export function scanBody(key, text) {
   return findings;
 }
 
-/** Scan every text-bearing body in a remastered tree. */
+/**
+ * The upstream classes, in report order. A distinct upstream key lands in the first
+ * class whose test holds: in the store, unmirrorable, in the recorded frontier,
+ * then novel (resource or page). A ref with no key is unmirrorable if
+ * isUnmirrorable exempts its original, and unresolved if not. `status` splits the verdict:
+ *   fail      the tree does not stand alone, and `next` names the fix
+ *   advisory  reported, but a link out of mirror scope does not fail the layer
+ *   excluded  never mirrorable (the same set fsck and crawl exclude)
+ */
+const UPSTREAM_CLASSES = {
+  inStore: { status: 'fail', label: 'rewriter miss (capture in store, ref left absolute)', next: 'fix the remaster build rewrite rule' },
+  inRecordedFrontier: { status: 'fail', label: 'fetchable gap (in the recorded frontier)', next: 'cache crawl --static-only or cache fill' },
+  novelResource: { status: 'fail', label: 'fetchable gap (novel resource)', next: 'a full (dynamic) cache crawl' },
+  bare: { status: 'fail', label: 'bare archive.org reference (not /web/-shaped)', next: 'inspect the body' },
+  unresolved: { status: 'fail', label: 'archive.org reference with no resolvable original', next: 'inspect the body' },
+  novelPage: { status: 'advisory', label: 'out of scope (novel page link)', next: 'none: the page is outside the mirror' },
+  unmirrorable: { status: 'excluded', label: 'unmirrorable (beacon or pseudo URL)', next: 'none' }
+};
+
+// A subresource replay flag, or a file extension a page loads as a resource.
+const RESOURCE_FLAGS = new Set(['im_', 'js_', 'cs_', 'oe_']);
+const RESOURCE_EXT_RE = /\.(?:m?js|css|woff2?|ttf|otf|eot|png|jpe?g|gif|svg|ico|webp|bmp|mp4|webm|ogg|mp3|wav|m4a|flv|swf|json)$/i;
+
+/** Does an upstream original URL have a resource file extension? */
+function hasResourceExtension(original) {
+  let pathname;
+  try {
+    pathname = new URL(original).pathname;
+  } catch {
+    return false;
+  }
+  return RESOURCE_EXT_RE.test(pathname);
+}
+
+/** The union recorded frontier: every sidecar's requisites ∪ well-formed dynamic keys, without fragments. */
+function recordedFrontier(entries) {
+  const frontier = new Set();
+  for (const entry of entries) {
+    for (const childKey of entry.requisites ?? []) frontier.add(stripFragment(childKey));
+    for (const d of entry.dynamic ?? []) if (!dynamicEntryError(d)) frontier.add(stripFragment(d.key));
+  }
+  return frontier;
+}
+
+/** The class of one distinct upstream URL. */
+function classOf(upstream, store, frontier) {
+  if (upstream.kind === 'archive-org-bare') return 'bare';
+  // No key: the original is not a URL with a host. It is still a live
+  // archive.org request unless the shared predicate exempts it.
+  if (upstream.upstreamKey === null) return isUnmirrorable(upstream.original) ? 'unmirrorable' : 'unresolved';
+  if (store.has(upstream.upstreamKey)) return 'inStore';
+  const original = upstream.upstreamKey.slice(upstream.upstreamKey.indexOf('/') + 1);
+  if (isUnmirrorable(original)) return 'unmirrorable';
+  if (frontier.has(upstream.upstreamKey)) return 'inRecordedFrontier';
+  return upstream.resource || hasResourceExtension(original) ? 'novelResource' : 'novelPage';
+}
+
+/**
+ * Dedupe upstream occurrences into distinct upstream URLs, classify each, and return the
+ * residual summary plus one finding per distinct FAILING upstream URL.
+ *
+ * @param {Finding[]} occurrences - `archive-org` and `archive-org-bare` findings
+ * @param {Set<string>} store - every capture key in the remastered tree
+ * @param {Set<string>} frontier - the union recorded frontier
+ * @returns {{ residual: UpstreamResidual, findings: Finding[] }}
+ */
+export function classifyUpstream(occurrences, store, frontier) {
+  const distinct = new Map();
+  for (const f of occurrences) {
+    const id = f.kind === 'archive-org-bare' ? `bare:${f.url}` : f.upstreamKey === null ? `url:${f.url}` : f.upstreamKey;
+    let upstream = distinct.get(id);
+    if (!upstream) {
+      upstream = { first: f, kind: f.kind, upstreamKey: f.upstreamKey ?? null, original: f.original ?? null, url: f.url, docs: new Set(), resource: false };
+      distinct.set(id, upstream);
+    }
+    upstream.docs.add(f.key);
+    if (RESOURCE_FLAGS.has(f.flag)) upstream.resource = true;
+  }
+  const classes = Object.fromEntries(Object.entries(UPSTREAM_CLASSES).map(([id, c]) => [id, { ...c, count: 0, entries: [] }]));
+  const findings = [];
+  for (const upstream of distinct.values()) {
+    const id = classOf(upstream, store, frontier);
+    const cls = classes[id];
+    cls.entries.push({ key: upstream.upstreamKey, url: upstream.url, docs: upstream.docs.size });
+    if (cls.status === 'fail') findings.push({ ...upstream.first, class: id, docs: upstream.docs.size, detail: `${cls.label}: ${upstream.url}` });
+  }
+  const order = e => e.key ?? e.url;
+  for (const cls of Object.values(classes)) {
+    cls.entries.sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
+    cls.count = cls.entries.length;
+  }
+  return { residual: { occurrences: occurrences.length, distinct: distinct.size, classes }, findings };
+}
+
+/** Scan every text-bearing body in a remastered tree, then classify the upstream URLs. */
 export async function scanEscapes(entries, { logger = NOOP_LOGGER, progressEvery = 0 } = {}) {
   const findings = [];
+  const occurrences = [];
   let scanned = 0;
   for (const entry of entries) {
     if (entry.status !== 'body' || !isTextBearing(entry.contentType)) continue;
@@ -239,16 +459,24 @@ export async function scanEscapes(entries, { logger = NOOP_LOGGER, progressEvery
       logger.info({ evt: 'verify-scan-progress', done: scanned }, `remaster verify: ${scanned} bodies scanned`);
     }
     // latin1 is a lossless byte↔char map, so byte offset === string index.
-    findings.push(...scanBody(entry.key, bytes.toString('latin1')));
+    const html = classifyContentType(entry.contentType) === 'html';
+    for (const f of scanBody(entry.key, bytes.toString('latin1'), { html })) {
+      (f.kind === 'archive-org' || f.kind === 'archive-org-bare' ? occurrences : findings).push(f);
+    }
   }
+  const store = new Set(entries.map(e => stripFragment(e.key)));
+  const { residual, findings: upstreamFindings } = classifyUpstream(occurrences, store, recordedFrontier(entries));
+  findings.unshift(...upstreamFindings);
+  const classCounts = Object.fromEntries(Object.entries(residual.classes).map(([id, c]) => [id, c.count]));
   return {
     tier: 'static',
     layer: 'escape',
-    name: 'archive-escape scan (zero allowlist)',
+    name: 'archive-escape scan (upstream URLs classified)',
     pass: findings.length === 0,
     checked: scanned,
     findings,
-    counts: { scanned }
+    counts: { scanned, occurrences: residual.occurrences, distinct: residual.distinct, ...classCounts },
+    residual
   };
 }
 
@@ -533,13 +761,20 @@ export function formatReport(report, firstK = 10) {
     const verdict = layer.skipped && layer.findings.length === 0 && layer.pass && layer.checked === 0 ? 'SKIP' : layer.pass ? 'PASS' : `FAIL (${layer.findings.length})`;
     lines.push(`  ${layer.tier}/${layer.layer} — ${layer.name}: ${verdict} · ${layer.checked} checked${counts}`);
     if (layer.skipped) lines.push(`      note: ${layer.skipped}`);
-    for (const f of layer.findings.slice(0, firstK)) {
+    for (const cls of Object.values(layer.residual?.classes ?? {})) {
+      if (cls.count === 0) continue;
+      lines.push(`      ${cls.label} · ${cls.count} · ${cls.status.toUpperCase()} · next: ${cls.next}`);
+      for (const e of cls.entries.slice(0, firstK)) lines.push(`        ${e.key ?? e.url}${e.docs > 1 ? ` (${e.docs} docs)` : ''}`);
+      if (cls.count > firstK) lines.push(`        … and ${cls.count - firstK} more`);
+    }
+    const unclassified = layer.findings.filter(f => f.class === undefined);
+    for (const f of unclassified.slice(0, firstK)) {
       const loc = f.offset !== undefined ? ` @${f.offset}` : f.url ? ` ${f.url}` : '';
       const cmp = f.expected !== undefined ? ` (expected ${f.expected}, got ${f.actual})` : '';
       lines.push(`      ${f.kind} · ${f.key}${loc}: ${f.detail}${cmp}`);
       if (f.excerpt) lines.push(`        ${f.excerpt}`);
     }
-    if (layer.findings.length > firstK) lines.push(`      … and ${layer.findings.length - firstK} more`);
+    if (unclassified.length > firstK) lines.push(`      … and ${unclassified.length - firstK} more`);
   }
   return lines.join('\n');
 }

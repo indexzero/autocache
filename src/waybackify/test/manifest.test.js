@@ -50,16 +50,10 @@ describe('validateManifest', () => {
     assert.deepEqual(m.exclude, ['https://live.example.com/']);
   });
 
-  it('reads a v1 `wayback: null` entry as legacy-exclude', () => {
-    const m = validateManifest({
-      version: 1,
-      entries: {
-        'http://a.example.com/': { wayback: WB_A, timestamp: '20100101000000', checkedAt: '2026-01-01T00:00:00Z' },
-        'http://never-captured.example.com/': { wayback: null, timestamp: null, checkedAt: '2026-01-01T00:00:00Z' }
-      }
-    });
-    assert.deepEqual(Object.keys(m.entries), ['http://a.example.com/']);
-    assert.deepEqual(m.exclude, ['http://never-captured.example.com/']);
+  it('rejects version 1 and a null wayback entry, and never converts an entry to an exclusion (A6)', () => {
+    const entries = { 'http://never-captured.example.com/': { wayback: null, timestamp: null } };
+    assert.throws(() => validateManifest({ version: 1, entries: {} }), /unsupported version 1 \(supported: 2\)/);
+    assert.throws(() => validateManifest({ version: 2, entries }), /unparseable wayback URL: null/);
   });
 
   it('fails loud on an unknown version — never silently treated as understood', () => {
@@ -100,23 +94,6 @@ describe('readManifest / writeManifest', () => {
     assert.equal(raw.version, 2);
     assert.deepEqual(Object.keys(raw.entries), ['http://b.example.com/post', 'http://z.example.com/']);
     assert.deepEqual(readManifest(file), m); // deepEqual is key-order-blind: same content
-  });
-
-  it('a v1 file on disk reads as v2 with its nulls excluded', () => {
-    const file = path.join(tmpdir(), 'wayback.json');
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        version: 1,
-        entries: {
-          'http://a.example.com/': { wayback: WB_A, timestamp: '20100101000000' },
-          'http://gone.example.com/': { wayback: null, timestamp: null }
-        }
-      })
-    );
-    const m = readManifest(file);
-    assert.deepEqual(m.exclude, ['http://gone.example.com/']);
-    assert.deepEqual(Object.keys(m.entries), ['http://a.example.com/']);
   });
 
   it('canonicalize returns EXACTLY the object writeManifest serializes (one canonical form)', () => {
@@ -190,14 +167,14 @@ describe('sourceRefs', () => {
   fs.writeFileSync(
     path.join(dir, 'wayback.json'),
     JSON.stringify({
-      version: 1,
+      version: 2,
       entries: {
         'http://c.example.com/': {
           wayback: 'https://web.archive.org/web/20200101000000/http://c.example.com/',
           timestamp: '20200101000000'
-        },
-        'http://never.example.com/': { wayback: null, timestamp: null }
-      }
+        }
+      },
+      exclude: ['http://never.example.com/']
     })
   );
 
@@ -363,24 +340,24 @@ describe('apply', () => {
     assert.deepEqual(round.warnings, []);
   });
 
-  it('the normalize equation: applying a v1-read manifest reproduces the rendered form', () => {
+  it('the normalize equation: applying a manifest reproduces the rendered form', () => {
     // post.md ≡ apply(README.md, wayback.json) — the importer's three-file
-    // contract, expressed through the library. A null entry (legacy
-    // not-archived) reads as exclude and leaves its link live, unwarned.
+    // contract, expressed through the library. An excluded (not-archived)
+    // url leaves its link live, unwarned.
     const readme = [
       'A [dead link](http://a.example.com/) and a [checked-live one](http://never.example.com/).',
       '',
       '[ref]: http://b.example.com/post'
     ].join('\n');
-    const v1 = validateManifest({
-      version: 1,
+    const manifest = validateManifest({
+      version: 2,
       entries: {
         'http://a.example.com/': { wayback: WB_A, timestamp: '20100101000000' },
-        'http://b.example.com/post': { wayback: WB_B, timestamp: '20140403040000' },
-        'http://never.example.com/': { wayback: null, timestamp: null }
-      }
+        'http://b.example.com/post': { wayback: WB_B, timestamp: '20140403040000' }
+      },
+      exclude: ['http://never.example.com/']
     });
-    const { content, warnings } = apply(readme, v1);
+    const { content, warnings } = apply(readme, manifest);
     assert.equal(
       content,
       [
@@ -596,4 +573,101 @@ describe('generate: an inconclusive GitHub reply defers the url', () => {
       assert.ok(!fetched.includes(LOGIN), 'the probe never leaves github.com');
     });
   }
+});
+
+/* ------------------------------------------------------------------------ *
+ * noRewrite — the author's never-rewrite set
+ * ------------------------------------------------------------------------ */
+
+describe('noRewrite', () => {
+  const KEEP = 'https://keep.example.com/leave-me-alone';
+
+  it('reads as an empty set when absent, and keeps a listed set', () => {
+    assert.deepEqual(validateManifest({ version: 2, entries: {} }).noRewrite, []);
+    assert.deepEqual(emptyManifest().noRewrite, []);
+    assert.deepEqual(validateManifest({ version: 2, noRewrite: [KEEP], entries: {} }).noRewrite, [KEEP]);
+  });
+
+  it('rejects a malformed set with context', () => {
+    assert.throws(() => validateManifest({ version: 2, noRewrite: 'x' }, 'w.json'), /w\.json: .*`noRewrite` must be an array/);
+    assert.throws(() => validateManifest({ version: 2, noRewrite: [''] }), /`noRewrite` must be an array of non-empty strings/);
+  });
+
+  it('stays distinct from exclude: it never folds into the verdict store', () => {
+    const m = validateManifest({ version: 2, noRewrite: [KEEP], entries: {}, exclude: ['https://live.example.com/'] });
+    assert.deepEqual(m.exclude, ['https://live.example.com/']);
+    assert.deepEqual(m.noRewrite, [KEEP]);
+  });
+
+  it('canonicalize puts noRewrite first after version, sorted and deduped, and omits it when empty', () => {
+    const m = emptyManifest();
+    m.noRewrite.push('https://z.example.com/', KEEP, KEEP);
+    m.entries['http://a.example.com/'] = { wayback: WB_A, timestamp: '20100101000000' };
+    const out = canonicalize(m);
+    assert.deepEqual(Object.keys(out), ['version', 'noRewrite', 'entries']);
+    assert.deepEqual(out.noRewrite, [KEEP, 'https://z.example.com/']);
+    assert.deepEqual(Object.keys(canonicalize(emptyManifest())), ['version', 'entries']);
+  });
+
+  it('round-trips through writeManifest / readManifest', () => {
+    const file = path.join(tmpdir(), 'wayback.json');
+    const m = emptyManifest();
+    m.noRewrite.push(KEEP);
+    writeManifest(file, m);
+    assert.deepEqual(readManifest(file).noRewrite, [KEEP]);
+  });
+
+  it('apply leaves a noRewrite url byte-for-byte, even when every other section claims it', () => {
+    const m = emptyManifest();
+    m.noRewrite.push(KEEP);
+    m.rewrites[KEEP] = 'https://elsewhere.example.net/';
+    m.entries[KEEP] = { wayback: `https://web.archive.org/web/20100101000000/${KEEP}`, timestamp: '20100101000000' };
+    m.exclude.push(KEEP);
+    const source = `See [k](${KEEP}) and <${KEEP}>.`;
+    const { content, warnings } = apply(source, m);
+    assert.equal(content, source);
+    assert.deepEqual(warnings, []);
+  });
+
+  it('apply matches noRewrite with the scheme/slash/port-insensitive key, like every other section', () => {
+    const m = emptyManifest();
+    m.noRewrite.push('https://keep.example.com/page');
+    m.entries['http://keep.example.com/page/'] = {
+      wayback: 'https://web.archive.org/web/20100101000000/http://keep.example.com/page/',
+      timestamp: '20100101000000'
+    };
+    const source = 'See [k](http://keep.example.com/page/).';
+    assert.equal(apply(source, m).content, source);
+  });
+
+  it('apply still rewrites the urls that noRewrite does not name', () => {
+    const m = emptyManifest();
+    m.noRewrite.push(KEEP);
+    m.entries['http://a.example.com/'] = { wayback: WB_A, timestamp: '20100101000000' };
+    const { content } = apply(`[k](${KEEP}) [a](http://a.example.com/)`, m);
+    assert.equal(content, `[k](${KEEP}) [a](${chrome(WB_A)})`);
+  });
+
+  it('generate never classifies a noRewrite url: no universe bake, no seen verdict, no archive call', async () => {
+    const calls = [];
+    const resolve = async url => {
+      calls.push(url);
+      return null;
+    };
+    const universe = { rewrites: { [KEEP]: 'https://elsewhere.example.net/' }, exclude: [] };
+    const seen = emptyManifest();
+    const source = `[k](${KEEP}) [g](http://gone.example.com/)`;
+    const run = await generate(source, universe, seen, { resolve, noRewrite: [KEEP] });
+    assert.deepEqual(calls, ['http://gone.example.com/']);
+    assert.deepEqual(run.manifest.rewrites, {});
+    assert.deepEqual(run.manifest.exclude, ['http://gone.example.com/']);
+    assert.deepEqual(run.manifest.noRewrite, [KEEP]);
+    assert.ok(!run.seen.exclude.includes(KEEP));
+    assert.equal(apply(source, run.manifest).content, source);
+  });
+
+  it('generate carries the whole noRewrite set, even a url this source no longer cites', async () => {
+    const run = await generate('no links here', null, null, { resolve: async () => null, noRewrite: [KEEP] });
+    assert.deepEqual(run.manifest.noRewrite, [KEEP]);
+  });
 });

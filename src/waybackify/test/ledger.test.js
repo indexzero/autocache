@@ -23,7 +23,7 @@ function put(root, rel, manifest) {
   fs.writeFileSync(file, JSON.stringify(manifest));
 }
 
-/** A synthetic tree: nested manifests, a v1 straggler, decoys to skip. */
+/** A synthetic tree: nested manifests and decoys to skip. */
 function makeTree() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-'));
   put(root, 'beta/deep/wayback.json', {
@@ -32,11 +32,9 @@ function makeTree() {
     rewrites: { 'http://moved.example.com/': 'https://newhome.example.com/' }
   });
   put(root, 'alpha/wayback.json', {
-    version: 1,
-    entries: {
-      'http://a.example.com/': { wayback: WB_A, timestamp: '20100101000000' },
-      'http://gone.example.com/': { wayback: null, timestamp: null }
-    }
+    version: 2,
+    entries: { 'http://a.example.com/': { wayback: WB_A, timestamp: '20100101000000' } },
+    exclude: ['http://gone.example.com/']
   });
   put(root, 'gamma/wayback.json', {
     version: 2,
@@ -66,7 +64,7 @@ describe('discover', () => {
       found.map(d => d.file),
       ['alpha/wayback.json', 'beta/deep/wayback.json', 'gamma/wayback.json']
     );
-    // Read through the manifest reader: the v1 null became exclude.
+    // Read through the manifest reader.
     assert.deepEqual(found[0].manifest.exclude, ['http://gone.example.com/']);
   });
 
@@ -97,7 +95,13 @@ describe('flatten', () => {
   });
 
   it('flattening nothing is the empty manifest', () => {
-    assert.deepEqual(flatten([]), { version: 2, rewrites: {}, entries: {}, exclude: [] });
+    assert.deepEqual(flatten([]), { version: 2, noRewrite: [], rewrites: {}, entries: {}, exclude: [] });
+  });
+
+  it('never unions a post noRewrite set into the seen union: it is per-post intent, not a verdict', () => {
+    const root = makeTree();
+    put(root, 'delta/wayback.json', { version: 2, noRewrite: ['https://keep.example.com/'], entries: {} });
+    assert.deepEqual(flatten(discover(root)).noRewrite, []);
   });
 });
 

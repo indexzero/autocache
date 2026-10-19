@@ -91,7 +91,7 @@ test('--chrome-host threads through to apply: the archived link points at the ov
   assert.match(out, /\(https:\/\/web\.archive\.org\/web\/19990101000000\//);
 });
 
-test('a v1 manifest reads through: wayback:null means exclude, so the url stays live without warning', async () => {
+test('an excluded url stays live without warning', async () => {
   const dir = tmp();
   const sourceFile = path.join(dir, 'source.md');
   const outFile = path.join(dir, 'out.md');
@@ -100,7 +100,7 @@ test('a v1 manifest reads through: wayback:null means exclude, so the url stays 
   const { code, stderr } = await rewrite([
     sourceFile,
     '-m',
-    path.join(FIXTURES, 'tree', 'b', 'nested', 'wayback.json'), // version 1, null entry
+    path.join(FIXTURES, 'tree', 'b', 'nested', 'wayback.json'), // excludes the url
     '-o',
     outFile
   ]);

@@ -33,10 +33,10 @@ import { emptyManifest, readManifest } from './manifest.js';
 
 /**
  * Recursively discover every `wayback.json` manifest under `root`. Each file
- * is read through manifest.js#readManifest (versions {1, 2}; v1 nulls read
- * as `exclude`), so an invalid manifest anywhere under the tree fails loud
- * with its path. Hidden directories and node_modules are skipped; results
- * are sorted by relative path.
+ * is read through manifest.js#readManifest (the current version only), so
+ * an invalid manifest anywhere under the tree fails loud with its path.
+ * Hidden directories and node_modules are skipped. Results are sorted by
+ * relative path.
  *
  * @param {string} root
  * @returns {DiscoveredManifest[]}
@@ -76,7 +76,9 @@ function walk(root, dir, found) {
  * Determinism: manifests merge in sorted-path order and the FIRST verdict
  * for a url key wins (a url two manifests resolved to different captures —
  * each near its own source's date — keeps the first; a union file needs one
- * representative verdict, not all of them). `exclude` is a set union. A url
+ * representative verdict, not all of them). `exclude` is a set union.
+ * `noRewrite` is never unioned: it is one author's intent for one post, not
+ * a verdict that another source can reuse. A url
  * that lands in more than one section is harmless: consumers look up with
  * apply's precedence (exclude → rewrites → entries), which fails safe.
  *

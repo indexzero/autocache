@@ -258,3 +258,24 @@ test('a malformed --near is a usage error (exit 2), never a NaN capture pick', a
     assert.equal(fs.existsSync(outFile), false, 'no manifest written for a malformed --near');
   }
 });
+
+test('noRewrite: the prior manifest at -o keeps its authored never-rewrite set across regeneration', async () => {
+  const dir = tmp();
+  const seenFile = path.join(dir, 'seen.json');
+  const outFile = path.join(dir, 'wayback.json');
+  fs.copyFileSync(SEEN, seenFile);
+  // The author forbids the rewrite that the universe bakes for the feed link.
+  fs.writeFileSync(outFile, `${JSON.stringify({ version: 2, noRewrite: ['http://feeds.example.com/blog'], entries: {} })}\n`);
+
+  const { code, calls } = await generate([SOURCE, '-u', UNIVERSE, '-s', seenFile, '-o', outFile]);
+  assert.equal(code, EXIT.OK);
+  assert.deepEqual(calls, []);
+  const manifest = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+  assert.deepEqual(manifest.noRewrite, ['http://feeds.example.com/blog']);
+  assert.equal(manifest.rewrites, undefined, 'the universe rewrite never baked over the authored set');
+
+  // A second run is byte-identical: the set travels with the post.
+  const first = fs.readFileSync(outFile, 'utf8');
+  assert.equal((await generate([SOURCE, '-u', UNIVERSE, '-s', seenFile, '-o', outFile])).code, EXIT.OK);
+  assert.equal(fs.readFileSync(outFile, 'utf8'), first);
+});

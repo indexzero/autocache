@@ -71,6 +71,7 @@ const NOOP_LOGGER = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, 
  * @property {string|null} [upstreamKey] - escape: the `<ts>/<original>` key the upstream ref resolves to
  * @property {string} [original] - escape: the trimmed `<original>` token of the upstream ref
  * @property {string|null} [flag] - escape: the replay flag of the upstream ref, e.g. `im_`
+ * @property {boolean} [resource] - escape: the ref sits where a browser loads a resource (CSS url(), src, srcset, poster, a stylesheet or icon link)
  * @property {string} [class] - escape: the upstream class (see UPSTREAM_CLASSES)
  * @property {number} [docs]  - escape: how many documents carry this distinct upstream URL
  *
@@ -310,6 +311,43 @@ function stripFragment(key) {
   return key.replace(/#[\s\S]*$/, '');
 }
 
+// Markup positions that load a resource whatever the URL's extension: the
+// subresource attributes, a stylesheet or icon <link>, and CSS url().
+const RESOURCE_ATTRS = new Set(['src', 'srcset', 'poster', 'background', 'data']);
+const LINK_RESOURCE_REL_RE = /\brel\s*=\s*["']?[^"'>]*\b(?:stylesheet|icon|preload|modulepreload)\b/i;
+// The attribute whose value runs up to the end of the slice: `name=` then an
+// optional quote, then value text with no quote in it.
+const ATTR_BEFORE_RE = /\s([a-zA-Z][\w:.-]*)\s*=\s*["']?[^"']*$/;
+const CSS_URL_BEFORE_RE = /url\(\s*["']?$/i;
+
+/**
+ * Does the ref at `index` sit where a browser loads a resource? CSS text (a
+ * stylesheet body, a <style> block, a style attribute's url()) and the HTML
+ * subresource attributes fetch whatever they name, so the URL's extension
+ * does not decide. Only an anchor-like link can be a page navigation.
+ *
+ * @param {string} text
+ * @param {number} index - where the ref starts
+ * @param {{ css: boolean, html: boolean, rawSpan: string|null }} context - the
+ *   body kind, and the name of the raw-text block the ref sits in, if any
+ */
+function inResourceContext(text, index, { css, html, rawSpan }) {
+  if (css || rawSpan === 'style') return true; // CSS text: url() and @import load a resource
+  if (CSS_URL_BEFORE_RE.test(text.slice(Math.max(0, index - 8), index))) return true; // a style attribute's url()
+  if (!html || rawSpan !== null) return false; // script text carries no markup context
+  const tagStart = text.lastIndexOf('<', index);
+  if (tagStart === -1) return false;
+  const attr = ATTR_BEFORE_RE.exec(text.slice(tagStart, index))?.[1].toLowerCase();
+  if (attr === undefined) return false;
+  if (RESOURCE_ATTRS.has(attr)) return true;
+  if (attr !== 'href') return false;
+  TAG_TOKEN_RE.lastIndex = tagStart;
+  const tag = TAG_TOKEN_RE.exec(text);
+  if (tag === null || tag[1] !== '' || tag[2].toLowerCase() !== 'link') return false;
+  const tagEnd = openTagEnd(text, tagStart + tag[0].length);
+  return LINK_RESOURCE_REL_RE.test(text.slice(tagStart, tagEnd === -1 ? text.length : tagEnd));
+}
+
 /**
  * Scan one text body for escapes. Pure: (key, text) → one finding per
  * occurrence. A hosted wayback ref (absolute or protocol-relative, the
@@ -320,11 +358,12 @@ function stripFragment(key) {
  *
  * @param {string} key
  * @param {string} text
- * @param {{ html?: boolean }} [options] - the body is HTML. A browser decodes
- *   entities in its markup but not in its <script> or <style> text, so
- *   `upstreamKey` decodes them only outside those blocks.
+ * @param {{ html?: boolean, css?: boolean }} [options] - the body kind. In HTML a
+ *   browser decodes entities in the markup but not in <script> or <style>
+ *   text, so `upstreamKey` decodes them only outside those blocks. In CSS,
+ *   and in the HTML subresource positions, every ref is a resource load.
  */
-export function scanBody(key, text, { html = false } = {}) {
+export function scanBody(key, text, { html = false, css = false } = {}) {
   const findings = [];
   const owned = [];
   const raw = html ? rawTextSpans(text) : [];
@@ -351,6 +390,7 @@ export function scanBody(key, text, { html = false } = {}) {
       // has none. The reported url keeps it.
       upstreamKey: ref.key === null ? null : stripFragment(ref.key),
       flag: flag ?? null,
+      resource: inResourceContext(text, m.index, { css, html, rawSpan: inRaw ? raw[rawAt][2] : null }),
       offset,
       excerpt: excerptAround(text, offset, offset + 'archive.org'.length)
     });
@@ -406,6 +446,7 @@ const UPSTREAM_CLASSES = {
 };
 
 // A subresource replay flag, or a file extension a page loads as a resource.
+// Either marks a novel ref as a resource when its context did not (JS text).
 const RESOURCE_FLAGS = new Set(['im_', 'js_', 'cs_', 'oe_']);
 const RESOURCE_EXT_RE = /\.(?:m?js|css|woff2?|ttf|otf|eot|png|jpe?g|gif|svg|ico|webp|bmp|mp4|webm|ogg|mp3|wav|m4a|flv|swf|json)$/i;
 
@@ -462,7 +503,7 @@ export function classifyUpstream(occurrences, store, frontier) {
       distinct.set(id, upstream);
     }
     upstream.docs.add(f.key);
-    if (RESOURCE_FLAGS.has(f.flag)) upstream.resource = true;
+    if (RESOURCE_FLAGS.has(f.flag) || f.resource) upstream.resource = true;
   }
   const classes = Object.fromEntries(Object.entries(UPSTREAM_CLASSES).map(([id, c]) => [id, { ...c, count: 0, entries: [] }]));
   const findings = [];
@@ -503,8 +544,8 @@ export async function scanEscapes(entries, { logger = NOOP_LOGGER, progressEvery
       logger.info({ evt: 'verify-scan-progress', done: scanned }, `remaster verify: ${scanned} bodies scanned`);
     }
     // latin1 is a lossless byte↔char map, so byte offset === string index.
-    const html = classifyContentType(entry.contentType) === 'html';
-    for (const f of scanBody(entry.key, bytes.toString('latin1'), { html })) {
+    const kind = classifyContentType(entry.contentType);
+    for (const f of scanBody(entry.key, bytes.toString('latin1'), { html: kind === 'html', css: kind === 'css' })) {
       (f.kind === 'archive-org' || f.kind === 'archive-org-bare' ? occurrences : findings).push(f);
     }
   }

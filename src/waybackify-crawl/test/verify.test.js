@@ -445,6 +445,46 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     assert.equal(classOf(`https://web.archive.org/web/${OTHER}/http://other.test/loader`), 'novelPage');
   });
 
+  it('a ref in a resource-loading context is a resource whatever its extension', () => {
+    const classOf = (body, options) => {
+      const { residual } = classifyUpstream(scanBody('k', body, options), new Set(), new Set());
+      return Object.entries(residual.classes).find(([, c]) => c.count > 0)[0];
+    };
+    const stem = `https://web.archive.org/web/${OTHER}/http://assets.example.com/`;
+    // CSS text loads whatever url() and @import name.
+    assert.equal(classOf(`body { background: url(${stem}logo) }`, { css: true }), 'novelResource');
+    assert.equal(classOf(`@import "${stem}theme";`, { css: true }), 'novelResource');
+    // HTML subresource positions.
+    assert.equal(classOf(`<img data-note="a > b" src="${stem}logo">`, { html: true }), 'novelResource');
+    assert.equal(classOf(`<img srcset="${stem}a 1x, ${stem}b 2x">`, { html: true }), 'novelResource');
+    assert.equal(classOf(`<video poster="${stem}cover"></video>`, { html: true }), 'novelResource');
+    assert.equal(classOf(`<link href="${stem}theme" rel="stylesheet">`, { html: true }), 'novelResource');
+    assert.equal(classOf(`<link rel="shortcut icon" href="${stem}favicon">`, { html: true }), 'novelResource');
+    assert.equal(classOf(`<div style="background:url('${stem}bg')"></div>`, { html: true }), 'novelResource');
+    assert.equal(classOf(`<style>p{background:url(${stem}bg)}</style>`, { html: true }), 'novelResource');
+    // A navigation link, a non-resource <link>, and JS text stay page-like.
+    assert.equal(classOf(`<a href="${stem}about">about</a>`, { html: true }), 'novelPage');
+    assert.equal(classOf(`<link rel="canonical" href="${stem}about">`, { html: true }), 'novelPage');
+    assert.equal(classOf(`var p = "${stem}about";`), 'novelPage');
+  });
+
+  it('an extensionless CSS url() in a stylesheet body fails the layer as novelResource', async () => {
+    const hermetic = await mkroot('remaster-verify-css-resource-src-');
+    await writeEntry(hermetic, {
+      key: CSS_KEY,
+      contentType: 'text/css',
+      body: `body { background: url(https://web.archive.org/web/${OTHER}/http://assets.example.com/logo) }`
+    });
+    const out = await mkroot('remaster-verify-css-resource-out-');
+    await remaster(hermetic, out);
+    const report = await scanEscapes(await enumerateRemastered(out));
+    assert.deepEqual(report.residual.classes.novelResource.entries.map(e => e.key), [`${OTHER}/http://assets.example.com/logo`]);
+    assert.equal(report.residual.classes.novelPage.count, 0);
+    assert.equal(report.pass, false);
+    await fsp.rm(hermetic, { recursive: true, force: true });
+    await fsp.rm(out, { recursive: true, force: true });
+  });
+
   it('a store or frontier key that carries a #fragment still matches its upstream ref', async () => {
     const storedKey = `${TS}/http://example.com/icons.svg#home`;
     const recordedKey = `${TS}/http://example.com/sprite.svg#top`;

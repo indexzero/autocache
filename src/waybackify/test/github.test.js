@@ -63,6 +63,31 @@ describe('githubRepo: which URLs the probe applies to', () => {
     assert.equal(githubRepo('https://gist.github.com/a/b/c'), null);
     assert.equal(githubRepo('https://example.com/a/b/c'), null);
   });
+
+  it('returns null for a GitHub route whose first segment is not an owner', () => {
+    assert.equal(githubRepo('https://github.com/orgs/old-owner/people'), null);
+    assert.equal(githubRepo('https://github.com/login/oauth/authorize?x=1'), null);
+    assert.equal(githubRepo('https://github.com/settings/profile/x'), null);
+    assert.equal(githubRepo('https://github.com/ORGS/old-owner/people'), null);
+    assert.equal(githubRepo('https://github.com/users/old-owner/followers'), null);
+  });
+
+  it('returns null for a path with a dot segment, which a fetch resolves elsewhere', () => {
+    assert.equal(githubRepo('https://github.com/../old-owner/old-repo/issues/1'), null);
+    assert.equal(githubRepo('https://github.com/old-owner/../old-repo/issues/1'), null);
+    assert.equal(githubRepo(`${OLD}/../../login`), null);
+    assert.equal(githubRepo(`${OLD}/%2e%2e/%2E%2E/login`), null);
+    assert.equal(githubRepo(`${OLD}/./issues/1`), null);
+    assert.equal(githubRepo(`${OLD}/issues/1?next=../x`).rest, '/issues/1?next=../x', 'a dot in the query is not a segment');
+    assert.equal(githubRepo('https://github.com/old-owner/old.repo.js/issues/1').repo, 'old.repo.js');
+  });
+
+  it('returns null for an owner or repo outside GitHub naming', () => {
+    assert.equal(githubRepo('https://github.com/old%20owner/old-repo/issues/1'), null);
+    assert.equal(githubRepo('https://github.com/old_owner/old-repo/issues/1'), null);
+    assert.equal(githubRepo('https://github.com/old-owner/old%2Frepo/issues/1'), null);
+    assert.equal(githubRepo('https://github.com/old-owner/old_repo/issues/1').repo, 'old_repo');
+  });
 });
 
 describe('graftGithub', () => {
@@ -147,6 +172,46 @@ describe('probeGithub: the repo-root probe', () => {
       [moved]: { status: 200 }
     });
     assert.deepEqual(await probeGithub(DEEP, { fetch, sleep: noSleep }), { renamed: true, from: DEEP, to: GRAFTED });
+  });
+
+  it('a grafted URL that redirects to a GitHub route is inconclusive, even when the route answers 200', async () => {
+    const login = 'https://github.com/login?return_to=%2Fnew-owner%2Fnew-repo';
+    const fetch = scriptedFetch({
+      [OLD]: { status: 301, location: NEW },
+      [GRAFTED]: { status: 302, location: '/login?return_to=%2Fnew-owner%2Fnew-repo' },
+      [login]: { status: 200 }
+    });
+    await assert.rejects(() => probeGithub(DEEP, { fetch, sleep: noSleep }), /grafted URL redirect out of the repo/);
+    assert.ok(!fetch.calls.some(c => c.url === login), 'the probe never fetches the login page');
+  });
+
+  it('a grafted URL that redirects to the repo root or to another repo is inconclusive', async () => {
+    const root = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 302, location: NEW }, [NEW]: { status: 200 } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: root, sleep: noSleep }), /grafted URL redirect out of the repo/);
+    assert.equal(root.calls.length, 2, 'the root of the renamed repo is never fetched as the graft');
+    const other = `https://github.com/third-owner/third-repo${githubRepo(DEEP).rest}`;
+    const moved = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 301, location: other }, [other]: { status: 200 } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: moved, sleep: noSleep }), /grafted URL redirect out of the repo/);
+  });
+
+  it('a redirect to github.com on a port that is not the default is off GitHub', async () => {
+    const graft = scriptedFetch({
+      [OLD]: { status: 301, location: NEW },
+      [GRAFTED]: { status: 302, location: GRAFTED.replace('github.com', 'github.com:8443') }
+    });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: graft, sleep: noSleep }), /grafted URL redirect off GitHub/);
+    assert.equal(graft.calls.length, 2, 'the probe never fetches the other port');
+    const root = scriptedFetch({ [OLD]: { status: 301, location: NEW.replace('github.com', 'github.com:8443') } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: root, sleep: noSleep }), /inconclusive.*names no repo/);
+    const defaultPort = scriptedFetch({ [OLD]: { status: 301, location: NEW.replace('github.com', 'github.com:443') }, [GRAFTED]: { status: 200 } });
+    assert.deepEqual(await probeGithub(DEEP, { fetch: defaultPort, sleep: noSleep }), { renamed: true, from: DEEP, to: GRAFTED });
+  });
+
+  it('a root redirect to a GitHub route names no repo', async () => {
+    const orgs = scriptedFetch({ [OLD]: { status: 301, location: '/orgs/new-owner/repositories' } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: orgs, sleep: noSleep }), /inconclusive.*names no repo/);
+    const dots = scriptedFetch({ [OLD]: { status: 301, location: 'https://github.com/new-owner/..' } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: dots, sleep: noSleep }), /inconclusive.*names no repo/);
   });
 
   it('a grafted URL redirect without a Location, or a redirect loop, is inconclusive', async () => {

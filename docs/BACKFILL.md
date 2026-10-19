@@ -59,11 +59,13 @@ waybackify cache fill <dir> --root <root>
      path that answers makes the capture a rewrite candidate. The engine
      records it in `<root>/.refetch/renamed.jsonl` and logs it as `rename`,
      never as gone. The engine probes an original with an explicit default
-     port (`http://github.com:80/...`) like any other. GitHub can give an
-     inconclusive reply: a 403, 408, 429, or 5xx, a redirect off GitHub or
-     without a Location, or a network error. Then the engine defers the
-     capture, and it stays eligible for the next run. Only a 404 that
-     survives the probe is gone.
+     port (`http://github.com:80/...`) like any other. A GitHub route such as
+     `/orgs/...` or `/login`, and a path with a `.` or `..` segment, is not a
+     deep link, so the engine never probes it. GitHub can give an inconclusive
+     reply: a 403, 408, 429, or 5xx, a redirect off GitHub or without a
+     Location, a grafted path that redirects out of the renamed repo, or a
+     network error. Then the engine defers the capture, and it stays eligible
+     for the next run. Only a 404 that survives the probe is gone.
 
 4. **Resume by re-running.** The cache root is the done-truth. Kill it any time;
    a re-run skips what is already fully closed and finishes the rest. `--max N`

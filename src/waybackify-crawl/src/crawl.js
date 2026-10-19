@@ -14,7 +14,7 @@
  *
  * Durability & resume: recordDynamic writes the worklist BEFORE the refetch, so
  * a crash resumes straight into the frontier (cacheCapture's frontier =
- * `requisites ∪ dynamic`). The core (spv/waybackify) owns the facts; this
+ * `requisites ∪ dynamic`). The core (waybackify) owns the facts; this
  * package owns the loop, the run ledgers (`<root>/.crawl/`), and the policy.
  *
  * `crawl(urls, { root, deps })` takes injectable `deps.{ serve, probe,

@@ -1,8 +1,8 @@
 /**
  * Edge-bundle smoke — prove the two edge adapters BUNDLE from the built dist,
- * the layer tsc cannot vouch for. The washe deploy break that motivated this
- * (charlie.dev #539) passed typecheck and failed only inside the deploy
- * bundler; this runs both bundlers at CI time instead of deploy time:
+ * the layer tsc cannot vouch for. The deploy break that motivated this passed
+ * typecheck and failed only inside the deploy bundler. This runs both
+ * bundlers at CI time instead of deploy time:
  *
  *   Fastly      js-compute-runtime (the exact bundler `fastly compute build`
  *               invokes) over entry-fastly.js → main.wasm. Wizer executes the

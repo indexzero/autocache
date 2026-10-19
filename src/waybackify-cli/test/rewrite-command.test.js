@@ -1,7 +1,7 @@
 // `waybackify rewrite` (surface v2: APPLICATION) — offline, real library.
 //
 // The rewrite semantics (precedence, fence/link-text guards, match key) are
-// tested where they live: spv/waybackify/test/manifest.test.js (apply). This
+// tested where they live: src/waybackify/test/manifest.test.js (apply). This
 // file pins the CLI contract: argv → source + manifest read, apply()'s output
 // at -o, nothing on stdout, and the conservative no-verdict path (warn on
 // stderr, exit 1, output still written with the url untouched).
@@ -70,7 +70,7 @@ test('a url with no verdict: warned on stderr, exit 1, output still written unto
   assert.match(fs.readFileSync(outFile, 'utf8'), /\(http:\/\/unknown\.example\.com\/page\)/);
 });
 
-test('--chrome-host threads through to apply: the archived link points at the override host (#453)', async () => {
+test('--chrome-host threads through to apply: the archived link points at the override host', async () => {
   const outFile = path.join(tmp(), 'out.md');
   const { code, stderr } = await rewrite([
     path.join(APPLY, 'source.md'),

@@ -1,6 +1,6 @@
 /**
- * Root ↔ bucket PARITY — the four-layer verifier behind THE MILESTONE gate
- * (#292). Given a local `waybackify cache` root (the archive of record) and a
+ * Root ↔ bucket PARITY — the four-layer verifier behind THE MILESTONE gate.
+ * Given a local `waybackify cache` root (the archive of record) and a
  * remote S3-compatible bucket that is meant to be its byte-for-byte projection,
  * prove they serve identical content, layer by layer:
  *
@@ -22,7 +22,7 @@
  *            and serveBucket on ephemeral ports (same process) and assert the
  *            two answer identically for sampled keys (status, content-type, body
  *            bytes, redirect Location) plus a guaranteed miss (a local 404 in
- *            both under strict serving; #361).
+ *            both under strict serving).
  *
  * Node-only ON PURPOSE (node:fs walking, node:crypto streaming digest, and the
  * @hono/node-server boot in Layer 4). It lives in waybackify-verify, never in
@@ -80,7 +80,7 @@ export interface ParityOptions extends ParityConfig {
   /** Emit a progress line every `progressEvery` entries (Layers 2–3). */
   progressEvery?: number;
   /**
-   * Layer 3 per-object re-fetch knobs for a THROWN body READ (#499). A broken
+   * Layer 3 per-object re-fetch knobs for a THROWN body READ. A broken
    * body surfaces mid-stream — AFTER the dispatcher handed the response off —
    * so ./retry.ts cannot transparently replay it; the heal lives here instead,
    * scoped to exactly that post-handoff phase (see {@link verifyBody}).
@@ -502,10 +502,10 @@ export async function checkBodies(
   const logger = options.logger ?? NOOP_PARITY_LOGGER;
   const retry = sanitizeBodyRetry(options.bodyRetry);
 
-  // The #499 per-object re-fetch lives INSIDE verifyBody, phase-scoped to the
+  // The per-object re-fetch lives INSIDE verifyBody, phase-scoped to the
   // body read — see the ownership boundary documented there. This callback
   // deliberately adds no retry of its own: wrapping the WHOLE verify (including
-  // store.get) in a retry loop is exactly the bug #500 removes.
+  // store.get) in a retry loop is exactly the bug the phase guard removes.
   await mapPool(pending, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, logger, 'layer 3 (body verification)', entry => entry.capKey, async entry => {
     const outcome = await verifyBody(store, entry, mismatches, retry, logger);
     if (outcome.attempts > 1) progress.healed.add(entry.capKey);
@@ -532,9 +532,9 @@ export async function checkBodies(
  * NOTHING else. These are the errors that surface WHILE the response body is
  * being consumed, AFTER the dispatcher handed the response off, which is why
  * they cannot live in ./retry.ts's RETRY_ERROR_CODES (a RetryAgent cannot
- * re-issue a request whose body handoff already began — see #499).
+ * re-issue a request whose body handoff already began).
  *
- * THE BAR FOR MEMBERSHIP (#500): retry only a failure whose recovery you can
+ * THE BAR FOR MEMBERSHIP: retry only a failure whose recovery you can
  * name in one sentence —
  *
  *   UND_ERR_RES_CONTENT_LENGTH_MISMATCH  body ended short of its Content-Length
@@ -544,7 +544,7 @@ export async function checkBodies(
  *   ECONNRESET / EPIPE                   peer reset / broken pipe mid-stream
  *                                        → a fresh socket re-carries the bytes.
  *
- * ERR_ASSERTION is deliberately NOT here (removed in #500): an assertion is
+ * ERR_ASSERTION is deliberately NOT here: an assertion is
  * undici reaching a state it declared impossible — there is no sentence naming
  * what a retry would fix, so it FAILS CLOSED (surfaced, not healed).
  *
@@ -580,7 +580,7 @@ function isRetryableBodyError(error: unknown): boolean {
 
 /**
  * GET + stream-hash ONE bodied entry, folding any divergence into `mismatches`,
- * with the #499 re-fetch scoped to EXACTLY the post-handoff phase (#500).
+ * with the per-object re-fetch scoped to EXACTLY the post-handoff phase.
  *
  * THE PHASE CUT IS AN OWNERSHIP BOUNDARY. Every failure BEFORE the response is
  * handed off — connect, pre-header resets, 5xx, 429 — belongs to the DISPATCHER
@@ -718,7 +718,7 @@ async function compareServed(root: RunningServer, bucket: RunningServer, key: st
   const note = (field: string, expected: string, actual: string) => mismatches.push({ key, field, expected, actual });
 
   // The styled 404/index pages now render the mirror's OWN host (the request
-  // Host header, #453) into their title — so the two parity servers, which
+  // Host header) into their title — so the two parity servers, which
   // listen on different ephemeral ports, legitimately serve host-differing
   // bytes for a miss. Parity is a LOGICAL equivalence over one mirror, so
   // normalize each server's own authority to a constant before diffing bytes;
@@ -735,7 +735,7 @@ async function compareServed(root: RunningServer, bucket: RunningServer, key: st
 
 /**
  * Replace a server's own host authority (`host:port`) with a fixed placeholder
- * so the host-in-title (#453) does not make two servers on different ports look
+ * so the host-in-title does not make two servers on different ports look
  * divergent. latin1 is a lossless byte↔char map, so a binary capture body that
  * never contains the authority round-trips byte-for-byte (a genuine no-op).
  */

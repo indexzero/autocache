@@ -1,11 +1,11 @@
 /**
- * The chrome/content split (#320): Host-keyed serving inside the
+ * The chrome/content split: Host-keyed serving inside the
  * runtime-agnostic app. Driven exactly like app.test.ts — app.request()
  * against a MemoryStore (and a THROWING spy store to prove the chrome host
- * never reaches storage) — so every #320 recipe claim this code depends on is
+ * never reaches storage) — so every split recipe claim this code depends on is
  * asserted locally, zero network, zero DNS.
  *
- * The two hostnames under test are placeholder split hosts (#320):
+ * The two hostnames under test are placeholder split hosts:
  *   chrome  → wayback.example.com   (attribution UI + iframe shell)
  *   content → content.example.net   (sacrificial usercontent origin)
  */
@@ -52,7 +52,7 @@ class ThrowingStore implements Store {
   }
 }
 
-describe('chrome/content split (#320)', () => {
+describe('chrome/content split', () => {
   describe('content host — serves capture bytes with frame-ancestors', () => {
     let store: MemoryStore;
     let app: ReturnType<typeof createApp>;
@@ -91,9 +91,9 @@ describe('chrome/content split (#320)', () => {
       store.put(captureKey(TS, 'http://example.com/pixel.gif'), bytes, 'image/gif');
       const res = await app.request(contentUrl(`/${TS}/http://example.com/pixel.gif`));
       assert.equal(res.status, 200);
-      // #320 step 1 is origin-wide — EVERY content response carries
-      // frame-ancestors. Harmless on an inert image (document CSP is not
-      // enforced on a subresource); the bytes pass through unchanged.
+      // The split recipe's step 1 is origin-wide — EVERY content response
+      // carries frame-ancestors. Harmless on an inert image (document CSP is
+      // not enforced on a subresource); the bytes pass through unchanged.
       assert.equal(res.headers.get('content-security-policy'), CONTENT_CSP);
       assert.equal(res.headers.get('x-frame-options'), null);
       assert.deepEqual(new Uint8Array(await res.arrayBuffer()), bytes);
@@ -142,7 +142,7 @@ describe('chrome/content split (#320)', () => {
       assert.ok(!body.includes('SECRET_CAPTURE_BODY'));
     });
 
-    it('embeds a sandboxed iframe with EXACTLY the #320 tokens and NOT allow-top-navigation', async () => {
+    it('embeds a sandboxed iframe with EXACTLY the split recipe tokens and NOT allow-top-navigation', async () => {
       const app = createApp(new ThrowingStore(), { split: SPLIT });
       const body = await (await app.request(chromeUrl())).text();
       assert.ok(body.includes('sandbox="allow-scripts allow-same-origin allow-forms allow-popups"'));
@@ -248,7 +248,7 @@ describe('chrome/content split (#320)', () => {
     });
   });
 
-  describe('served pages name the configured chrome host, not a placeholder (#453)', () => {
+  describe('served pages name the configured chrome host, not a placeholder', () => {
     it('the chrome index title + heading show the configured chrome host', async () => {
       const app = createApp(new ThrowingStore(), { split: SPLIT });
       const body = await (await app.request(`https://${CHROME}/`)).text();
@@ -432,11 +432,12 @@ describe('chrome/content split (#320)', () => {
   // can reach createApp. A falsy split is PRESENT (not `undefined`) and so is a
   // configured-but-invalid split: it MUST fail closed, never fall through to
   // single-host, which would serve capture bytes FIRST-PARTY on the trusted
-  // chrome host — the exact #320 vulnerability. Each case below would build a
-  // single-host app and serve 200 capture bytes on the chrome host WITHOUT the
-  // presence-not-truthiness fix; with it, createApp throws before any request
-  // runs. (`undefined` remains the ONLY "single-host" value — covered above.)
-  describe('present-but-falsy split fails closed — never single-host capture bytes (#320 truthiness fix)', () => {
+  // chrome host — the exact vulnerability the split closes. Each case below
+  // builds a single-host app and serves 200 capture bytes on the chrome host
+  // WITHOUT the presence-not-truthiness fix. With it, createApp throws before
+  // any request runs. (`undefined` remains the ONLY "single-host" value —
+  // covered above.)
+  describe('present-but-falsy split fails closed — never single-host capture bytes (truthiness fix)', () => {
     for (const bad of [null, false, 0, ''] as const) {
       it(`split: ${JSON.stringify(bad)} throws at build; a chrome-host capture request never serves 200 bytes`, async () => {
         const store = new MemoryStore();
@@ -472,7 +473,7 @@ describe('chrome/content split (#320)', () => {
   // accessor can diverge between check and use. WITHOUT the fix this test sees a
   // 200 with CAPTURE-BYTES and the store touched; WITH it, the chrome host gets
   // the byte-free shell and the store stays untouched.
-  describe('validate-then-reread (TOCTOU) — the split is snapshotted once (#320)', () => {
+  describe('validate-then-reread (TOCTOU) — the split is snapshotted once', () => {
     it('a stateful contentHost getter cannot collapse the boundary: chrome host serves the shell, store untouched', async () => {
       // A spy store that RECORDS any access and would hand back capture bytes:
       // if the chrome host were misrouted to `content`, we'd see BOTH a touch
@@ -523,13 +524,13 @@ describe('chrome/content split (#320)', () => {
     });
 
     for (const ctype of ['image/svg+xml', 'application/xhtml+xml', 'image/gif', 'application/pdf']) {
-      it(`stamps NO CSP on non-text/html ${ctype} in single-host mode (pre-#320 posture preserved)`, async () => {
+      it(`stamps NO CSP on non-text/html ${ctype} in single-host mode (single-host posture preserved)`, async () => {
         const store = new MemoryStore();
         store.put(captureKey(TS, 'http://example.com/doc'), '<svg/>', ctype);
         const app = createApp(store); // no split
         const res = await app.request(`https://anything.example/${TS}/http://example.com/doc`);
         assert.equal(res.status, 200);
-        // Pre-#320, only text/html got the standalone CSP; that must not change.
+        // Single-host stamps the CSP on text/html only. That must not change.
         assert.equal(res.headers.get('content-security-policy'), null);
       });
     }
@@ -587,7 +588,7 @@ describe('chrome/content split (#320)', () => {
     });
   });
 
-  describe('DOCUMENT_CSP — form-action egress hole closed (#433 review)', () => {
+  describe('DOCUMENT_CSP — form-action egress hole closed', () => {
     it("a content HTML response carries form-action 'self' (blocks cross-origin form exfil from allow-forms iframe)", async () => {
       const store = new MemoryStore();
       store.put(captureKey(TS, ORIGINAL), '<html><body>x</body></html>', 'text/html');
@@ -606,10 +607,10 @@ describe('chrome/content split (#320)', () => {
   });
 
   // A scheme-only (or otherwise partial) split config must NEVER silently fall
-  // back to single-host serving — that would serve capture bytes first-party on
-  // the trusted chrome origin, the exact vulnerability #320 closes. Only ALL
+  // back to single-host serving — that serves capture bytes first-party on
+  // the trusted chrome origin, the exact vulnerability the split closes. Only ALL
   // THREE vars absent means split-off; anything partial fails closed.
-  describe('scheme-only config fails closed — never single-host (#433 review)', () => {
+  describe('scheme-only config fails closed — never single-host', () => {
     const req = () => new Request(`https://${CHROME}${PATH}`);
 
     it('createCloudflareHandler with ONLY SPLIT_SCHEME set throws (never single-host)', () => {

@@ -24,9 +24,9 @@ this order — two SEPARATE invocations into the same root, so the fixture also
 proves that independently-cached captures compose in one root:
 
 ```sh
-node spv/waybackify-cli/bin/waybackify.js cache \
+node src/waybackify-cli/bin/waybackify.js cache \
   'https://web.archive.org/web/19981202230410/http://www.google.com/' -o <root>
-node spv/waybackify-cli/bin/waybackify.js cache \
+node src/waybackify-cli/bin/waybackify.js cache \
   'https://web.archive.org/web/20140403040000/http://example.com/' -o <root>
 ```
 

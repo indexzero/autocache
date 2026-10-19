@@ -1,5 +1,5 @@
 // `waybackify cache fill` handler — thin-wrapper wiring test. The load-bearing
-// engine (spv/waybackify/backfill.js) is covered by its own unit + e2e suites;
+// engine (src/waybackify/backfill.js) is covered by its own unit + e2e suites;
 // here we prove the handler maps argv → backfill() options, prints the one
 // summary line, and turns an abort into a domain-failure throw.
 import assert from 'node:assert/strict';

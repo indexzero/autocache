@@ -1,7 +1,7 @@
 // `waybackify cache fill` handler — thin wiring over the library's backfill.js
 // engine, per the CLI's hard thin-wrapper rule: the load-bearing loop (durable
 // closure-aware worklist, throttle, defer-on-transient, abort-on-connection-
-// failure, resume) is spv/waybackify/backfill.js; this file translates the
+// failure, resume) is src/waybackify/backfill.js; this file translates the
 // parsed argv payload into a backfill() call, streams progress to stderr,
 // prints one JSON summary line to stdout, and turns an abort into a
 // domain-failure exit (1 — the mirror image is incomplete; re-run to resume).

@@ -1,8 +1,8 @@
 waybackify [flags] [command]
 
-manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the spv/waybackify library
+manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the waybackify library
 
-Human-operable, xargs-composable front door over spv/waybackify:
+Human-operable, xargs-composable front door over waybackify:
 generate a manifest for a source file, rewrite it to its published
 form, survey the ledger of manifests under a tree, hand-check a
 capture, re-pick a better one, run a checkpointed corpus audit, and —

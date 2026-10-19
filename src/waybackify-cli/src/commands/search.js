@@ -1,6 +1,6 @@
 // `waybackify search` handler — thin wiring over the library's multi-row CDX
 // face, per the CLI's hard thin-wrapper rule: the query itself (retry/backoff,
-// params, row decoding) is spv/waybackify's WaybackMachine#getSnapshots; this
+// params, row decoding) is the waybackify library's WaybackMachine#getSnapshots; this
 // file translates the parsed argv payload into that call and emits one JSONL
 // row per capture on stdout.
 //

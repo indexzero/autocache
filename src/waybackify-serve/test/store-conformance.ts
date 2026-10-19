@@ -1,13 +1,13 @@
 /**
  * Store conformance — the shared contract every `Store` (src/store.ts) must
- * honor, asserted identically against each backend (#285).
+ * honor, asserted identically against each backend.
  *
  * The milestone requires the wayback mirror to answer BYTE-FOR-DECISION
  * identically whether it reads local disk, a Cloudflare R2 bucket, or Fastly
  * Object Storage. Cross-store divergence is the entire risk surface, so it gets
  * ONE suite, not per-store spot checks: same fixture in, same head()/get() out.
  * Runs today against MemoryStore (native-metadata model) and FsStore (POSIX
- * sidecar model); the S3Store/R2Store issues (#286/#287) plug in the same way.
+ * sidecar model); the S3Store/R2Store adapters plug in the same way.
  *
  * ── ADDING A STORE ─────────────────────────────────────────────────────────
  * One import, one `describe`, one population-seam impl:
@@ -66,7 +66,7 @@ export interface ConformanceStore {
 }
 
 /** The bodyless statuses — a bodied entry is the only one with cap/ bytes.
- *  `interstitial` (#363) joins them: a refused wayback fluff page, metadata-only
+ *  `interstitial` joins them: a refused wayback fluff page, metadata-only
  *  on every backend. */
 const BODILESS: readonly CaptureStatus[] = ['empty', 'redirect', 'error', 'interstitial'];
 

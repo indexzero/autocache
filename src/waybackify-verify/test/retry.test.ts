@@ -111,7 +111,7 @@ describe('dispatcher retry — a resolver hiccup must not kill the run', () => {
     assert.equal(mockAgent.pendingInterceptors().length, 1);
   });
 
-  it('a body-integrity break (UND_ERR_RES_CONTENT_LENGTH_MISMATCH, #499) is NOT dispatcher-retried — Layer 3 owns that heal', async () => {
+  it('a body-integrity break (UND_ERR_RES_CONTENT_LENGTH_MISMATCH) is NOT dispatcher-retried — Layer 3 owns that heal', async () => {
     // The code surfaces MID-BODY, after the dispatcher handed the response off,
     // so a RetryAgent entry could never replay the real shape — it would only
     // MULTIPLY attempts with Layer 3's per-object re-fetch (the one seam that

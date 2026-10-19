@@ -1,8 +1,8 @@
-// `waybackify rewrite` handler — APPLICATION (surface v2, #386): thin wiring
+// `waybackify rewrite` handler — APPLICATION (surface v2): thin wiring
 // over the library's manifest.js#apply, per the CLI's hard thin-wrapper rule.
 //
 // NOTE the name: this FILE is the CLI command `rewrite`; the library module
-// spv/waybackify/rewrite.js is the remaster capture-body rewriter and is a
+// src/waybackify/rewrite.js is the remaster capture-body rewriter and is a
 // different thing entirely. The manifest applier is manifest.js#apply — this
 // handler adds NO rewrite logic of its own (precedence, fence/link-text
 // guards, and the match key all live in the library).
@@ -39,7 +39,7 @@ export function rewriteHandler(deps = {}) {
     const readManifest = deps.readManifest ?? (await import('@autocache/waybackify/manifest.js')).readManifest;
 
     const source = fs.readFileSync(args.source, 'utf8');
-    // --chrome-host threads the #453 host swap; omit it and apply defaults to
+    // --chrome-host threads the chrome-host swap; omit it and apply defaults to
     // DEFAULT_CHROME_HOST (a generic placeholder). paparam camelCases the flag.
     const options = flags.chromeHost ? { chromeHost: flags.chromeHost } : undefined;
     const { content, warnings } = apply(source, readManifest(flags.manifest), options);

@@ -1,11 +1,11 @@
 # The remaster build — hermetic in, remastered out
 
 Living documentation for `waybackify remaster build <hermetic-root> <remastered-root>`
-(handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js);
-engine: [`spv/waybackify/rewrite.js`](../src/waybackify/rewrite.js);
-build: [`spv/waybackify/remaster.js`](../src/waybackify/remaster.js)).
+(handler: [`src/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js);
+engine: [`src/waybackify/rewrite.js`](../src/waybackify/rewrite.js);
+build: [`src/waybackify/remaster.js`](../src/waybackify/remaster.js)).
 
-This is the heart of **standalone**. The #292 milestone proved the buckets
+This is the heart of **standalone**. The standalone milestone proved the buckets
 faithfully mirror the corpus; a browser sweep then proved the mirror is a
 facade — zero pages were self-contained, ~90% of page requisites were quietly
 served by live `web.archive.org`, and some captures are stored wayback error
@@ -141,8 +141,8 @@ the deterministic rewrite engine, the build record sorts its entries. Proven in
 
 ## Sources
 
-- Engine: [`spv/waybackify/rewrite.js`](../src/waybackify/rewrite.js),
-  strip port: [`spv/waybackify/strip.js`](../src/waybackify/strip.js)
-- Build: [`spv/waybackify/remaster.js`](../src/waybackify/remaster.js),
-  handler: [`spv/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js)
+- Engine: [`src/waybackify/rewrite.js`](../src/waybackify/rewrite.js),
+  strip port: [`src/waybackify/strip.js`](../src/waybackify/strip.js)
+- Build: [`src/waybackify/remaster.js`](../src/waybackify/remaster.js),
+  handler: [`src/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js)
 - Serving contract: [SERVE.md](./SERVE.md) · store: [CACHE.md](./CACHE.md)

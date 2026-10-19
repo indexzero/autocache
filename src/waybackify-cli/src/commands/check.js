@@ -1,6 +1,6 @@
 // `waybackify check` handler — thin wiring over the library, per the CLI's
 // hard thin-wrapper rule: the load-bearing verdict engine (CDX statuscode
-// lookup + soft-404 replay heuristics) is spv/waybackify/audit.js; this file
+// lookup + soft-404 replay heuristics) is src/waybackify/audit.js; this file
 // translates the parsed argv payload into an auditCapture() call, prints the
 // library's verdict object to stdout VERBATIM (one JSON line, no reshaping),
 // logs nothing else to stdout, and maps the verdict to an exit code.

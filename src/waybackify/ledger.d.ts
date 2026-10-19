@@ -1,6 +1,6 @@
 /**
  * Hand-authored declarations for ledger.js — the manifest-collection
- * concept — so render/wayback's TypeScript can import it under `tsc`
+ * concept — so a TypeScript consumer can import it under `tsc`
  * without this package growing a TypeScript toolchain (same pattern as
  * key.d.ts). Keep in lockstep with ledger.js.
  */

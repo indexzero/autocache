@@ -2,7 +2,7 @@
 // CLI's hard thin-wrapper rule: the load-bearing build (walk meta/, strip
 // chrome, localize wayback references, carry sidecars, write a
 // content-addressed build record — deterministically) is
-// spv/waybackify/remaster.js; this file translates the two positional roots
+// src/waybackify/remaster.js; this file translates the two positional roots
 // into a remaster() call and prints the run summary to stdout (--json for the
 // raw record). A build failure throws → domain-failure exit (1).
 //

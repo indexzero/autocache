@@ -1,5 +1,5 @@
 /**
- * The wayback mirror Hono app (#249).
+ * The wayback mirror Hono app.
  *
  * Runtime-agnostic on purpose: this module is pure Hono + Web APIs and takes
  * its Store (src/store.ts) as an argument, so the SAME app deploys to
@@ -11,9 +11,9 @@
  * Serving semantics (`/web/<ts><flag?>/<url>` is accepted everywhere
  * `/<ts><flag?>/<url>` is, and means the same capture — see src/path.ts).
  *
- * STRICT is the default (#361). A miss must not leak, and a page must carry
- * nothing of ours. Every corpus miss — document or requisite — answers a
- * styled local 404, self-contained and `no-store`. The old miss→302-to-live
+ * STRICT is the default. A miss never falls through to the live web, and a
+ * page carries nothing of ours. Every corpus miss — document or requisite —
+ * answers a styled local 404, self-contained and `no-store`. The old miss→302-to-live
  * behavior survives only behind `{ liveFallback: true }` (serve.js's
  * `--live-fallback`, or the edge entries' env/config switch), off by default.
  *
@@ -95,7 +95,7 @@ const HIT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const NO_STORE = 'no-store';
 
 /**
- * The standalone Content-Security-Policy for served HTML documents (#361).
+ * The standalone Content-Security-Policy for served HTML documents.
  * The browser itself refuses non-local fetches — the enforcement layer for
  * references no rewriter can catch. Every family is `'self'` (requisites are
  * rewritten to the root-relative `/web/<ts><flag>/<orig>` form, same origin).
@@ -152,7 +152,7 @@ function relaxedDocumentCsp(): string {
 
 /**
  * The description paragraph each served page carries — the ONE fragment that
- * varies per deployment (#453). Everything else on the index and 404 (title,
+ * varies per deployment. Everything else on the index and 404 (title,
  * styles, the "Not mirrored here" heading, the URL-shape explanation, the "No
  * request left this server" line) is site-agnostic and stays baked into the
  * template. A deployment threads its own copy through {@link AppOptions.copy};
@@ -172,7 +172,7 @@ export interface ServedCopy {
 }
 
 /**
- * The GENERIC, site-agnostic index description — the shipped base case (#453).
+ * The GENERIC, site-agnostic index description — the shipped base case.
  * Names no specific deployment; a real mirror overrides it via
  * {@link AppOptions.copy}. Raw HTML by contract (see {@link ServedCopy}).
  */
@@ -183,7 +183,7 @@ const DEFAULT_INDEX_ABOUT =
   'load-bearing for old pages.';
 
 /**
- * The GENERIC, site-agnostic 404 description — the shipped base case (#453).
+ * The GENERIC, site-agnostic 404 description — the shipped base case.
  * Names no specific deployment. Raw HTML by contract (see {@link ServedCopy}).
  */
 const DEFAULT_NOT_FOUND_ABOUT =
@@ -333,13 +333,13 @@ ${items}
 }
 
 /**
- * The chrome/content split (#320). One deployed app, two hostnames routed by
+ * The chrome/content split. One deployed app, two hostnames routed by
  * the Host header: the CHROME host serves attribution UI + a sandboxed iframe
  * shell and NEVER serves capture bytes; the CONTENT host — a declared
  * sacrificial usercontent origin — serves the transformed capture bytes
  * cross-origin, carrying a `frame-ancestors` CSP that lets only the chrome host
  * frame it. Absent this config the app is single-host (today's behavior, which
- * the #292 local-serving milestone relies on).
+ * local serving relies on).
  */
 export interface SplitOptions {
   /**
@@ -364,7 +364,7 @@ export interface SplitOptions {
 /** Store-agnostic app behavior — the serving MODE, independent of storage. */
 export interface AppOptions {
   /**
-   * Restore the pre-#361 miss→302-to-live behavior. OFF by default: strict
+   * Restore the pre-strict miss→302-to-live behavior. OFF by default: strict
    * serving answers every miss with a local 404. When on, a miss (and an
    * archived-redirect entry) 302s to web.archive.org, `no-store`. The flag
    * is store-agnostic on purpose — every runtime entry threads its own switch
@@ -409,22 +409,22 @@ export interface AppOptions {
    */
   relaxContentCsp?: boolean;
   /**
-   * The chrome/content split (#320). When set, serving is Host-keyed: the
+   * The chrome/content split. When set, serving is Host-keyed: the
    * chrome host gets the iframe shell (no store access), the content host gets
    * capture bytes + the `frame-ancestors` CSP. When absent, the app is
-   * single-host — byte-identical to pre-#320 behavior. Threaded from each
+   * single-host — byte-identical to pre-split behavior. Threaded from each
    * runtime entry's own config (serve.js `--chrome-host`/`--content-host`, the
    * edge entries' env/config constants).
    */
   split?: SplitOptions;
   /**
-   * Per-deployment served-page copy (#453): the description paragraph of the
+   * Per-deployment served-page copy: the description paragraph of the
    * index and 404 pages. Absent (or a field absent), the generic site-agnostic
    * defaults ship (DEFAULT_INDEX_ABOUT / DEFAULT_NOT_FOUND_ABOUT). TRUSTED site
    * configuration — the fragments are injected as RAW HTML (they carry `<a>`
    * links), so the site owns their safety; see {@link ServedCopy}. Threaded
    * from each runtime entry (serve.js's node config, the edge handlers' config)
-   * and, in production, supplied by the site layer (render/wayback's COPY).
+   * and, in production, supplied by the site layer's copy object.
    */
   copy?: ServedCopy;
   /**
@@ -471,9 +471,9 @@ function setCsp(c: Context, policy: string, mode: CspMode): void {
  * attribute context — the conservative five-char set covers both). This is
  * SECURITY-CRITICAL, not cosmetic: the capture URL is attacker-controlled (it
  * is the request path), and the chrome shell renders on the TRUSTED chrome
- * origin. Without escaping, a path like `…/"><script>…` would break out of the
- * iframe `src` attribute and run script with the chrome origin's authority —
- * exactly the first-party XSS #320 exists to prevent.
+ * origin. Without escaping, a path like `…/"><script>…` breaks out of the
+ * iframe `src` attribute and runs script with the chrome origin's authority —
+ * exactly the first-party XSS the split exists to prevent.
  */
 function escapeHtml(value: string): string {
   return value
@@ -507,13 +507,13 @@ function headerSafe(value: string): string {
 /**
  * The chrome host's own CSP. The chrome origin serves only OUR trusted shell
  * (attribution UI + one iframe), so it is locked down hard: `script-src 'none'`
- * and `object-src 'none'` (v1 is script-free — deep-link sync is deferred,
- * #320 step 3 — so NO script executes on the chrome origin, not even
- * same-origin; `default-src 'self'` alone would permit that), and the only
- * framing permitted is the content origin. `frame-ancestors 'self'` refuses to
- * be embedded by anyone (the shell has no legitimate embedder — anti-
- * clickjacking); `base-uri 'none'` and `form-action 'self'` close the usual
- * escapes.
+ * and `object-src 'none'` (v1 is script-free — deep-link sync is deferred to
+ * the split recipe's step 3 — so NO script executes on the chrome origin,
+ * not even same-origin; `default-src 'self'` alone permits that), and
+ * the only framing permitted is the content origin. `frame-ancestors 'self'`
+ * refuses to be embedded by anyone (the shell has no legitimate embedder —
+ * anti-clickjacking); `base-uri 'none'` and `form-action 'self'` close the
+ * usual escapes.
  *
  * `relax` is the {@link AppOptions.relaxContentCsp} STOPGAP: it widens ONLY
  * the framing grants (`frame-src`/`child-src`) with `https://web.archive.org`,
@@ -539,7 +539,7 @@ function chromeCsp(contentOrigin: string, relax = false): string {
 }
 
 /**
- * The iframe sandbox tokens (#320 step 2), EXACT and deliberate:
+ * The iframe sandbox tokens (the split recipe's step 2), EXACT and deliberate:
  * `allow-scripts allow-same-origin allow-forms allow-popups`, and pointedly
  * NOT `allow-top-navigation` — without that token, the framebuster scripts
  * ubiquitous in 2000s captures (`top.location = self.location`) silently fail.
@@ -573,7 +573,7 @@ const SPLIT_IPV6_RE = /^\[[0-9a-f:]+\](?::\d{1,5})?$/i;
  *      a raw `new URL` TypeError.
  *   3. chrome and content resolving to the SAME origin — that collapses the
  *      Host-routing boundary and serves capture bytes on the chrome origin,
- *      exactly what #320 forbids (default ports are canonicalized first, so
+ *      exactly what the split forbids (default ports are canonicalized first, so
  *      `h` and `h:443`/https are correctly seen as identical).
  */
 export function validateSplit(split: SplitOptions): string | null {
@@ -630,9 +630,9 @@ const MIRROR_DISCLAIMER =
   '<span class="clause">Mirror generated by <a href="https://autocache.dev" rel="noreferrer">autocache.dev</a></span>';
 
 /**
- * Render the chrome shell for a capture request: the attribution chrome (#320
- * now owns ALL visible attribution — the capture link, provenance, and the
- * archive.org credit) wrapping a sandboxed cross-origin iframe that points at
+ * Render the chrome shell for a capture request: the attribution chrome (the
+ * split now owns ALL visible attribution — the capture link, provenance, and
+ * the archive.org credit) wrapping a sandboxed cross-origin iframe that points at
  * the content origin. Everything interpolated from the request is HTML-escaped
  * (escapeHtml) — the capture URL is attacker-controlled.
  */
@@ -693,7 +693,7 @@ function renderChromeShell(args: {
  * The styled local 404, served `no-store` under a document CSP. THE strict
  * answer to a miss: an honest local page, no bounce to live web.archive.org.
  * The CSP is a parameter because a content-origin miss is rendered INSIDE the
- * chrome iframe (#320) and so must carry the same `frame-ancestors` policy its
+ * chrome iframe and so must carry the same `frame-ancestors` policy its
  * sibling hits do; a top-level miss carries the plain document CSP. `cspMode`
  * selects the header name for that document policy (design §D3).
  */
@@ -714,7 +714,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   const relaxContentCsp = options.relaxContentCsp ?? false;
   const localize = options.localize;
   const split = options.split;
-  // The per-deployment served-page description copy (#453): resolve each
+  // The per-deployment served-page description copy: resolve each
   // fragment to its site value or the generic default ONCE. RAW HTML by
   // contract (TRUSTED site config carrying <a> links) — see ServedCopy.
   const indexAbout = options.copy?.index ?? DEFAULT_INDEX_ABOUT;
@@ -729,7 +729,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // building the app (the runtime entries validate too, for a clean CLI/deploy
   // error; this is the library backstop).
   //
-  // PRESENCE, not truthiness (#320). ONLY `split === undefined` means "no split
+  // PRESENCE, not truthiness. ONLY `split === undefined` means "no split
   // — single-host". ANY other supplied value means a split WAS configured and
   // MUST validate. TypeScript says `SplitOptions | undefined`, but runtime
   // callers (node.ts, fastly.ts) forward the value unchanged, so a present-but-
@@ -771,7 +771,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // ports dropped) so routing compares full `host[:port]` authorities EXACTLY
   // — no port stripping, which would collapse two distinct origins on one
   // hostname and cross the boundary. `contentDocumentCsp` is the standalone
-  // document CSP with `frame-ancestors` merged in — one header (#320 recipe
+  // document CSP with `frame-ancestors` merged in — one header (recipe
   // step 1); `chromeCspValue` locks down the chrome origin's own shell.
   const scheme = splitCfg?.scheme ?? 'https';
   const canonHost = (host: string): string => new URL(`${scheme}://${host}`).host.toLowerCase();
@@ -793,7 +793,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     : documentCsp;
   const chromeCspValue = hasSplit ? chromeCsp(contentOrigin, relaxContentCsp) : '';
 
-  // The role of an incoming request under the split (#320): `content` only when
+  // The role of an incoming request under the split: `content` only when
   // its Host authority EXACTLY equals the content authority — an ALLOWLIST —
   // else `chrome` (the chrome host, or anything unrecognized: fail-closed to
   // the byte-free shell). `single` when the split is off. Routing AND the CSP
@@ -842,11 +842,11 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // on responses — plain in single-host mode, frame-ancestors-bearing on the
   // content host under the split. `stampAll` decides WHICH responses carry it:
   // in split/content mode EVERY content response carries `frame-ancestors`
-  // (#320 recipe step 1 is origin-wide — a PDF or browser-image document is
+  // (recipe step 1 is origin-wide — a PDF or browser-image document is
   // framable too, and a CSP on an inert image/font subresource is harmless
   // because document policies are not enforced on subresources); single-host
-  // mode keeps the pre-#320 posture EXACTLY — the standalone CSP on `text/html`
-  // only, so the #292 deployment is byte-identical. This is the ONLY code that
+  // mode keeps its posture EXACTLY — the standalone CSP on `text/html` only,
+  // so a single-host deployment is byte-identical. This is the ONLY code that
   // reaches the store or emits capture bytes.
   // `alt` is the DECODE-FALLBACK candidate (see the `*` route): the same
   // request re-parsed with formatCapturePath's escape set decoded. Tried ONLY
@@ -892,7 +892,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     //   redirect     → the capture is an archived redirect. We hold no target,
     //                  and strict refuses to bounce to live; a local 404 is the
     //                  honest answer (liveFallback replays it at the archive).
-    //   interstitial → we refused to store a wayback fluff page (#363: a
+    //   interstitial → we refused to store a wayback fluff page (a
     //                  wrapper stub / redirect interstitial / raw-asset-as-html
     //                  / archived-error capture). We hold no servable content,
     //                  so strict answers a local 404; liveFallback bounces to
@@ -921,18 +921,18 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     c.header('Content-Type', contentType || 'application/octet-stream');
     c.header('Cache-Control', HIT_CACHE_CONTROL);
     // Provenance header on every hit — where this body actually came from.
-    // Invisible to the page; visible attribution is #320's chrome.
+    // Invisible to the page; visible attribution is the split's chrome.
     c.header('X-Wayback-Source', headerSafe(parsed.canonicalArchiveUrl));
 
     // The document CSP — the browser enforces same-origin fetches on references
     // no rewriter caught, and (under the split) `frame-ancestors` so only the
     // chrome host may frame the content origin. `stampAll` (split/content mode)
     // stamps EVERY response so the content origin's framing contract is
-    // origin-wide (#320 step 1); single-host mode keeps the pre-#320 posture:
-    // `text/html` only. Set regardless of body presence (HEAD, `empty`) so the
-    // header posture is uniform, under the header name `cspMode` selects. The
-    // serve-time chrome strip stays text/html-only (byte surgery on wayback's
-    // HTML injection).
+    // origin-wide (the split recipe's step 1); single-host mode keeps its
+    // posture: `text/html` only. Set regardless of body presence (HEAD,
+    // `empty`) so the header posture is uniform, under the header name
+    // `cspMode` selects. The serve-time chrome strip stays text/html-only
+    // (byte surgery on wayback's HTML injection).
     const isHtml = /^text\/html\b/i.test(contentType);
     if (stampAll || isHtml) setCsp(c, documentCsp, documentCspMode);
 
@@ -1005,11 +1005,12 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     return c.body(capture.body as string | ArrayBuffer | ReadableStream);
   };
 
-  // The chrome shell for a capture request (#320): the attribution UI + a
+  // The chrome shell for a capture request: the attribution UI + a
   // sandboxed cross-origin iframe pointing at the content origin. This path
   // NEVER touches the store and emits NO capture bytes — it is derived purely
   // from the request URL, so a not-yet-mirrored capture simply shows a shell
-  // whose iframe 404s inside (v1 accepts "URL = entry capture"; #320 step 3).
+  // whose iframe 404s inside (v1 accepts "URL = entry capture"; deep-link
+  // sync is the split recipe's step 3).
   // `no-store`: the shell is cheap to rebuild and we deliberately did not check
   // whether the capture exists, so nothing is worth caching under this URL.
   const chromeShell = (c: Context, url: URL, parsed: NonNullable<ReturnType<typeof parseWaybackPath>>): Response => {
@@ -1035,7 +1036,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   };
 
   // The index page — but only where OUR trusted UI belongs. The content origin
-  // (#320) hosts nothing of ours, ever: a bare `/` there (reachable in-frame
+  // hosts nothing of ours, ever: a bare `/` there (reachable in-frame
   // via any archived site-relative link to the root) answers a content 404
   // under the frame-ancestors CSP, not our index. The chrome origin serves the
   // attribution landing under the locked chrome CSP; single-host serves it as
@@ -1074,7 +1075,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       }
       return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : documentCsp, role === 'content' ? 'enforce' : cspMode);
     }
-    // The content origin (#320) hosts nothing of ours, EVER — the listing on
+    // The content origin hosts nothing of ours, EVER — the listing on
     // the sacrificial origin would leak the whole corpus map into the zone
     // hostile captures run in. A content-host /_index is a content 404 under
     // the always-enforced boundary CSP, exactly like `/` there.
@@ -1135,7 +1136,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
       return notFound(c, mirrorHostOf(c), notFoundAbout, role === 'content' ? contentDocumentCsp : documentCsp, role === 'content' ? 'enforce' : cspMode);
     }
 
-    // The chrome/content split (#320): capture bytes are served IFF the request
+    // The chrome/content split: capture bytes are served IFF the request
     // arrives on the CONTENT host (roleOf's allowlist). Every other host — the
     // chrome host, or anything unrecognized — gets the sandboxed iframe shell,
     // which never reaches the store, so a spoofed/unknown Host can never coax
@@ -1155,7 +1156,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     const decodedPath = decodeCapturePath(rawPath);
     const alt = decodedPath === rawPath ? null : parseWaybackPath(decodedPath);
     // content mode stamps frame-ancestors on EVERY response; single-host keeps
-    // the pre-#320 text/html-only posture.
+    // the single-host text/html-only posture.
     return serveContent(c, parsed, role === 'content' ? contentDocumentCsp : documentCsp, role === 'content', alt);
   });
 

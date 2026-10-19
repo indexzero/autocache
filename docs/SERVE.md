@@ -106,7 +106,7 @@ and `contentLength` exist **iff** `status == "body"`:
 | `empty` | no | the capture replayed 200 with zero bytes: serve 200, empty body |
 | `redirect` | no | the capture is an archived redirect (only recorded when the populating fetch didn't follow it); a server may 404 or proxy-redirect to the archive — its call, but it MUST NOT treat the entry as missing (that would trigger endless re-fetch attempts upstream) |
 | `error` | no | the archive permanently lacks this asset (replay 404/410 at population time): serve 404. Its existence is the signal "don't try to populate this again" |
-| `interstitial` | no | a wayback fluff page refused at cache time (#363: a wrapper stub, a redirect interstitial, a raw asset served as text/html, or an archived-error capture). We hold no servable content — the mirror server 302s to the archive replay (graceful degradation, like a miss), never serving the junk. The sidecar's `signature`/`target` are for the #364 remediation sweep, not for serving. It is NOT a miss (never re-fetched). |
+| `interstitial` | no | a wayback fluff page refused at cache time (a wrapper stub, a redirect interstitial, a raw asset served as text/html, or an archived-error capture). We hold no servable content — the mirror server 302s to the archive replay (graceful degradation, like a miss), never serving the junk. The sidecar's `signature`/`target` are for the remediation sweep, not for serving. It is NOT a miss (never re-fetched). |
 
 ## The orphan-body rule
 
@@ -156,7 +156,7 @@ Fastly Object Storage, AWS S3). The full projection + the operational runbook
 
 > Historical note: Fastly originally served from a KV Store (per-hash item
 > names, content-type in the item's metadata field). That path was deleted
-> outright when Fastly serving moved to Object Storage (#288); the KV-era sync
+> outright when Fastly serving moved to Object Storage; the KV-era sync
 > mapping lives only in git history.
 
 ## Integrity verification
@@ -192,5 +192,5 @@ Safe by construction — this is the debate's composability constraint:
 ## Sources
 
 - [CACHE.md](./CACHE.md) — producer-side data structure (layout, schema, write protocol, dissents).
-- Contracts in code: `src/waybackify-serve/src/store.ts` (Store/R2Store shapes) · `src/waybackify-serve/src/s3store.ts` (the S3 remote read path) · `src/waybackify-serve/src/path.ts` (request → capture key) · `spv/waybackify/key.js` (key/hash derivation).
+- Contracts in code: `src/waybackify-serve/src/store.ts` (Store/R2Store shapes) · `src/waybackify-serve/src/s3store.ts` (the S3 remote read path) · `src/waybackify-serve/src/path.ts` (request → capture key) · `src/waybackify/key.js` (key/hash derivation).
 - External: [Cloudflare R2 limits](https://developers.cloudflare.com/r2/reference/limits/) · [Fastly Compute resource limits](https://docs.fastly.com/products/compute-resource-limits) · [W3C SRI](https://www.w3.org/TR/sri-1/#integrity-metadata-description) · [POSIX rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html).

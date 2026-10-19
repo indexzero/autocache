@@ -1,5 +1,5 @@
 /**
- * Corpus key-set walker (#249, design §D3).
+ * Corpus key-set walker (design §D3).
  *
  * Walk a cache-root's `meta/` sidecars once → a Set of the capture keys the
  * server holds. This is the floor the serve-time `localize` option stands on:

@@ -12,7 +12,7 @@
 // sidecar's contentHash names — comes out the far side, so a remastered root
 // drops straight under `waybackify-serve --root`.
 //
-// WHY A BUILD, NOT SERVE-TIME (issue #362): storage is cheap; serve-time
+// WHY A BUILD, NOT SERVE-TIME: storage is cheap; serve-time
 // compute is the expensive, latency-adding, forever-verified path. The
 // rewrite rules stay pure functions so the SAME rules can also run per-request
 // in a `--root` dev mode — iterating on a rule never requires a rebuild — but

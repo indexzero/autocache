@@ -260,7 +260,7 @@ describe('rewriteJs — exact string literals only', () => {
 });
 
 /* ------------------------------------------------------------------------ *
- * Chrome-strip parity — modeled on render/wayback/test/html.test.ts.
+ * Chrome-strip parity — modeled on src/waybackify-serve/test/html.test.ts.
  * ------------------------------------------------------------------------ */
 
 const REPLAYED_HTML = `<html>
@@ -325,7 +325,7 @@ describe('rewriteHtml composes strip + localize', () => {
     assert.ok(!out.includes('WAYBACK TOOLBAR INSERT'));
     assert.ok(out.includes('src="/web/20140403040000im_/http://example.com/logo.gif"'));
     // Remaster carries nothing of ours — attribution is the serving chrome's job.
-    assert.ok(!out.includes('wayback-charlie-dev-attribution'));
+    assert.ok(!out.includes('wayback-mirror-attribution'));
   });
 });
 

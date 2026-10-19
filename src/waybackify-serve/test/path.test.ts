@@ -1,6 +1,6 @@
 /**
- * Parser contract tests (#249). The parser is the identity function of the
- * whole system — the edge handler, the enumerator, and the #248 audit all
+ * Parser contract tests. The parser is the identity function of the whole
+ * system — the edge handler, the enumerator, and the wayback-404 audit all
  * derive (timestamp, originalUrl, key) through it — so this suite pins the
  * liberal-parse behaviors (flags, collapsed slashes, scheme-less originals)
  * and the rejections (garbage stays 404, never a bogus redirect).

@@ -53,7 +53,7 @@ import { emptyUniverse, isExcluded, subset } from './universe.js';
 export const MANIFEST_VERSION = 2;
 
 /**
- * The default chrome host `apply` points archived replay links at (#453).
+ * The default chrome host `apply` points archived replay links at.
  *
  * A GENERIC PLACEHOLDER, deliberately not any real deployment's host: this
  * library names no specific site. A caller that publishes to a real mirror
@@ -82,7 +82,7 @@ const WAYBACK_ORIGIN_RE = /^https?:\/\/web\.archive\.org(?=\/web\/)/i;
 
 /**
  * Point a `web.archive.org` replay URL at the chrome host — the host
- * swap (#453). `web.archive.org/web/<ts><flag>/<orig>` →
+ * swap. `web.archive.org/web/<ts><flag>/<orig>` →
  * `https://<chromeHost>/web/<ts><flag>/<orig>`. A URL that isn't a
  * web.archive.org replay is returned unchanged.
  *
@@ -488,10 +488,10 @@ export async function generate(source, universe, seen, options = {}) {
  * immediately followed by `]` is the visible text of `[http://x](…)` and
  * stays as-is. Already-archived URLs pass through untouched (and unwarned) —
  * both a raw `web.archive.org` replay URL and one already pointed at the
- * chrome host, so re-applying a published source is idempotent (#453).
+ * chrome host, so re-applying a published source is idempotent.
  *
  * An `entry`'s resolved replay URL is emitted at the CHROME host, not at
- * `web.archive.org` — the host swap (#453; see toChromeHost /
+ * `web.archive.org` — the host swap (see toChromeHost /
  * DEFAULT_CHROME_HOST). `rewrites` targets and `exclude`d live links are NOT
  * touched by the swap: only manifest-resolved archive URLs are pointed at the
  * mirror.

@@ -1,5 +1,5 @@
 /**
- * The four-layer root ↔ bucket PARITY gate (src/parity.ts, #292), driven
+ * The four-layer root ↔ bucket PARITY gate (src/parity.ts), driven
  * against the committed cache-root fixture PROJECTED to bucket shape
  * (waybackify-serve/test/s3-fixture.ts — the same projection the serve router's
  * remote-mode test uses) over an offline stub S3 endpoint that answers HEAD/GET and ListObjectsV2.
@@ -254,7 +254,7 @@ describe('parity — injected defects, each caught by the right layer', () => {
   });
 });
 
-describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body read (#499, #500)', () => {
+describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body read', () => {
   // The re-fetch under test is PHASE-SCOPED (an ownership boundary, see
   // src/parity.ts verifyBody): the dispatcher (./retry.ts) owns every failure
   // BEFORE the response handoff, so a store.get throw must PROPAGATE; Layer 3
@@ -285,7 +285,7 @@ describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body re
     }
   }
 
-  it('PHASE GUARD (#500): a PRE-HANDOFF failure that outlives the dispatcher FAILS the layer — store.get is never app-retried into a PASS', async () => {
+  it('PHASE GUARD: a PRE-HANDOFF failure that outlives the dispatcher FAILS the layer — store.get is never app-retried into a PASS', async () => {
     const objects = await projectFixtureToBucket(FIXTURE_ROOT);
     const entries = await enumerateRoot(FIXTURE_ROOT);
     const target = entries.filter(e => e.status === 'body')[0]; // deterministic — entries are sorted
@@ -308,7 +308,7 @@ describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body re
       // The would-be heal: the REAL object bytes. If Layer 3 app-retried the
       // store.get failure, dispatch #5 would consume this and verify green — a
       // genuinely unreachable object healed into a false PASS, exactly the
-      // #500 bug. It must stay PENDING.
+      // phase-guard bug. It must stay PENDING.
       const object = objects.get(target.capKey)!;
       pool.intercept({ path: `/${BUCKET}/${target.capKey}`, method: 'GET' }).reply(200, object.body, { headers: object.headers });
 
@@ -327,7 +327,7 @@ describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body re
     }
   });
 
-  it('an ERR_ASSERTION thrown from the body read is NOT retried — it fails CLOSED (#500)', async () => {
+  it('an ERR_ASSERTION thrown from the body read is NOT retried — it fails CLOSED', async () => {
     const objects = await projectFixtureToBucket(FIXTURE_ROOT);
     const entries = await enumerateRoot(FIXTURE_ROOT);
     const target = entries.filter(e => e.status === 'body')[0]; // deterministic — entries are sorted
@@ -450,7 +450,7 @@ describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body re
   });
 
   it('a REAL mid-stream break (200 handed off, body shorter than Content-Length) heals on re-fetch', async () => {
-    // The genuine #499 shape, which MockAgent cannot fabricate (it never
+    // The genuine torn-stream shape, which MockAgent cannot fabricate (it never
     // enforces framing): the response is a 200 whose headers arrive intact —
     // the dispatcher has fully handed the body off to sriOf — and the stream
     // then dies short of its declared Content-Length, so undici raises
@@ -541,7 +541,7 @@ interface BreakableStub {
  * A raw-socket S3 GET stub whose first `breakTimes` GETs of `breakKey` answer a
  * 200 with the object's REAL Content-Length but only half the bytes, then FIN —
  * the exact torn-stream framing that makes undici's parser raise
- * UND_ERR_RES_CONTENT_LENGTH_MISMATCH while the body is being read (#499).
+ * UND_ERR_RES_CONTENT_LENGTH_MISMATCH while the body is being read.
  * `Connection: close` on every response keeps it one-request-per-connection
  * (and is what routes undici's EOF handling through the parser-finish path
  * that yields the mismatch error rather than a bare socket error). Every other

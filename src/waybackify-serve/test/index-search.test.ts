@@ -248,7 +248,7 @@ describe('/_index cache search page', () => {
     });
   });
 
-  // The /_index SERVE path honors roleOf (#320) exactly like `/` does: the
+  // The /_index SERVE path honors roleOf exactly like `/` does: the
   // content origin NEVER hosts our listing, the chrome origin serves it under
   // the LOCKED chrome CSP, single-host keeps the plain document CSP.
   describe('under the chrome/content split', () => {

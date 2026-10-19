@@ -52,7 +52,7 @@ import { coerceEvery, emitProgress } from './progress.js';
 /** Statuses whose entry names a local cap/<dd>/<digest> body file. */
 const BODIED = new Set(['body']);
 /** Every legal sidecar.status (the serving discriminator — SERVE.md).
- *  `interstitial` (#363) is bodiless like empty/redirect/error — it ships as a
+ *  `interstitial` is bodiless like empty/redirect/error — it ships as a
  *  zero-byte object carrying only its `x-amz-meta-status`. */
 const STATUSES = new Set(['body', 'empty', 'redirect', 'error', 'interstitial']);
 

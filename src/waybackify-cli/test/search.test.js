@@ -1,7 +1,7 @@
 // `waybackify search` wiring tests — offline, library face injected.
 //
 // The CDX query (retry/backoff, params, row decoding) is tested where it
-// lives: spv/waybackify. This file pins the thin-wrapper contract only —
+// lives: the waybackify library. This file pins the thin-wrapper contract only —
 // argv payload → getSnapshots options, JSONL row shape on stdout, --limit
 // caps rows, --near forwarded verbatim, empty = exit 0 / empty stdout,
 // failure = stderr + domain exit 1.

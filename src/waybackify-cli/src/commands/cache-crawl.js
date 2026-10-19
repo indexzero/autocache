@@ -1,10 +1,11 @@
 // `waybackify cache crawl` handler — home for the completeness crawler that used
-// to ship as the standalone `waybackify-crawl` bin (dropped when #441 made the
-// crawl package library-only). It drives the `remaster verify` DYNAMIC probe to
-// a fixpoint, recording browser-discovered dynamic[] requisites until a render
-// makes zero unexpected web.archive.org requests. The retired bin's contract is
-// preserved — the same flags, defaults, JSON summary, and exit codes (0 = every
-// doc verified / nothing to do, 1 = any flaky/unconverged/errored, 2 = usage).
+// to ship as the standalone `waybackify-crawl` bin (dropped when the
+// crawl package went library-only). It drives the `remaster verify` DYNAMIC
+// probe to a fixpoint, recording browser-discovered dynamic[] requisites until
+// a render makes zero unexpected web.archive.org requests. The retired bin's
+// contract is preserved — the same flags, defaults, JSON summary, and exit
+// codes (0 = every doc verified / nothing to do, 1 = any flaky/unconverged/
+// errored, 2 = usage).
 // The one homing-imposed change: paparam's positional `rest` is greedy, so FLAGS
 // MUST PRECEDE the positional URLs; a flag placed after a URL is rejected LOUD,
 // never silently swallowed.

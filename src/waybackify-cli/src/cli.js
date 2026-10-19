@@ -17,7 +17,7 @@
 // remaster` with no verb prints the group's help (run() mirrors bare
 // `waybackify`).
 //
-// SURFACE v2 (#386): `manifest` means GENERATION (source + universe [+ seen]
+// SURFACE v2: `manifest` means GENERATION (source + universe [+ seen]
 // → wayback.json), `rewrite` means APPLICATION (source + manifest → the
 // published form), `ledger` means the COLLECTION (discovery / --flatten /
 // --against worklists). The v1 per-file markdown-extraction `manifest`
@@ -28,7 +28,7 @@
 //
 // Thin-CLI rule (hard constraint): this package is argv parsing
 // (paparam), output formatting, and exit codes. All plumbing lands in
-// spv/waybackify (the library). This module imports NOTHING from it yet.
+// the waybackify library. This module imports NOTHING from it yet.
 //
 // ---------------------------------------------------------------------------
 // paparam (v1.10.1) — source-driven notes
@@ -446,7 +446,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
 
   // ---- remaster: the standalone-tier command group -------------------------
   // build · verify. `build` produces a standalone remastered root; `verify`
-  // proves it stands alone (delegating to spv/waybackify-crawl).
+  // proves it stands alone (delegating to waybackify-crawl).
 
   const remasterBuild = command(
     'build',
@@ -629,9 +629,9 @@ export function createCLI({ handlers = {}, onBail } = {}) {
 
   const root = command(
     'waybackify',
-    summary('manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the spv/waybackify library'),
+    summary('manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the waybackify library'),
     description(
-      'Human-operable, xargs-composable front door over spv/waybackify:\n' +
+      'Human-operable, xargs-composable front door over waybackify:\n' +
         'generate a manifest for a source file, rewrite it to its published\n' +
         'form, survey the ledger of manifests under a tree, hand-check a\n' +
         'capture, re-pick a better one, run a checkpointed corpus audit, and —\n' +

@@ -1,5 +1,5 @@
 /**
- * Handler-level serving-semantics tests (#249): hono's app.request() against
+ * Handler-level serving-semantics tests: hono's app.request() against
  * a MemoryStore — the full runtime-agnostic path both edge targets share,
  * zero network, zero vendor. Store impl seams (R2Store in store.test.ts, the
  * S3Store in s3store.test.ts) get their own suites.
@@ -64,7 +64,7 @@ describe('createApp', () => {
     });
   });
 
-  describe('served-page copy (#453)', () => {
+  describe('served-page copy', () => {
     // The GENERIC, site-agnostic defaults baked into app.ts — the shipped base
     // case, naming no deployment. Duplicated here so a change to the wording is
     // a deliberate two-place edit.
@@ -131,13 +131,13 @@ describe('createApp', () => {
       assert.ok((await res.text()).includes('<h1>archived</h1>'));
     });
 
-    it('carries nothing of ours in the body: no attribution banner, no marker markup (#361)', async () => {
+    it('carries nothing of ours in the body: no attribution banner, no marker markup', async () => {
       store.put(captureKey(TS, ORIGINAL), '<html><body><h1>archived</h1></body></html>', 'text/html; charset=utf-8');
 
       const body = await (await app.request(PATH)).text();
       // Capture bytes carry nothing of ours — provenance rides the header, not
-      // the page. Visible attribution is #320's chrome.
-      assert.ok(!body.includes('wayback-charlie-dev-attribution'));
+      // the page. Visible attribution is the split's chrome.
+      assert.ok(!body.includes('wayback-mirror-attribution'));
       assert.ok(!body.includes('archive.org'));
       // The stored bytes minus archive chrome — the page itself, untouched.
       assert.equal(body, '<html><body><h1>archived</h1></body></html>');
@@ -204,7 +204,7 @@ describe('createApp', () => {
   });
 
   describe('serve-time HTML transform wiring', () => {
-    it('strips archive chrome from text/html hits and injects nothing (#361)', async () => {
+    it('strips archive chrome from text/html hits and injects nothing', async () => {
       store.put(
         captureKey(TS, ORIGINAL),
         '<html><body><!-- BEGIN WAYBACK TOOLBAR INSERT --><div id="wm-ipp-base">chrome</div>' +
@@ -217,7 +217,7 @@ describe('createApp', () => {
       assert.ok(!html.includes('WAYBACK TOOLBAR INSERT'));
       assert.ok(html.includes('<h1>page</h1>'));
       // No banner, no marker markup — the transform only strips chrome now.
-      assert.ok(!html.includes('wayback-charlie-dev-attribution'));
+      assert.ok(!html.includes('wayback-mirror-attribution'));
     });
   });
 
@@ -257,7 +257,7 @@ describe('createApp', () => {
       assert.equal(await res.text(), '');
     });
 
-    it('redirect → local 404 no-store under strict (no bounce to live; #361)', async () => {
+    it('redirect → local 404 no-store under strict (no bounce to live)', async () => {
       statusStore.set(captureKey(TS, ORIGINAL), { contentType: '', status: 'redirect' });
 
       const res = await app.request(`/${TS}im_/${ORIGINAL}`);
@@ -274,8 +274,8 @@ describe('createApp', () => {
       assert.equal(res.headers.get('cache-control'), 'no-store');
     });
 
-    it('interstitial → local 404 no-store under strict (a refused wayback fluff page, never served; #363)', async () => {
-      // #363: the entry is complete but holds no servable content. Strict
+    it('interstitial → local 404 no-store under strict (a refused wayback fluff page, never served)', async () => {
+      // The entry is complete but holds no servable content. Strict
       // refuses to bounce to live, so a local 404 is the honest answer — the
       // same graceful-degradation path a miss takes (liveFallback replays it).
       statusStore.set(captureKey(TS, ORIGINAL), { contentType: 'text/html', status: 'interstitial' });
@@ -292,7 +292,7 @@ describe('createApp', () => {
     });
   });
 
-  describe('cache miss — strict is the default (#361)', () => {
+  describe('cache miss — strict is the default', () => {
     it('answers a styled local 404, no-store, no redirect to live', async () => {
       const res = await app.request(PATH);
       assert.equal(res.status, 404);
@@ -373,7 +373,7 @@ describe('createApp', () => {
       assert.equal(res.headers.get('cache-control'), 'no-store');
     });
 
-    it('an interstitial-status entry bounces to the archive under fallback (#363)', async () => {
+    it('an interstitial-status entry bounces to the archive under fallback', async () => {
       // An interstitial entry holds no servable content (a refused wayback
       // fluff page); under fallback it 302s to the archive, like a miss.
       const interstitialStore: Store = {

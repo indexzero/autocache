@@ -1,4 +1,4 @@
-// Tests for the cap/ bucket-population batch emitter (#291).
+// Tests for the cap/ bucket-population batch emitter.
 //
 // The synthetic roots are built with the REAL writer (cache.js#commitEntry) so
 // the fixtures are byte-valid sidecars, never hand-shaped JSON — except the two
@@ -67,7 +67,7 @@ describe('emitLine', () => {
     assert.throws(() => emitLine({ contentType: huge, status: 'body' }, '/s', 's3://b/k'), /1000/);
   });
 
-  it('emits a bodiless interstitial (#363) as a zero-byte object carrying its status', () => {
+  it('emits a bodiless interstitial as a zero-byte object carrying its status', () => {
     const line = emitLine({ contentType: 'text/html', status: 'interstitial' }, '/tmp/empty', 's3://b/cap/aa/h');
     assert.equal(line, 'cp --content-type text/html --metadata status=interstitial /tmp/empty s3://b/cap/aa/h');
   });
@@ -236,7 +236,7 @@ describe('emitBucketBatch over the committed fixture', () => {
   let lines;
   let summary;
   // The fixture carries bodiless sidecars (empty/redirect/error — added with the
-  // store-conformance suite in #285), so the emitter needs a scratch empty file.
+  // store-conformance suite), so the emitter needs a scratch empty file.
   const emptyFile = path.join(os.tmpdir(), 'bucket-batch-fixture-empty');
   before(async () => {
     ({ lines, summary } = await emitBucketBatch(FIXTURE_ROOT, { bucket: 'wayback', emptyFile }));

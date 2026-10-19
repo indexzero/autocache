@@ -14,8 +14,8 @@
  *   waybackify-serve --bucket <name> --endpoint <url> \
  *        [--region <r>] [--prefix <p>] [--port N]
  *
- * (bin/serve.js is this package's own entry; render/wayback re-launches it
- * for local dev through bin/localdev.js over @autocache/waybackify-serve/node.)
+ * (bin/serve.js is this package's own entry; a downstream site deployment
+ * re-launches it for local dev over @autocache/waybackify-serve/node.)
  *
  * The two modes are mutually exclusive — except under `--index`, where
  * `--bucket` (the serve store) and `--root` (the /_index catalog) combine;
@@ -47,7 +47,7 @@ import { S3Store } from './s3store.ts';
 import type { SigV4Credentials } from './sigv4.ts';
 
 /**
- * Placeholder hostnames for the chrome/content split (#320), the defaults the
+ * Placeholder hostnames for the chrome/content split, the defaults the
  * `--split` shorthand selects. GENERIC — this package names no deployment; a
  * real mirror passes its own hosts via `--chrome-host`/`--content-host` (or the
  * `Host:` header in local dev). The concrete hosts live in the site layer.
@@ -83,12 +83,12 @@ export interface ServeOptions {
   localize?: { has(key: string): boolean };
   /** CSP header posture (design §D3); `'enforce'` (default) or `'report-only'`. */
   cspMode?: 'enforce' | 'report-only';
-  /** The chrome/content split (#320); off by default (single-host serving). */
+  /** The chrome/content split; off by default (single-host serving). */
   split?: SplitOptions;
   /**
-   * Per-deployment served-page description copy (#453). Absent, the generic
-   * site-agnostic defaults ship. Programmatic callers (render/wayback's local
-   * dev entry supplies the site COPY); not wired to a CLI flag.
+   * Per-deployment served-page description copy. Absent, the generic
+   * site-agnostic defaults ship. Programmatic callers (a site's local-dev
+   * entry supplies the site copy); not wired to a CLI flag.
    */
   copy?: ServedCopy;
   /**
@@ -131,9 +131,9 @@ export interface ServeBucketOptions {
   liveFallback?: boolean;
   /** STOPGAP (`--relax-content-csp`); off by default — see ServeOptions.relaxContentCsp. */
   relaxContentCsp?: boolean;
-  /** The chrome/content split (#320); off by default (single-host serving). */
+  /** The chrome/content split; off by default (single-host serving). */
   split?: SplitOptions;
-  /** Per-deployment served-page description copy (#453); generic defaults absent. */
+  /** Per-deployment served-page description copy; generic defaults absent. */
   copy?: ServedCopy;
   /**
    * Capture key CATALOG for `GET /_index` (dev tooling) — a Set built from a
@@ -213,7 +213,7 @@ const USAGE = [
   '  --index          serve a local /_index cache search page, cataloged from the --root',
   '                   cache-root; with --bucket, --root supplies the catalog while the',
   '                   bucket serves the bytes (a bucket cannot enumerate itself)',
-  '  --split          enable the #320 chrome/content split with the placeholder hostnames',
+  '  --split          enable the chrome/content split with the placeholder hostnames',
   '                   (chrome wayback.example.com, content content.example.net)',
   '  --chrome-host H  chrome-origin host for the split (attribution UI + iframe shell; no bytes)',
   '  --content-host H content-origin host for the split (serves capture bytes cross-origin);',
@@ -228,7 +228,7 @@ function fail(message: string): void {
 }
 
 /**
- * Resolve the chrome/content split (#320) from CLI flags. Returns the
+ * Resolve the chrome/content split from CLI flags. Returns the
  * SplitOptions, `undefined` (split off — single-host serving), or an Error
  * message string when the flags are inconsistent (exactly one of
  * --chrome-host/--content-host given). `--chrome-host`+`--content-host`
@@ -281,8 +281,8 @@ function resolveSplit(values: {
  * (https://nodejs.org/api/util.html#utilparseargsconfig) — no dependency
  * needed for a handful of flags.
  *
- * `defaults` carries deployment values that have no CLI flag (#453): the
- * served-page `copy`. render/wayback's local-dev entry passes its site COPY
+ * `defaults` carries deployment values that have no CLI flag: the
+ * served-page `copy`. A site's local-dev entry passes its site copy
  * here so `pnpm dev` renders the same description production does; a bare
  * `waybackify-serve` invocation omits it and ships the generic defaults.
  */

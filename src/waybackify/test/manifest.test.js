@@ -28,7 +28,7 @@ const tmpdir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-'));
 const WB_A = 'https://web.archive.org/web/20100101000000/http://a.example.com/';
 const WB_B = 'https://web.archive.org/web/20140403040000/http://b.example.com/post';
 
-// The #453 host swap: apply points a resolved archive link at the chrome host
+// The chrome-host swap: apply points a resolved archive link at the chrome host
 // (default DEFAULT_CHROME_HOST), keeping the /web/<ts><flag>/<orig> path. The
 // published form of a wayback replay URL is its chrome-host spelling.
 const chrome = (wb, host = DEFAULT_CHROME_HOST) => wb.replace('https://web.archive.org', `https://${host}`);
@@ -225,7 +225,7 @@ describe('apply', () => {
     return m;
   };
 
-  it('rewrites entry urls to their replay form, pointed at the chrome host (#453)', () => {
+  it('rewrites entry urls to their replay form, pointed at the chrome host', () => {
     const { content, warnings } = apply('See [a](http://a.example.com/).', manifest());
     // The published link lands on the chrome host, NEVER top-level on live
     // web.archive.org; only the host swaps, the /web/<ts>/<orig> path is kept.
@@ -235,7 +235,7 @@ describe('apply', () => {
     assert.deepEqual(warnings, []);
   });
 
-  it('the host swap preserves every timestamp replay flag (if_, im_, bare) (#453)', () => {
+  it('the host swap preserves every timestamp replay flag (if_, im_, bare)', () => {
     for (const flag of ['if_', 'im_', 'id_', '']) {
       const url = 'http://f.example.com/asset.png';
       const wb = `https://web.archive.org/web/20120607080910${flag}/${url}`;
@@ -250,7 +250,7 @@ describe('apply', () => {
     }
   });
 
-  it('the target host is configurable via options.chromeHost (#453)', () => {
+  it('the target host is configurable via options.chromeHost', () => {
     const { content } = apply('See [a](http://a.example.com/).', manifest(), {
       chromeHost: 'wb.example.test'
     });
@@ -271,7 +271,7 @@ describe('apply', () => {
     m.rewrites['http://a.example.com/'] = 'https://newhome.example.com/';
     const { content } = apply('See [a](http://a.example.com/).', m);
     // A `rewrites` target is a live relocation, not an archive link — the
-    // #453 host swap touches ONLY manifest-resolved archive URLs.
+    // chrome-host swap touches ONLY manifest-resolved archive URLs.
     assert.equal(content, 'See [a](https://newhome.example.com/).');
   });
 
@@ -326,7 +326,7 @@ describe('apply', () => {
     assert.deepEqual(warnings, []);
   });
 
-  it('re-applying a chrome-host link is idempotent and unwarned (#453)', () => {
+  it('re-applying a chrome-host link is idempotent and unwarned', () => {
     // Feed apply its own published output: a link already at the (same) chrome
     // host passes straight through — no double swap, no "no verdict" warning.
     const published = `See [a](${chrome(WB_A)}).`;
@@ -371,7 +371,7 @@ describe('apply', () => {
 });
 
 /* ------------------------------------------------------------------------ *
- * toChromeHost — the #453 host swap in isolation
+ * toChromeHost — the chrome-host swap in isolation
  * ------------------------------------------------------------------------ */
 
 describe('toChromeHost', () => {

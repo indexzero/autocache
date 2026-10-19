@@ -2,11 +2,9 @@
  * Capture-key + capture-metadata derivation — the storage
  * naming contract, alone in its own module ON PURPOSE.
  *
- * EXTRACTED from render/wayback/src/key.ts, which was built pure —
- * zero imports, zero runtime assumptions beyond WebCrypto — precisely so
- * this extraction is a file move (see that module's original header). The
- * TypeScript module is now a re-export shim over this file; its key.test.ts
- * digest tests pin that the move changed NOTHING (the pinned sha256 of
+ * Built pure — zero imports, zero runtime assumptions beyond WebCrypto —
+ * so any consumer can load it as a plain file. The digest tests in
+ * test/key.test.js pin that the layout never drifts (the pinned sha256 of
  * '20140403040000/http://example.com/' is the cross-package tripwire).
  *
  * This is a cross-package contract, not an implementation detail: the
@@ -21,8 +19,9 @@
  *                 timestamp: 4–14 digit wayback timestamp, as referenced.
  *                 originalUrl: the archived URL exactly as embedded in the
  *                 wayback URL (no re-encoding, no normalization beyond the
- *                 parser's liberal repair — see render/wayback/src/path.ts)
- *                 so keys read like the serving path.
+ *                 parser's liberal repair — see
+ *                 src/waybackify-serve/src/path.ts) so keys read like the
+ *                 serving path.
  *
  *   bucket        object body key = `cap/<aa>/<hash>`, sidecar key =
  *                 `meta/<aa>/<hash>.json`, where <hash> is SHA-256 hex of the

@@ -469,6 +469,25 @@ and **refuses** to "fix" corruption: a `hashMismatch` / `sizeMismatch` /
 not garbage to sweep. It also never deletes a `foreignRoot` entry. The entry is
 operational data, possibly precious, and the operator relocates it.
 
+### Two rot shapes the proof cannot see
+
+The ownership proof trusts every sidecar that passes it, and two shapes of rot
+pass it while they leave a body unnamed:
+
+1. **A `contentHash` rotted to another live body of the same size.** The
+   digest is the file name, so the hash check passes by construction, and the
+   size check passes because the sizes are equal. The sidecar's own body now
+   has no referrer.
+2. **A `status` rotted to a bodiless value that also drops `contentHash` and
+   `contentLength`.** The result is a well-formed bodiless sidecar. Nothing in
+   it says a body ever existed, so nothing names the body still in `cap/`.
+
+A sidecar records only the hash and the length of its bytes, so no check can
+tell either shape from a legitimate store. Both make the unnamed body an
+`orphanCap` finding. The quarantine below is the protection: `--fix` moves
+such a body out of `cap/` and never deletes it, so an operator who later finds
+the rot restores the bytes with one `mv`.
+
 ### Quarantine: `--fix` never deletes a body
 
 `--fix` does not delete an orphan body. It moves the file into a quarantine

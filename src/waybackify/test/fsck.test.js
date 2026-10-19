@@ -91,7 +91,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     await fsp.writeFile(body, 'TAMPERED bytes'); // flip the stored body
 
     const report = await fsck(root);
-    only(report, 'hashMismatch');
+    only(report, 'hashMismatch', 'sizeMismatch');
     const f = report.findings.hashMismatch[0];
     assert.match(f.expected, /^sha256-/);
     assert.match(f.actual, /^sha256-/);
@@ -185,15 +185,91 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     assert.ok(fs.existsSync(body), 'the body of an unreadable sidecar is evidence, never reaped');
   });
 
+  it('a sidecar whose contentHash names ANOTHER live body: sizeMismatch, and --fix keeps the unnamed body', async () => {
+    // Capture A's sidecar is rewritten to name capture B's body. The digest
+    // check passes by construction (the digest IS the file name), so only the
+    // size check can tell. A's own body is now unnamed and must survive.
+    const a = await commitBody(root, '2014/http://x.example/a.css', 'body { color: red }');
+    const b = await commitBody(root, '2016/http://x.example/b.css', 'x');
+    const aSidecar = JSON.parse(await fsp.readFile(a.meta, 'utf8'));
+    const bSidecar = JSON.parse(await fsp.readFile(b.meta, 'utf8'));
+    await fsp.writeFile(a.meta, JSON.stringify({ ...aSidecar, contentHash: bSidecar.contentHash }));
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'sizeMismatch');
+    assert.deepEqual(report.findings.sizeMismatch[0], {
+      hash: path.basename(a.meta, '.json'),
+      aa: path.basename(path.dirname(a.meta)),
+      key: '2014/http://x.example/a.css',
+      expected: aSidecar.contentLength,
+      actual: 1
+    });
+    assert.equal(report.reapSuspended, true);
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.ok(fs.existsSync(a.body), 'the body A meant to name is kept');
+    assert.ok(fs.existsSync(b.body), 'B is untouched');
+    assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
+  });
+
+  it('a sidecar whose status is corrupted is malformed, and --fix keeps its body', async () => {
+    const { body, meta } = await commitBody(root, '2020/http://x.example/asset', 'irreplaceable captured bytes');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status: 'b0dy' })); // one byte of metadata rot
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'malformed');
+    assert.match(report.findings.malformed[0].error, /status "b0dy" is not one of/);
+    assert.equal(report.reapSuspended, true);
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.ok(fs.existsSync(body), 'the body of a sidecar with an unknown status is evidence, never reaped');
+    assert.ok(fs.existsSync(meta), 'the sidecar is kept too');
+    assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
+  });
+
+  it('detects a contentLength that disagrees with the stored body size', async () => {
+    const { meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentLength: sidecar.contentLength + 1 }));
+
+    const report = await fsck(root);
+    only(report, 'sizeMismatch');
+    assert.equal(report.findings.sizeMismatch[0].expected, sidecar.contentLength + 1);
+    assert.equal(report.findings.sizeMismatch[0].actual, sidecar.contentLength);
+  });
+
+  it('a true orphan waits while any sidecar fails a check, and is reaped once the proof holds', async () => {
+    const { body } = await commitBody(root, '2011/http://x.example/');
+    const good = await fsp.readFile(body);
+    await fsp.writeFile(body, 'TAMPERED'); // hashMismatch + sizeMismatch on the valid neighbour
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'garbage');
+
+    const suspended = await fsck(root, { fix: true });
+    only(suspended, 'hashMismatch', 'sizeMismatch');
+    assert.equal(suspended.reapSuspended, true);
+    assert.deepEqual(suspended.reaped, { orphanCap: [], staleTmp: [] });
+    assert.ok(fs.existsSync(orphan), 'nothing is reaped while the proof is broken');
+
+    await fsp.writeFile(body, good); // the operator restores the bytes
+    const clean = await fsck(root, { fix: true });
+    only(clean, 'orphanCap');
+    assert.equal(clean.reapSuspended, false);
+    assert.deepEqual(clean.reaped.orphanCap, [orphan]);
+    assert.ok(!fs.existsSync(orphan), 'the orphan is reaped once every sidecar proves ownership');
+    assert.equal(unresolvedFindings(clean), 0);
+  });
+
   it('--fix REFUSES to touch corruption (leaves the cap file and finding intact)', async () => {
     const { body } = await commitBody(root, '2011/http://x.example/');
     await fsp.writeFile(body, 'TAMPERED');
 
     const report = await fsck(root, { fix: true });
-    only(report, 'hashMismatch');
+    only(report, 'hashMismatch', 'sizeMismatch');
     assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
     assert.ok(fs.existsSync(body), 'corrupt body is preserved for investigation');
-    assert.equal(unresolvedFindings(report), 1);
+    assert.equal(unresolvedFindings(report), 2);
   });
 });
 

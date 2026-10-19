@@ -22,10 +22,16 @@
 //                   non-string or separatorless `key` / a `flag` outside
 //                   {im_,cs_,js_,oe_,null} / a `via` outside {remaster-verify,
 //                   manual}. Same trust boundary as a malformed requisite — a
-//                   bad entry is surfaced, never silently trusted.
+//                   bad entry is surfaced, never silently trusted. A `status`
+//                   outside {body,empty,redirect,error,interstitial} is also
+//                   malformed: such a sidecar cannot say whether it owns a body.
 //   - hashMismatch  status 'body' whose contentHash != the SRI of the cap/
 //                   bytes — the one thing fsync cannot catch (it persists
 //                   what was written, not that the right bytes were written)
+//   - sizeMismatch  status 'body' whose contentLength != the size of the cap/
+//                   file its contentHash names. A sidecar that names another
+//                   capture's body shows up here (the digests match by
+//                   construction, the sizes rarely do).
 //   - keyMismatch   sidecar filed under a hash != sha256hex(sidecar.key)
 //                   (misfiled / tampered — readSidecar's authenticity check)
 //   - missingBody   status 'body' with no cap/ file at its contentHash
@@ -65,16 +71,26 @@
 //                   that flags a stray .runs/)
 //   - orphanCap     cap/ file that no sidecar's contentHash names (crash
 //                   between the body and sidecar renames: ingest garbage,
-//                   never served)
+//                   never served). Reported ONLY when every sidecar proves
+//                   its ownership (see OWNERSHIP PROOF below).
 //   - staleTmp      leftover tmp/ scratch (an interrupted write's .part file)
+//
+// OWNERSHIP PROOF: a cap/ file is an orphan only when fsck can prove that no
+// sidecar names it. The proof needs every sidecar in the root to parse, to
+// carry a known status, and (for status 'body') to name a cap/ file whose
+// bytes match its contentHash and whose size equals its contentLength. A
+// sidecar that fails any of those checks is a finding (malformed,
+// missingBody, hashMismatch, sizeMismatch, or schemaVersion), and it
+// suspends orphan detection for the whole run. Reaping never destroys
+// evidence: the body a rotted sidecar meant to name stays on disk.
 //
 // --fix reaps ONLY the two safe-to-delete classes — orphanCap + staleTmp
 // (neither is reachable by any reader: an orphan has no completion token, a
 // tmp file was never renamed into place). It NEVER touches a valid entry and
-// REFUSES to "fix" a hashMismatch/keyMismatch/missingBody/malformed finding:
-// those are corruption to investigate, not garbage to sweep. An
-// incompleteClosure finding is likewise never touched — a short closure is
-// filled by fetching the missing requisite, never by deleting.
+// REFUSES to "fix" a hashMismatch/sizeMismatch/keyMismatch/missingBody/
+// malformed finding: those are corruption to investigate, not garbage to
+// sweep. An incompleteClosure finding is likewise never touched — a short
+// closure is filled by fetching the missing requisite, never by deleting.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -95,6 +111,7 @@ import { coerceEvery, emitProgress } from './progress.js';
 export const CATEGORIES = [
   { key: 'malformed', label: 'malformed sidecar (will not parse)', severity: 'corruption' },
   { key: 'hashMismatch', label: 'contentHash != stored body bytes', severity: 'corruption' },
+  { key: 'sizeMismatch', label: 'contentLength != stored body size', severity: 'corruption' },
   { key: 'keyMismatch', label: 'sidecar filed under the wrong hash', severity: 'corruption' },
   { key: 'missingBody', label: "status 'body' with no cap/ file (incomplete)", severity: 'corruption' },
   { key: 'incompleteClosure', label: "status 'body' requisite whose sidecar is absent (closure short)", severity: 'incomplete' },
@@ -106,6 +123,16 @@ export const CATEGORIES = [
 ];
 
 const REAPABLE = new Set(CATEGORIES.filter(c => c.severity === 'reapable').map(c => c.key));
+
+/** Every legal sidecar.status (SERVE.md). A sidecar outside this set is malformed. */
+const STATUSES = new Set(['body', 'empty', 'redirect', 'error', 'interstitial']);
+
+/**
+ * The finding classes that break the ownership proof. While any of them
+ * stands, some sidecar may name a body that fsck cannot see, so no cap/ file
+ * is provably an orphan and --fix reaps no body.
+ */
+const SUSPENDS_REAPING = ['malformed', 'missingBody', 'hashMismatch', 'sizeMismatch', 'schemaVersion'];
 
 /** readdir that treats a missing directory as empty (a fresh root has no cap/ yet). */
 async function readdirSafe(dir) {
@@ -162,8 +189,11 @@ async function walkShards(root, sub) {
  *   schemaVersion: number,
  *   counts: { sidecars: number, bodies: number, capFiles: number, tmpFiles: number },
  *   findings: Record<string, Array<object>>,
+ *   reapSuspended: boolean,
  *   reaped: { orphanCap: string[], staleTmp: string[] } | null
  * }>}
+ * `reapSuspended` is true when a finding broke the ownership proof, so no
+ * cap/ file was classified as an orphan on this run.
  */
 export async function fsck(root, options = {}) {
   const { fix = false } = options;
@@ -203,7 +233,6 @@ export async function fsck(root, options = {}) {
   // The rootless cap/ keys that at least one sidecar names. A body shared by
   // many captures is referenced once per sidecar and is never an orphan.
   const referenced = new Set();
-  let unparseable = 0;
 
   for (const ent of await readdirSafe(path.join(root, 'tmp'))) {
     findings.staleTmp.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, 'tmp', ent.name) });
@@ -231,12 +260,24 @@ export async function fsck(root, options = {}) {
       sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
     } catch (error) {
       findings.malformed.push({ hash, aa, path: metaPath, error: error.message });
-      unparseable++;
       continue;
     }
 
     if (sidecar.v !== SIDECAR_VERSION) {
       findings.schemaVersion.push({ hash, aa, key: sidecar.key ?? null, v: sidecar.v ?? null });
+    }
+
+    // A status outside the schema is malformed. Such a sidecar cannot say
+    // whether it owns a body, so it must not pass as bodiless (which is what
+    // a plain `status !== 'body'` test makes of it).
+    if (!STATUSES.has(sidecar.status)) {
+      findings.malformed.push({
+        hash,
+        aa,
+        key: sidecar.key ?? null,
+        path: metaPath,
+        error: `status ${JSON.stringify(sidecar.status ?? null)} is not one of body, empty, redirect, error, interstitial`
+      });
     }
 
     // Filed under the wrong hash? sha256hex(key) IS the on-disk name; a
@@ -294,6 +335,13 @@ export async function fsck(root, options = {}) {
         if (actual !== sidecar.contentHash) {
           findings.hashMismatch.push({ hash, aa, key: sidecar.key ?? null, expected: sidecar.contentHash ?? null, actual });
         }
+        // The named file's size must equal contentLength. A sidecar that names
+        // another capture's body passes the hash check by construction (the
+        // digest IS the file name), so the size is the check that catches it.
+        const { size } = await fsp.stat(capPath);
+        if (sidecar.contentLength !== size) {
+          findings.sizeMismatch.push({ hash, aa, key: sidecar.key ?? null, expected: sidecar.contentLength ?? null, actual: size });
+        }
         // interstitial-as-body (#363): a pre-schema `status:body` capture whose
         // bytes are a wayback interstitial. Read the body only for html-ish
         // entries (the sole ones a body-shape signature can match); the
@@ -315,13 +363,16 @@ export async function fsck(root, options = {}) {
   }
 
   // ---- orphan cap/ files (body present, no completion token) ----------------
-  // Two kinds of sidecar can name a body that fsck cannot see. An unparseable
-  // sidecar can name any body. A missingBody sidecar has a rotted contentHash,
-  // and its true body is on disk under the old digest. While either kind
-  // exists, no cap/ file is provably unreferenced. Orphan detection (and so
-  // --fix) waits until the finding is resolved. Reaping never destroys evidence.
-  const unlocated = unparseable > 0 || findings.missingBody.length > 0;
-  for (const f of unlocated ? [] : capFiles) {
+  // The ownership proof (header): a cap/ file is an orphan only when every
+  // sidecar parses, carries a known status, and names a body whose bytes and
+  // size agree with it. An unparseable sidecar can name any body. A sidecar
+  // with a rotted contentHash names a missing digest, or another capture's
+  // body, while its own body sits on disk unnamed. A sidecar of another
+  // version has an unknown shape. While any such finding stands, no cap/
+  // file is provably unreferenced, so orphan detection (and with it --fix)
+  // waits until the finding is resolved. Reaping never destroys evidence.
+  const reapSuspended = SUSPENDS_REAPING.some(k => findings[k].length > 0);
+  for (const f of reapSuspended ? [] : capFiles) {
     if (!referenced.has(`cap/${f.aa}/${f.name}`)) findings.orphanCap.push({ hash: f.name, aa: f.aa, path: f.path });
   }
 
@@ -390,6 +441,7 @@ export async function fsck(root, options = {}) {
     schemaVersion: SIDECAR_VERSION,
     counts: { sidecars: metaFiles.length, bodies, capFiles: capFiles.length, tmpFiles: findings.staleTmp.length },
     findings,
+    reapSuspended,
     reaped
   };
 }

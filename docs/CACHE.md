@@ -443,22 +443,23 @@ discrepancy:
 | category | severity | meaning |
 |---|---|---|
 | `hashMismatch` | corruption | `status: "body"` whose `contentHash` ≠ the SRI of the `cap/` bytes — the one failure `fsync` cannot catch (it persists *what* was written, not *that the right bytes* were). |
+| `sizeMismatch` | corruption | `status: "body"` whose `contentLength` ≠ the size of the `cap/` file its `contentHash` names. A sidecar that names another capture's body passes the hash check by construction (the digest is the file name), and this check catches it. |
 | `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
 | `missingBody` | corruption | `status: "body"` with no `cap/` file at its `contentHash` (or with a `contentHash` that is not a sha256 SRI) — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
 | `incompleteClosure` | incomplete | a `status: "body"` doc that references a page requisite (`im_`/`cs_`/`js_`/`oe_` captureKey in its `requisites[]`) **or** a well-formed browser-discovered dynamic child (a `dynamic[].key`, v3 — findings marked `dynamic: true`) whose own sidecar is absent from this store. The frontier is `requisites ∪ dynamic`. Store-relative (the doc's own edge list; no ledger, no network). **Report only** — a short closure is filled by re-running `cache add`/`cache fill`, never by reaping — but it keeps the store dirty (nonzero exit) until complete. |
-| `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. |
+| `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. A `status` outside `{body, empty, redirect, error, interstitial}` is malformed too: such a sidecar cannot say whether it owns a body. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
 | `schemaVersion` | advisory | a sidecar whose `v` is not `3`, the one version every reader accepts. Rebuild the root. |
 | `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` — the check that catches a contract violation like a stray `.runs/`. |
-| `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. While any sidecar fails to parse, or any `missingBody` finding stands, no `cap/` file is reported orphan. Such a sidecar can name a body that fsck cannot see, so `--fix` keeps every body. |
+| `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. fsck reports an orphan only when every sidecar proves its ownership: it parses, carries a known status, and (for `status: "body"`) names a `cap/` file whose bytes match its `contentHash` and whose size equals its `contentLength`. While a `malformed`, `missingBody`, `hashMismatch`, `sizeMismatch`, or `schemaVersion` finding stands, no `cap/` file is reported orphan and `--fix` keeps every body. The report says so with `reapSuspended: true`. |
 | `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. |
 
 `--fix` reaps **only** the two reapable classes — `orphanCap` and `staleTmp` —
 neither of which is reachable by any reader (an orphan has no completion token;
 a `tmp/` file was never renamed into place). It **never** touches a valid entry
-and **refuses** to "fix" corruption: a `hashMismatch` / `keyMismatch` /
-`missingBody` / `malformed` finding is evidence to investigate, not garbage to
-sweep. It also never deletes a `foreignRoot` entry — that could be precious
+and **refuses** to "fix" corruption: a `hashMismatch` / `sizeMismatch` /
+`keyMismatch` / `missingBody` / `malformed` finding is evidence to investigate,
+not garbage to sweep. It also never deletes a `foreignRoot` entry — that could be precious
 operational data; relocating it is the operator's call.
 
 ## Recorded dissents (design notes, not implemented)

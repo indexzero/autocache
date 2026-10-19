@@ -163,7 +163,7 @@ text/html), a **redirect interstitial** (archive navbar chrome plus a
 replay lies with a 200. `commitEntry` **refuses** to store any of these as a
 body: the signature fires, and the entry commits `interstitial` — bodiless,
 recording `signature` (and a redirect's `target`). The detection lives in
-[`src/waybackify/interstitial.js`](../src/waybackify/interstitial.js); the
+[`src/waybackify/interstitial.js`](../src/waybackify/interstitial.js). The
 `archived-error` signature is network-derived and arrives INJECTED (`cdxStatus`),
 so detection itself never touches the wire. Wrapper-stub remediation refetches
 the raw bytes with wayback's `id_` flag (`refetchRaw`). The corpus-wide run is
@@ -413,7 +413,7 @@ The consumer-side read contract is [SERVE.md §Bucket sync](./SERVE.md#bucket-sy
 
 > Historical note: Fastly originally served from a KV Store (hashed item
 > names, content-type in the item metadata field). That path was deleted
-> outright when Fastly serving moved to Object Storage; the KV-era
+> outright when Fastly serving moved to Object Storage. The KV-era
 > projection lives only in git history.
 
 ## The root contract and `fsck`
@@ -436,7 +436,7 @@ two project onto a bucket.
 Verification dissent below): a store without a verify pass rots silently,
 because `contentHash` recorded at write only pays off when something later
 re-checks it. It is exposed as **`waybackify cache verify`** (handler:
-[`src/waybackify-cli/src/commands/cache-verify.js`](../src/waybackify-cli/src/commands/cache-verify.js);
+[`src/waybackify-cli/src/commands/cache-verify.js`](../src/waybackify-cli/src/commands/cache-verify.js),
 engine: [`src/waybackify/fsck.js`](../src/waybackify/fsck.js)).
 
 ```

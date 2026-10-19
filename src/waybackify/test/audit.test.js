@@ -356,7 +356,7 @@ describe('auditCapture — interstitial species (wired into the audit)', () => {
 
   it('extension mismatch (.pdf served as text/html) → SUSPECT, not a confident wayback404', async () => {
     // A .pdf/.txt URL can legitimately replay as HTML (vanity URLs, viewer/landing
-    // pages); extension-mismatch inspects no body and maps to none of the audit's
+    // pages). Extension-mismatch inspects no body and maps to none of the audit's
     // dead-link classes, so the live audit surfaces it for a human as suspect
     // rather than confidently condemning it (P3 remediation, both reviewers).
     const PDF_URL = 'https://web.archive.org/web/20140403040000/http://example.com/report.pdf';

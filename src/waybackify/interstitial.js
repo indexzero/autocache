@@ -205,7 +205,7 @@ export function idRefetchUrl(key) {
 
 /**
  * Refetch a capture's RAW bytes via the `id_` flag. Library support for the
- * wrapper-stub remediation (the sweep owns the corpus-wide run); `fetch` is
+ * wrapper-stub remediation (the sweep owns the corpus-wide run). `fetch` is
  * INJECTED so unit tests exercise it against fixtures with zero live network.
  * Returns the fetched bytes on a 200, null body otherwise (the caller decides
  * what a non-200 raw refetch means).

@@ -98,7 +98,7 @@ function repairOriginal(original) {
  * @returns {Array<{ timestamp: string, flag: 'im_'|'cs_'|'js_'|'oe_',
  *   original: string, key: string, waybackUrl: string }>}
  *   Deduped by capture key (`${timestamp}/${original}` — flagless, one body
- *   per (timestamp, url) however it's framed; see
+ *   per (timestamp, url) however it's framed, see
  *   src/waybackify-serve/src/path.ts).
  *   `waybackUrl` keeps the flag: it is the FETCH url (the flagged replay
  *   serves the raw asset bytes), while `key` is the flagless identity the

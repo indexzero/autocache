@@ -156,7 +156,7 @@ Fastly Object Storage, AWS S3). The full projection + the operational runbook
 
 > Historical note: Fastly originally served from a KV Store (per-hash item
 > names, content-type in the item's metadata field). That path was deleted
-> outright when Fastly serving moved to Object Storage; the KV-era sync
+> outright when Fastly serving moved to Object Storage. The KV-era sync
 > mapping lives only in git history.
 
 ## Integrity verification

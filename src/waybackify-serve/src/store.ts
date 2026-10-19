@@ -14,9 +14,9 @@
  * (src/waybackify-cli): `waybackify cache <url> -o <dir>` writes a local
  * bucket image that gets synced to R2 / Fastly Object Storage — each verified
  * capture's body + content-type under the key layout defined in src/key.ts
- * (which that CLI must share; the module is pure precisely so it can be lifted
- * out wholesale). Nothing in the serving path changes; misses simply become
- * hits.
+ * (which that CLI must share, and the module is pure precisely so it can be
+ * lifted out wholesale). Nothing in the serving path changes. Misses simply
+ * become hits.
  *
  * Vendor types are STRUCTURAL on purpose (R2BucketLike describes only the
  * sliver we call) so this module typechecks in any runtime and tests can hand

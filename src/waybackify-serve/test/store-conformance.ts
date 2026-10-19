@@ -7,7 +7,7 @@
  * Object Storage. Cross-store divergence is the entire risk surface, so it gets
  * ONE suite, not per-store spot checks: same fixture in, same head()/get() out.
  * Runs today against MemoryStore (native-metadata model) and FsStore (POSIX
- * sidecar model); the S3Store/R2Store adapters plug in the same way.
+ * sidecar model). The S3Store/R2Store adapters plug in the same way.
  *
  * ── ADDING A STORE ─────────────────────────────────────────────────────────
  * One import, one `describe`, one population-seam impl:

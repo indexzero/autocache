@@ -4,7 +4,7 @@ The goal was always open-sourceability: `src/waybackify` (the library) and
 `src/waybackify-cli` (the CLI) with zero knowledge of any site that embeds
 them. This records where that stands as of 2026-07-24 — what is
 ready, what is checked, and what remains an operator decision. **Nothing here
-is a publish**; it is the pre-flight.
+is a publish**. It is the pre-flight.
 
 ## Names and scope
 

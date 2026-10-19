@@ -317,13 +317,13 @@ export async function auditCapture(waybackUrl, options = {}) {
   //     archive-owned markers → confidently not-content → wayback404. Redirect
   //     interstitials carry the decoded `target` the re-point pass needs.
   //     (Caveat: the target is best-effort — decodeRedirectTarget scans the raw
-  //     body, where a toolbar link could in principle be latched; the human
+  //     body, where a toolbar link is a possible false latch, so the human
   //     reviews it.)
   //   - extension-mismatch inspects NO body (extension vs content-type alone),
   //     maps to none of the audit's dead-link classes, and a `.pdf`/`.txt` URL
   //     can legitimately replay as HTML — so it is only SUSPECT here, surfaced
   //     for a human, never a confident wayback404. (At cache-commit time, the
-  //     detector still refuses it; the live audit is deliberately more
+  //     detector still refuses it. The live audit is deliberately more
   //     conservative.)
   // cdxStatus is NOT passed: the archived-error signature is already covered by
   // Signal 1's CDX statuscode check above. The classifyReplayHtml evidence rides

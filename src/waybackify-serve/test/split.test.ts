@@ -93,7 +93,7 @@ describe('chrome/content split', () => {
       assert.equal(res.status, 200);
       // The split recipe's step 1 is origin-wide — EVERY content response
       // carries frame-ancestors. Harmless on an inert image (document CSP is
-      // not enforced on a subresource); the bytes pass through unchanged.
+      // not enforced on a subresource), and the bytes pass through unchanged.
       assert.equal(res.headers.get('content-security-policy'), CONTENT_CSP);
       assert.equal(res.headers.get('x-frame-options'), null);
       assert.deepEqual(new Uint8Array(await res.arrayBuffer()), bytes);

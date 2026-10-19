@@ -1,7 +1,7 @@
 // `waybackify bucket push` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing emitter (walk meta/, derive
 // object keys, shell-quote, carry status/content-type as native metadata) is
-// src/waybackify/bucket-batch.js; this file translates the parsed argv payload
+// src/waybackify/bucket-batch.js. This file translates the parsed argv payload
 // into an emitBucketBatch() call, streams the batch to stdout (ready to pipe
 // into `s5cmd run`) and the summary to stderr. A bad root/sidecar throws →
 // domain-failure exit (1). A sidecar whose body file is missing is skipped by

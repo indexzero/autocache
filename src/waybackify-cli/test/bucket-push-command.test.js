@@ -1,5 +1,5 @@
 // `waybackify bucket push` handler — thin-wrapper wiring test. The batch emitter
-// (src/waybackify/bucket-batch.js) is covered by its own suite; here we prove
+// (src/waybackify/bucket-batch.js) is covered by its own suite. Here we prove
 // the handler maps argv → emitBucketBatch() options, streams the batch to
 // stdout (stderr under --dry-run), and always writes the summary to stderr.
 import assert from 'node:assert/strict';

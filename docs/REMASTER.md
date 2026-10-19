@@ -1,8 +1,8 @@
 # The remaster build — hermetic in, remastered out
 
 Living documentation for `waybackify remaster build <hermetic-root> <remastered-root>`
-(handler: [`src/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js);
-engine: [`src/waybackify/rewrite.js`](../src/waybackify/rewrite.js);
+(handler: [`src/waybackify-cli/src/commands/remaster-build.js`](../src/waybackify-cli/src/commands/remaster-build.js),
+engine: [`src/waybackify/rewrite.js`](../src/waybackify/rewrite.js),
 build: [`src/waybackify/remaster.js`](../src/waybackify/remaster.js)).
 
 This is the heart of **standalone**. The standalone milestone proved the buckets

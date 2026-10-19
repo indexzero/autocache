@@ -33,7 +33,7 @@ function printSummary(result, log) {
     for (const v of bad) {
       log(`  [${v.verdict}] ${v.url}`);
       log(`    statuscode: ${v.statuscode ?? '(none)'} | reason: ${v.reason}`);
-      // Interstitial captures carry a precise signature; redirect interstitials
+      // Interstitial captures carry a precise signature. Redirect interstitials
       // also carry the decoded destination the re-point pass needs. Ported from
       // the retired corpus audit script's printer when the bin moved here —
       // `auditCapture` still emits these fields.

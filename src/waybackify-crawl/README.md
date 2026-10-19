@@ -92,7 +92,7 @@ Verified docs are skipped entirely on re-run (no probe, no network) unless
 
 ## Usage
 
-This package is library-only (the standalone bin was dropped); the
+This package is library-only (the standalone bin was dropped). The
 completeness crawl is driven through the waybackify CLI as `cache crawl` (put all
 flags FIRST, before the positional URLs):
 

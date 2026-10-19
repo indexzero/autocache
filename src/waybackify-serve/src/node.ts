@@ -14,7 +14,7 @@
  *   waybackify-serve --bucket <name> --endpoint <url> \
  *        [--region <r>] [--prefix <p>] [--port N]
  *
- * (bin/serve.js is this package's own entry; a downstream site deployment
+ * (bin/serve.js is this package's own entry. A downstream site deployment
  * re-launches it for local dev over @autocache/waybackify-serve/node.)
  *
  * The two modes are mutually exclusive — except under `--index`, where
@@ -83,12 +83,12 @@ export interface ServeOptions {
   localize?: { has(key: string): boolean };
   /** CSP header posture (design §D3); `'enforce'` (default) or `'report-only'`. */
   cspMode?: 'enforce' | 'report-only';
-  /** The chrome/content split; off by default (single-host serving). */
+  /** The chrome/content split, off by default (single-host serving). */
   split?: SplitOptions;
   /**
    * Per-deployment served-page description copy. Absent, the generic
    * site-agnostic defaults ship. Programmatic callers (a site's local-dev
-   * entry supplies the site copy); not wired to a CLI flag.
+   * entry supplies the site copy), not wired to a CLI flag.
    */
   copy?: ServedCopy;
   /**
@@ -131,9 +131,9 @@ export interface ServeBucketOptions {
   liveFallback?: boolean;
   /** STOPGAP (`--relax-content-csp`); off by default — see ServeOptions.relaxContentCsp. */
   relaxContentCsp?: boolean;
-  /** The chrome/content split; off by default (single-host serving). */
+  /** The chrome/content split, off by default (single-host serving). */
   split?: SplitOptions;
-  /** Per-deployment served-page description copy; generic defaults absent. */
+  /** Per-deployment served-page description copy, generic defaults absent. */
   copy?: ServedCopy;
   /**
    * Capture key CATALOG for `GET /_index` (dev tooling) — a Set built from a

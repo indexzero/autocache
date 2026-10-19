@@ -509,10 +509,10 @@ function headerSafe(value: string): string {
  * (attribution UI + one iframe), so it is locked down hard: `script-src 'none'`
  * and `object-src 'none'` (v1 is script-free — deep-link sync is deferred to
  * the split recipe's step 3 — so NO script executes on the chrome origin,
- * not even same-origin; `default-src 'self'` alone permits that), and
+ * not even same-origin, which `default-src 'self'` alone permits), and
  * the only framing permitted is the content origin. `frame-ancestors 'self'`
  * refuses to be embedded by anyone (the shell has no legitimate embedder —
- * anti-clickjacking); `base-uri 'none'` and `form-action 'self'` close the
+ * anti-clickjacking). `base-uri 'none'` and `form-action 'self'` close the
  * usual escapes.
  *
  * `relax` is the {@link AppOptions.relaxContentCsp} STOPGAP: it widens ONLY
@@ -921,14 +921,14 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
     c.header('Content-Type', contentType || 'application/octet-stream');
     c.header('Cache-Control', HIT_CACHE_CONTROL);
     // Provenance header on every hit — where this body actually came from.
-    // Invisible to the page; visible attribution is the split's chrome.
+    // Invisible to the page. Visible attribution is the split's chrome.
     c.header('X-Wayback-Source', headerSafe(parsed.canonicalArchiveUrl));
 
     // The document CSP — the browser enforces same-origin fetches on references
     // no rewriter caught, and (under the split) `frame-ancestors` so only the
     // chrome host may frame the content origin. `stampAll` (split/content mode)
     // stamps EVERY response so the content origin's framing contract is
-    // origin-wide (the split recipe's step 1); single-host mode keeps its
+    // origin-wide (the split recipe's step 1). Single-host mode keeps its
     // posture: `text/html` only. Set regardless of body presence (HEAD,
     // `empty`) so the header posture is uniform, under the header name
     // `cspMode` selects. The serve-time chrome strip stays text/html-only
@@ -1009,7 +1009,7 @@ export function createApp(store: Store, options: AppOptions = {}): Hono {
   // sandboxed cross-origin iframe pointing at the content origin. This path
   // NEVER touches the store and emits NO capture bytes — it is derived purely
   // from the request URL, so a not-yet-mirrored capture simply shows a shell
-  // whose iframe 404s inside (v1 accepts "URL = entry capture"; deep-link
+  // whose iframe 404s inside (v1 accepts "URL = entry capture", and deep-link
   // sync is the split recipe's step 3).
   // `no-store`: the shell is cheap to rebuild and we deliberately did not check
   // whether the capture exists, so nothing is worth caching under this URL.

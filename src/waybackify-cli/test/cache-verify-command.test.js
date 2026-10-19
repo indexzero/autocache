@@ -1,5 +1,5 @@
 // `waybackify cache verify` handler — thin-wrapper wiring test. The store fsck
-// (src/waybackify/fsck.js) is covered by its own unit + fixture suite; here we
+// (src/waybackify/fsck.js) is covered by its own unit + fixture suite. Here we
 // prove the handler maps argv → fsck() options, formats the report on stdout
 // (--json for the raw record), and maps an unresolved store to domain exit 1.
 import assert from 'node:assert/strict';

@@ -1,6 +1,6 @@
 {
   "name": "@autocache/waybackify",
-  "version": "0.0.0",
+  "version": "0.5.0",
   "description": "Transform dead links into Internet Archive Wayback Machine permalinks",
   "type": "module",
   "main": "index.js",

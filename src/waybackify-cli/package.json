@@ -1,6 +1,6 @@
 {
   "name": "@autocache/waybackify-cli",
-  "version": "0.0.0",
+  "version": "0.5.0",
   "description": "waybackify — manifest / rewrite / ledger / check / search / audit / remaster / bucket over the waybackify library. Surface v2: manifest = generation, rewrite = application, ledger = the collection. Audit surveys captures, remaster builds/verifies the standalone tier, bucket pushes/verifies the mirror.",
   "type": "module",
   "bin": {

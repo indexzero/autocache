@@ -323,9 +323,31 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
   it('a "<script>" token inside a comment or an attribute value does not open a raw-text span', () => {
     const img = `<img data-note="a > b" src="https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2">`;
     const decoded = `${TS}/http://example.com/endpoint?a=1&b=2`;
-    for (const decoy of ['', '<!-- <script> -->', '<div title="<script>"></div>', '<!DOCTYPE html><?xml version="1.0"?>', '<p>a < b</p>']) {
+    const decoys = [
+      '',
+      '<!-- <script> -->',
+      '<div title="<script>"></div>',
+      '<!DOCTYPE html><?xml version="1.0"?>',
+      '<p>a < b</p>',
+      // A `<script>` token inside an element the tokenizer reads as text is text.
+      '<title><script></title>',
+      '<textarea><script></textarea>',
+      '<xmp><script></xmp>',
+      '<iframe><script></iframe>',
+      '<noembed><script></noembed>',
+      '<noframes><script></noframes>',
+      '<noscript><style></noscript>'
+    ];
+    for (const decoy of decoys) {
       assert.deepEqual(scanBody('k', decoy + img, { html: true }).map(f => f.upstreamKey), [decoded], decoy || 'control');
     }
+    // A ref inside RCDATA (textarea) decodes. A ref inside RAWTEXT (xmp) keeps
+    // its entity text, and so does everything after a <plaintext> tag.
+    const ref = `https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2`;
+    const raw = `${TS}/http://example.com/endpoint?a=1&amp;b=2`;
+    assert.deepEqual(scanBody('k', `<textarea>${ref}</textarea>`, { html: true }).map(f => f.upstreamKey), [decoded]);
+    assert.deepEqual(scanBody('k', `<xmp>${ref}</xmp>${img}`, { html: true }).map(f => f.upstreamKey), [raw, decoded]);
+    assert.deepEqual(scanBody('k', `<plaintext>${ref}</plaintext>${img}`, { html: true }).map(f => f.upstreamKey), [raw, raw]);
     // A real script block after the decoys still keeps its text raw.
     const inline = `//web.archive.org/web/${TS}/http://example.com/inline?a=1&amp;b=2`;
     const html = `<!-- <script> --><div title="<script>"></div><script>var u = '${inline}';</script>${img}`;
@@ -338,7 +360,8 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
   it('a comment or attribute "<script>" decoy before an in-store ref still fails the layer as inStore', async () => {
     const storedKey = `${TS}/http://example.com/endpoint?a=1&b=2`;
     const img = `<img data-note="a > b" src="https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2">`;
-    for (const decoy of ['<!-- <script> -->', '<div title="<script>"></div>']) {
+    const decoys = ['<!-- <script> -->', '<div title="<script>"></div>', '<title><script></title>', '<textarea><script></textarea>', '<xmp><script></xmp>', '<noscript><style></noscript>'];
+    for (const decoy of decoys) {
       const hermetic = await mkroot('remaster-verify-decoy-src-');
       await writeEntry(hermetic, { key: DOC_KEY, contentType: 'text/html', body: '<html></html>' });
       await writeEntry(hermetic, { key: storedKey, contentType: 'application/json', body: '{}' });

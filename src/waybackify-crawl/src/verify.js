@@ -222,9 +222,26 @@ function tokenAround(text, start, end) {
   return text.slice(from, to);
 }
 
-// The raw-text content of an HTML <script> or <style> block. A browser does
-// not decode entities there, so a ref inside keeps its entity text in the key.
-const RAW_TEXT_TAGS = new Set(['script', 'style']);
+// How the HTML tokenizer reads an element's content. No tag opens inside any
+// of these, so a `<script>` token there is text, never a span opener.
+//   raw     RAWTEXT, script data, or PLAINTEXT: no character references
+//           decode, so a ref inside keeps its entity text in the key.
+//   rcdata  RCDATA: character references decode, as in markup.
+//   markup  <noscript>: a scripting browser reads it as raw text and loads
+//           nothing from it. A client without scripting parses it as markup,
+//           and the mirror serves that reader too, so refs inside decode.
+const CONTENT_STATES = {
+  script: 'raw',
+  style: 'raw',
+  xmp: 'raw',
+  iframe: 'raw',
+  noembed: 'raw',
+  noframes: 'raw',
+  plaintext: 'raw',
+  title: 'rcdata',
+  textarea: 'rcdata',
+  noscript: 'markup'
+};
 // A tag token at one '<': an open or close tag with a name. Sticky, so it
 // tests a single position.
 const TAG_TOKEN_RE = /<(\/?)([a-zA-Z][^\s/>]*)/y;
@@ -261,8 +278,9 @@ function openTagEnd(html, from) {
 /**
  * The `[start, end, name]` spans of the raw-text blocks in an HTML body, in
  * byte order. Walks the markup the way a tokenizer does: a comment is skipped
- * whole, and a tag's quoted attribute values are skipped, so a `<script>`
- * token inside either never opens a span.
+ * whole, a tag's quoted attribute values are skipped, and the content of any
+ * element in CONTENT_STATES runs to its close tag with no tag inside. Only a
+ * `raw` element records a span. `<plaintext>` runs to the end of the body.
  */
 function rawTextSpans(html) {
   const spans = [];
@@ -290,11 +308,15 @@ function rawTextSpans(html) {
     const end = openTagEnd(html, i + m[0].length);
     if (end === -1) break;
     const name = m[2].toLowerCase();
-    if (m[1] === '' && RAW_TEXT_TAGS.has(name)) {
-      const close = new RegExp(`</${name}(?=[\\s/>])`, 'gi');
-      close.lastIndex = end;
-      const blockEnd = close.exec(html)?.index ?? html.length; // an unclosed block runs to the end
-      spans.push([end, blockEnd, name]);
+    const state = m[1] === '' ? CONTENT_STATES[name] : undefined;
+    if (state !== undefined) {
+      let blockEnd = html.length; // <plaintext>, or an unclosed block, runs to the end
+      if (name !== 'plaintext') {
+        const close = new RegExp(`</${name}(?=[\\s/>])`, 'gi');
+        close.lastIndex = end;
+        blockEnd = close.exec(html)?.index ?? html.length;
+      }
+      if (state === 'raw') spans.push([end, blockEnd, name]);
       i = html.indexOf('<', blockEnd);
       continue;
     }

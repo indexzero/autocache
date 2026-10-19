@@ -294,6 +294,43 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     assert.equal(scanBody('k', html)[0].upstreamKey, `${TS}/http://example.com/?a=1&amp;b=2`);
   });
 
+  it('foreign content: an SVG or MathML script, style, or title is ordinary markup, and an integration point returns to HTML', () => {
+    const ref = `https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2`;
+    const decoded = `${TS}/http://example.com/endpoint?a=1&b=2`;
+    const raw = `${TS}/http://example.com/endpoint?a=1&amp;b=2`;
+    const keys = html => scanBody('k', html, { html: true }).map(f => f.upstreamKey);
+    // The probe cases: no content state switch inside <svg> or <math>.
+    assert.deepEqual(keys(`<svg><script>u="${ref}"</script></svg>`), [decoded], 'svg script');
+    assert.deepEqual(keys(`<svg><style>p{background:url(${ref})}</style></svg>`), [decoded], 'svg style');
+    assert.deepEqual(keys(`<math><style>u="${ref}"</style></math>`), [decoded], 'math style');
+    assert.deepEqual(keys(`<svg><title><script>u="${ref}"</script></title></svg>`), [raw], 'svg title is an integration point, so its script is HTML script');
+    // Integration points and breakouts return to the HTML rules.
+    assert.deepEqual(keys(`<svg><foreignObject><script>u="${ref}"</script></foreignObject><script>u="${ref}"</script></svg>`), [raw, decoded], 'foreignObject');
+    assert.deepEqual(keys(`<math><annotation-xml encoding="text/html"><script>u="${ref}"</script></annotation-xml></math>`), [raw], 'annotation-xml text/html');
+    assert.deepEqual(keys(`<math><annotation-xml><script>u="${ref}"</script></annotation-xml></math>`), [decoded], 'annotation-xml without an HTML encoding');
+    assert.deepEqual(keys(`<svg><div><script>u="${ref}"</script></div></svg>`), [raw], 'an HTML <div> breaks out of foreign content');
+    assert.deepEqual(keys(`<svg/><script>u="${ref}"</script>`), [raw], 'a self-closing <svg/> opens nothing');
+    assert.deepEqual(keys(`<svg><script>u="${ref}"</script></svg><script>u="${ref}"</script>`), [decoded, raw], 'after </svg> the HTML rules return');
+    // A foreign <style> is CSS: decoded, and a resource position.
+    const { residual } = classifyUpstream(scanBody('k', `<svg><style>p{background:url(https://web.archive.org/web/${OTHER}/http://assets.example.com/bg)}</style></svg>`, { html: true }), new Set(), new Set());
+    assert.equal(residual.classes.novelResource.count, 1);
+  });
+
+  it('an SVG script ref with an entity resolves to the stored capture and fails the layer as inStore', async () => {
+    const storedKey = `${TS}/http://example.com/endpoint?a=1&b=2`;
+    const hermetic = await mkroot('remaster-verify-svg-script-src-');
+    await writeEntry(hermetic, { key: DOC_KEY, contentType: 'text/html', body: '<html></html>', requisites: [storedKey] });
+    await writeEntry(hermetic, { key: storedKey, contentType: 'application/json', body: '{}' });
+    const out = await mkroot('remaster-verify-svg-script-out-');
+    await remaster(hermetic, out);
+    await overwriteBody(out, DOC_KEY, bytesOf(`<html><body><svg><script>u="https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2"</script></svg></body></html>`));
+    const report = await scanEscapes(await enumerateRemastered(out));
+    assert.deepEqual(report.residual.classes.inStore.entries.map(e => e.key), [storedKey]);
+    assert.equal(report.pass, false);
+    await fsp.rm(hermetic, { recursive: true, force: true });
+    await fsp.rm(out, { recursive: true, force: true });
+  });
+
   it('scanBody keeps byte offsets across CRLF line ends and unquoted values', () => {
     const decoded = `${TS}/http://example.com/?a=1&b=2`;
     const html = `<html>\r\n<body>\r\n<img\r\n  alt=logo\r\n  src=https://web.archive.org/web/${TS}/http://example.com/?a=1&amp;b=2\r\n>\r\n</body></html>`;

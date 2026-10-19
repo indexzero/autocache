@@ -245,6 +245,31 @@ const CONTENT_MODES = {
   textarea: TokenizerMode.RCDATA
 };
 
+// Foreign content. Inside <svg> or <math> the tree builder switches no content
+// state: a <script>, <style>, or <title> there is ordinary markup, and
+// character references decode. An HTML integration point inside returns to
+// the HTML rules, and so does an HTML start tag that breaks out of foreign
+// content (the tree builder pops the foreign elements first).
+const FOREIGN_ROOTS = new Set(['svg', 'math']);
+const SVG_INTEGRATION_POINTS = new Set(['foreignobject', 'desc', 'title']);
+const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']);
+const ANNOTATION_HTML_ENCODINGS = new Set(['text/html', 'application/xhtml+xml']);
+const FOREIGN_BREAKOUT_TAGS = new Set([
+  'b', 'big', 'blockquote', 'body', 'br', 'center', 'code', 'dd', 'div', 'dl', 'dt', 'em', 'embed',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing', 'menu', 'meta', 'nobr',
+  'ol', 'p', 'pre', 'ruby', 's', 'small', 'span', 'strong', 'strike', 'sub', 'sup', 'table', 'tt', 'u', 'ul', 'var'
+]);
+const FONT_BREAKOUT_ATTRS = new Set(['color', 'face', 'size']); // <font> breaks out only with one of these
+
+/** Inside foreign content of `namespace`, does this start tag open an HTML integration point? */
+function isIntegrationPoint(namespace, tagName, attrs) {
+  if (namespace === 'svg') return SVG_INTEGRATION_POINTS.has(tagName);
+  if (MATHML_TEXT_INTEGRATION_POINTS.has(tagName)) return true;
+  if (tagName !== 'annotation-xml') return false;
+  const encoding = attrs.find(a => a.name === 'encoding')?.value.trim().toLowerCase() ?? '';
+  return ANNOTATION_HTML_ENCODINGS.has(encoding);
+}
+
 // The navigational positions: the only markup positions where a URL names a
 // page the reader follows. Every other attribute value loads a resource,
 // whatever the URL's extension: src, srcset, poster, SVG href and xlink:href,
@@ -289,13 +314,15 @@ function isResourceAttr(tagName, name, attrs) {
 
 /**
  * The regions of an HTML body where a ref reads differently from markup
- * text: raw text (script data, RAWTEXT, PLAINTEXT, comments) and attribute
- * values. In byte order, without overlap. Text outside every region is
- * markup text: character references decode, and no position loads a URL.
- * The tokenizer supplies tag names, exact attribute names and spans
- * (quoted, single-quoted, or unquoted), comments, and the content states.
- * <noscript> content is tokenized again as markup, since a client without
- * scripting parses it and the mirror serves that reader too.
+ * text: raw text (script data, RAWTEXT, PLAINTEXT, comments), a foreign
+ * <style> block (decoded CSS), and attribute values. In byte order, without
+ * overlap. Text outside every region is markup text: character references
+ * decode, and no position loads a URL. The tokenizer supplies tag names,
+ * exact attribute names and spans (quoted, single-quoted, or unquoted),
+ * comments, and the content states. A stack of the open foreign elements
+ * and integration points decides whether a start tag switches a content
+ * state at all. <noscript> content is tokenized again as markup, since a
+ * client without scripting parses it and the mirror serves that reader too.
  *
  * @param {string} html
  * @param {number} [base] - the offset of `html` within the outer body
@@ -303,21 +330,43 @@ function isResourceAttr(tagName, name, attrs) {
  */
 function htmlRegions(html, base = 0) {
   const regions = [];
-  let open = null; // the raw block whose end tag the tokenizer has not seen yet
+  // The open block whose end tag the tokenizer has not seen yet: a raw block,
+  // a <noscript> block, or a foreign <style> block (`decoded`).
+  let open = null;
   const closeOpen = end => {
     if (open === null) return;
     if (open.tagName === 'noscript') regions.push(...htmlRegions(html.slice(open.start, end), base + open.start));
-    else regions.push({ start: base + open.start, end: base + end, raw: true, resource: open.tagName === 'style', kind: open.tagName });
+    else regions.push({ start: base + open.start, end: base + end, raw: !open.decoded, resource: open.tagName === 'style', kind: open.decoded ? 'foreign style' : open.tagName });
     open = null;
   };
+  // The open foreign elements and the integration points inside them. Empty
+  // means HTML content. Only the top frame's `foreign` flag matters.
+  const frames = [];
+  const inForeign = () => frames.length > 0 && frames[frames.length - 1].foreign;
   const tokenizer = new Tokenizer(
     { sourceCodeLocationInfo: true },
     {
-      onStartTag({ tagName, attrs, location }) {
-        for (const attr of attrs) {
-          const loc = location.attrs?.[attr.name];
-          if (!loc) continue;
-          regions.push({ start: base + loc.startOffset, end: base + loc.endOffset, raw: false, resource: isResourceAttr(tagName, attr.name, attrs), kind: `${tagName} ${attr.name}` });
+      onStartTag({ tagName, attrs, location, selfClosing }) {
+        if (open === null) {
+          for (const attr of attrs) {
+            const loc = location.attrs?.[attr.name];
+            if (!loc) continue;
+            regions.push({ start: base + loc.startOffset, end: base + loc.endOffset, raw: false, resource: isResourceAttr(tagName, attr.name, attrs), kind: `${tagName} ${attr.name}` });
+          }
+        }
+        if (inForeign()) {
+          const breakout = FOREIGN_BREAKOUT_TAGS.has(tagName) || (tagName === 'font' && attrs.some(a => FONT_BREAKOUT_ATTRS.has(a.name)));
+          if (!breakout) {
+            const { namespace } = frames[frames.length - 1];
+            if (!selfClosing) frames.push({ tagName, namespace, foreign: !isIntegrationPoint(namespace, tagName, attrs) });
+            if (tagName === 'style' && !selfClosing && open === null) open = { tagName, start: location.endOffset, decoded: true }; // CSS, with character references decoded
+            return; // no content state switches in foreign content
+          }
+          while (inForeign()) frames.pop(); // the tree builder pops back to HTML content
+        }
+        if (FOREIGN_ROOTS.has(tagName)) {
+          if (!selfClosing) frames.push({ tagName, namespace: tagName, foreign: true });
+          return;
         }
         const mode = CONTENT_MODES[tagName];
         if (mode === undefined) return;
@@ -327,9 +376,11 @@ function htmlRegions(html, base = 0) {
       },
       onEndTag({ tagName, location }) {
         if (open !== null && tagName === open.tagName) closeOpen(location.startOffset);
+        const at = frames.findLastIndex(f => f.tagName === tagName);
+        if (at !== -1) frames.length = at;
       },
       onComment({ location }) {
-        regions.push({ start: base + location.startOffset, end: base + location.endOffset, raw: true, resource: false, kind: '#comment' });
+        if (open === null) regions.push({ start: base + location.startOffset, end: base + location.endOffset, raw: true, resource: false, kind: '#comment' });
       },
       onEof({ location }) {
         closeOpen(location?.startOffset ?? html.length); // an unclosed block, or <plaintext>, runs to the end

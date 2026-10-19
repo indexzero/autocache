@@ -331,6 +331,22 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     await fsp.rm(out, { recursive: true, force: true });
   });
 
+  it('a tag or attribute named after an Object property is an unknown tag, with no finding and no throw', () => {
+    const stem = `https://web.archive.org/web/${OTHER}/http://assets.example.com/`;
+    for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+      assert.deepEqual(scanBody('k', `<${name}>clean</${name}>`, { html: true }), [], name);
+      assert.deepEqual(scanBody('k', `<${name} id="x">clean</${name}>`, { html: true }), [], `${name} with an attribute`);
+      assert.deepEqual(scanBody('k', `<p ${name}="x">clean</p>`, { html: true }), [], `attribute ${name}`);
+      // An unknown tag with a URL attribute is still a resource position. `<__proto__`
+      // is not a tag at all (a tag name starts with a letter), so its URL is text.
+      const [finding] = scanBody('k', `<${name} src="${stem}logo">x</${name}>`, { html: true });
+      assert.equal(finding.resource, name !== '__proto__', `${name} src`);
+    }
+    // An attribute named `constructor` beside a real src: the src keeps its position.
+    const [finding] = scanBody('k', `<img constructor="x" src="${stem}logo">`, { html: true });
+    assert.equal(finding.resource, true);
+  });
+
   it('scanBody keeps byte offsets across CRLF line ends and unquoted values', () => {
     const decoded = `${TS}/http://example.com/?a=1&b=2`;
     const html = `<html>\r\n<body>\r\n<img\r\n  alt=logo\r\n  src=https://web.archive.org/web/${TS}/http://example.com/?a=1&amp;b=2\r\n>\r\n</body></html>`;

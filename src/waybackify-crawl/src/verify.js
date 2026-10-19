@@ -232,18 +232,21 @@ function tokenAround(text, start, end) {
 //   SCRIPT_DATA, RAWTEXT, PLAINTEXT  no tags and no character references:
 //                                    a ref inside keeps its entity text
 //   RCDATA                           no tags, and character references decode
-const CONTENT_MODES = {
-  script: TokenizerMode.SCRIPT_DATA,
-  style: TokenizerMode.RAWTEXT,
-  xmp: TokenizerMode.RAWTEXT,
-  iframe: TokenizerMode.RAWTEXT,
-  noembed: TokenizerMode.RAWTEXT,
-  noframes: TokenizerMode.RAWTEXT,
-  noscript: TokenizerMode.RAWTEXT,
-  plaintext: TokenizerMode.PLAINTEXT,
-  title: TokenizerMode.RCDATA,
-  textarea: TokenizerMode.RCDATA
-};
+// Every table keyed by a tag or attribute name is a Map or a Set, so a tag
+// named `constructor` or `__proto__` finds nothing instead of an inherited
+// property.
+const CONTENT_MODES = new Map([
+  ['script', TokenizerMode.SCRIPT_DATA],
+  ['style', TokenizerMode.RAWTEXT],
+  ['xmp', TokenizerMode.RAWTEXT],
+  ['iframe', TokenizerMode.RAWTEXT],
+  ['noembed', TokenizerMode.RAWTEXT],
+  ['noframes', TokenizerMode.RAWTEXT],
+  ['noscript', TokenizerMode.RAWTEXT],
+  ['plaintext', TokenizerMode.PLAINTEXT],
+  ['title', TokenizerMode.RCDATA],
+  ['textarea', TokenizerMode.RCDATA]
+]);
 
 // Foreign content. Inside <svg> or <math> the tree builder switches no content
 // state: a <script>, <style>, or <title> there is ordinary markup, and
@@ -274,13 +277,13 @@ function isIntegrationPoint(namespace, tagName, attrs) {
 // page the reader follows. Every other attribute value loads a resource,
 // whatever the URL's extension: src, srcset, poster, SVG href and xlink:href,
 // object data, embed and track src, an input image, and so on.
-const NAV_ATTRS = {
-  a: new Set(['href']),
-  area: new Set(['href']),
-  form: new Set(['action']),
-  button: new Set(['formaction']),
-  input: new Set(['formaction'])
-};
+const NAV_ATTRS = new Map([
+  ['a', new Set(['href'])],
+  ['area', new Set(['href'])],
+  ['form', new Set(['action'])],
+  ['button', new Set(['formaction'])],
+  ['input', new Set(['formaction'])]
+]);
 // A <link> is navigational when its rel is one of these, unless the same tag
 // names a stylesheet (by rel or by type).
 const LINK_NAV_RELS = new Set(['next', 'prev', 'canonical', 'alternate']);
@@ -295,7 +298,7 @@ const LINK_NAV_RELS = new Set(['next', 'prev', 'canonical', 'alternate']);
  * @param {Array<{name: string, value: string}>} attrs - the tag's attributes
  */
 function isResourceAttr(tagName, name, attrs) {
-  if (NAV_ATTRS[tagName]?.has(name)) return false;
+  if (NAV_ATTRS.get(tagName)?.has(name)) return false;
   if (tagName !== 'link' || name !== 'href') return true;
   const valueOf = n => attrs.find(a => a.name === n)?.value ?? '';
   const rels = valueOf('rel').toLowerCase().split(/\s+/).filter(Boolean);
@@ -349,8 +352,10 @@ function htmlRegions(html, base = 0) {
       onStartTag({ tagName, attrs, location, selfClosing }) {
         if (open === null) {
           for (const attr of attrs) {
-            const loc = location.attrs?.[attr.name];
-            if (!loc) continue;
+            // The tokenizer keys attribute locations on a plain object, so an
+            // own-property check keeps an attribute named `constructor` honest.
+            if (!location.attrs || !Object.hasOwn(location.attrs, attr.name)) continue;
+            const loc = location.attrs[attr.name];
             regions.push({ start: base + loc.startOffset, end: base + loc.endOffset, raw: false, resource: isResourceAttr(tagName, attr.name, attrs), kind: `${tagName} ${attr.name}` });
           }
         }
@@ -368,7 +373,7 @@ function htmlRegions(html, base = 0) {
           if (!selfClosing) frames.push({ tagName, namespace: tagName, foreign: true });
           return;
         }
-        const mode = CONTENT_MODES[tagName];
+        const mode = CONTENT_MODES.get(tagName);
         if (mode === undefined) return;
         tokenizer.state = mode;
         if (mode === TokenizerMode.RCDATA) return; // decodes like markup, and the tokenizer finds its end tag

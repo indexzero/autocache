@@ -1,0 +1,4 @@
+# pnpm 11 and later pack with the repo-root .gitignore when a package has no
+# .npmignore. That file ignores dist/, the build this package exports. This
+# file takes its place, so the tarball holds what pnpm 10 packed.
+node_modules/

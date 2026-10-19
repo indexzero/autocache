@@ -1,7 +1,7 @@
-// Interstitial detection (#363) — naming the captures that are not content,
+// Interstitial detection — naming the captures that are not content,
 // but the Wayback Machine talking ABOUT content.
 //
-// The #292 sweep found two species stored as `status: "body"` that a mirror
+// A corpus sweep found two species stored as `status: "body"` that a mirror
 // must never serve as a page:
 //
 //   - WRAPPER STUB       a `<title>Wayback Machine</title>` shell with an
@@ -20,18 +20,19 @@
 //                        raw asset was never captured; only a wrapper was.
 //   - ARCHIVED ERROR      the CDX index says the exact capture's own
 //                        `statuscode` is 4xx/5xx even though the replay served
-//                        200 (absorbed from #248). Network-derived, so it
-//                        arrives as an INJECTED `cdxStatus` — this module never
-//                        touches the wire, and tests stay offline.
+//                        200 (absorbed from the wayback-404 audit).
+//                        Network-derived, so it arrives as an INJECTED
+//                        `cdxStatus` — this module never touches the wire,
+//                        and tests stay offline.
 //
 // LIBRARY-FIRST. This is pure detection over bytes + metadata: `commitEntry`
 // (cache.js) calls it to REFUSE a body whose signature fires (committing
 // `interstitial` instead), `fsck` calls it to REPORT pre-schema `status:body`
-// entries that match, and the #364 remediation sweep calls classifyEntry()
+// entries that match, and the remediation sweep calls classifyEntry()
 // to classify an existing entry without committing. `refetchRaw()` is the
 // wrapper-stub remediation primitive: fetch the same capture with wayback's
-// `id_` flag (raw bytes), fetch injected so the corpus run is #364's, not a
-// live test's.
+// `id_` flag (raw bytes), fetch injected so the corpus run is the sweep's,
+// not a live test's.
 
 import { parseWaybackUrl } from './audit.js';
 
@@ -69,7 +70,7 @@ const REDIRECT_CHROME = /webComponentLoaderConfig/;
 const REDIRECT_TARGET =
   /["'](?:https?:\/\/web\.archive\.org)?(\/web\/\d{4,14}(?:[a-z]{2}_)?\/https?[^"'\s\\]+)["']/i;
 
-/** Raw-asset extensions that must never be `text/html` (the named #363 set). */
+/** Raw-asset extensions that must never be `text/html` (the named set). */
 const RAW_ASSET_EXTENSION = /\.(?:pdf|txt)$/i;
 
 /** Content types the body-shape signatures run over (documents; '' = unknown). */
@@ -164,7 +165,7 @@ export function detectInterstitial(input = {}) {
 }
 
 /**
- * Report-first path for the #364 remediation sweep: classify an EXISTING
+ * Report-first path for the remediation sweep: classify an EXISTING
  * entry's body against its sidecar WITHOUT committing anything. A thin adapter
  * over detectInterstitial that reads key + contentType off the sidecar.
  * @param {{ key: string, contentType: string }} sidecar
@@ -204,10 +205,10 @@ export function idRefetchUrl(key) {
 
 /**
  * Refetch a capture's RAW bytes via the `id_` flag. Library support for the
- * wrapper-stub remediation (#364 owns the corpus-wide run); `fetch` is INJECTED
- * so unit tests exercise it against fixtures with zero live network. Returns
- * the fetched bytes on a 200, null body otherwise (the caller decides what a
- * non-200 raw refetch means).
+ * wrapper-stub remediation (the sweep owns the corpus-wide run). `fetch` is
+ * INJECTED so unit tests exercise it against fixtures with zero live network.
+ * Returns the fetched bytes on a 200, null body otherwise (the caller decides
+ * what a non-200 raw refetch means).
  * @param {string} key - capture key `${timestamp}/${originalUrl}`
  * @param {Object} options
  * @param {Function} options.fetch - fetch-like (REQUIRED — injected)

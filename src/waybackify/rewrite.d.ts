@@ -1,8 +1,8 @@
 /**
  * Hand-authored declarations for rewrite.js — the subset the serving core
- * (spv/waybackify-serve) imports for its serve-time `localize` option. Keep in
- * lockstep with rewrite.js; declare ONLY what is used (no deps, no DOM/Node
- * types, so this typechecks under BOTH the serve core's tsconfigs:
+ * (@autocache/waybackify-serve) imports for its serve-time `localize` option.
+ * Keep in lockstep with rewrite.js, and declare ONLY what is used (no deps, no
+ * DOM/Node types, so this typechecks under BOTH the serve core's tsconfigs:
  * types:["node"] and types:["@fastly/js-compute"]).
  */
 

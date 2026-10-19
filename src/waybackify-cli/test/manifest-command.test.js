@@ -2,7 +2,7 @@
 //
 // The pipeline itself (link extraction, universe subset baking, seen-union
 // precedence, canonical serialization) is tested where it lives:
-// spv/waybackify/test/manifest.test.js. This file pins the CLI contract over
+// src/waybackify/test/manifest.test.js. This file pins the CLI contract over
 // the REAL library with an injected resolver: argv → files read, ONE
 // generate() run, manifest + seen written canonically, one stats line on
 // stdout — and the issue's acceptance demonstrations: idempotence (second
@@ -200,7 +200,7 @@ test('a "clean not archived" verdict (resolver null) lands in exclude, and the s
   assert.equal(second.code, EXIT.OK);
 });
 
-// --- #404: --near passes straight through to generate → resolve(url, { near })
+// --- --near passes straight through to generate → resolve(url, { near })
 
 test('--near passes through to the resolver as { near } for a never-seen url', async () => {
   const dir = tmp();

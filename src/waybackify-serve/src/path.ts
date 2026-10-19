@@ -1,5 +1,5 @@
 /**
- * Wayback path parsing (#249).
+ * Wayback path parsing.
  *
  * A wayback mirror mirrors the Wayback Machine's replay path shape so that
  * pointing a corpus link at the mirror is a pure host swap:
@@ -9,7 +9,7 @@
  *
  * Everything here is pure string work — no runtime globals — so the same
  * parser serves three masters: the edge handler (src/app.ts), the corpus
- * enumerator (render/wayback/src/enumerate.ts), and #248's wayback-404 audit.
+ * enumerator (src/corpus.ts), and the wayback-404 audit.
  * One parser, one definition of "what is a capture", or the mirror and the
  * audit drift.
  */
@@ -30,7 +30,7 @@ export interface WaybackPath {
   /**
    * Capture key: `${timestamp}/${originalUrl}`. THE storage contract —
    * the store impls (src/store.ts) look up by this key and the future
-   * mirror-population tooling (blocked on the #248 audit) must write by
+   * mirror-population tooling (blocked on the wayback-404 audit) must write by
    * it. Derive it with captureKey(); never hand-roll.
    */
   key: string;
@@ -58,7 +58,7 @@ import { captureKey } from '@autocache/waybackify/key.js';
 const PATH_RE = /^\/(?:web\/)?(\d{4,14})([a-z]{1,3}_)?\/(.+)$/;
 
 // The key derivation itself lives in the shared waybackify package (a pure,
-// extraction-ready module — it's the storage contract the #254 waybackify CLI
+// extraction-ready module — it's the storage contract the waybackify CLI
 // shares); re-exported here because the parser is where consumers meet keys.
 export { captureKey } from '@autocache/waybackify/key.js';
 
@@ -91,7 +91,7 @@ export function parseWaybackPath(path: string): WaybackPath | null {
 
 /**
  * Parse a full `https://web.archive.org/web/...` URL into the same shape.
- * This is how the corpus enumerator and the #248 audit reuse the parser:
+ * This is how the corpus enumerator and the wayback-404 audit reuse the parser:
  * a corpus reference and an incoming edge request agree on (timestamp,
  * originalUrl, key) because they go through the same code.
  */

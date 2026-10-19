@@ -92,7 +92,7 @@ Verified docs are skipped entirely on re-run (no probe, no network) unless
 
 ## Usage
 
-This package is library-only (the standalone bin was dropped in #441); the
+This package is library-only (the standalone bin was dropped). The
 completeness crawl is driven through the waybackify CLI as `cache crawl` (put all
 flags FIRST, before the positional URLs):
 
@@ -138,8 +138,8 @@ crawl bug, and the tripwire for it.
 
 ## Boundaries
 
-- `spv/` package: depends **down** on `waybackify` (facts) + `waybackify-serve`
-  (the shared serving core) only — never on `render/wayback`. Browser tooling
+- This package depends **down** on `waybackify` (facts) + `waybackify-serve`
+  (the shared serving core) only — never on a site layer. Browser tooling
   stays a subprocess behind the probe.
 - The probe driver (`src/probe.js`) is exported so T4's re-home of
   `remaster verify --tier dynamic` into this package is import-path churn only.

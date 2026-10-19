@@ -1,5 +1,5 @@
 /**
- * `remaster verify` — does the remastered tier STAND ALONE? (#365)
+ * `remaster verify` — does the remastered tier STAND ALONE?
  *
  * The remaster family's validator, homed into the crawl package because its
  * dynamic tier drives the SAME strict-serving browser probe the crawler uses

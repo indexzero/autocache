@@ -1,8 +1,8 @@
 /**
- * Hand-authored declarations for manifest.js so render/wayback's TypeScript
+ * Hand-authored declarations for manifest.js so a TypeScript consumer
  * can import it under `tsc` without this package growing a TypeScript
  * toolchain (same pattern as key.d.ts). Keep in lockstep with manifest.js.
- * Typechecks under BOTH render/wayback tsconfigs (types:["node"] and
+ * Typechecks under both a Node and a DOM-less tsconfig (types:["node"] and
  * types:["@fastly/js-compute"]) — pure data shapes, no DOM/Node globals.
  */
 
@@ -41,14 +41,14 @@ export interface SourceRef {
 export const MANIFEST_VERSION: number;
 
 /**
- * The default chrome host `apply` points archived replay links at (#453) — a
+ * The default chrome host `apply` points archived replay links at — a
  * GENERIC PLACEHOLDER (`wayback.example.com`), not any real deployment's host.
  * Callers publishing to a real mirror override it via `apply`'s `chromeHost`
  * option; the concrete host lives in the site layer, never in this library.
  */
 export const DEFAULT_CHROME_HOST: string;
 
-/** Swap a web.archive.org replay URL's host to the chrome host (#453). */
+/** Swap a web.archive.org replay URL's host to the chrome host. */
 export function toChromeHost(waybackUrl: string, chromeHost: string): string;
 
 /** An empty manifest — the in-memory canonical shape. */

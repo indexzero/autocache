@@ -37,8 +37,8 @@ export interface CloudflareHandlerConfig {
    */
   liveFallbackVar?: string;
   /**
-   * Name of the `[vars]` entry holding the `--relax-content-csp` STOPGAP
-   * (#508). OFF by default (strict serving): the content CSP + chrome shell
+   * Name of the `[vars]` entry holding the `--relax-content-csp` STOPGAP.
+   * OFF by default (strict serving): the content CSP + chrome shell
    * framing grants stay locked to `'self'`/the split origins. Set truthy
    * ("1"/"true") to WIDEN those directives with the archive origins so
    * un-localized web.archive.org references load live instead of being blocked
@@ -47,7 +47,7 @@ export interface CloudflareHandlerConfig {
    */
   relaxContentCspVar?: string;
   /**
-   * Names of the `[vars]` entries carrying the chrome/content split (#320):
+   * Names of the `[vars]` entries carrying the chrome/content split:
    * the chrome host, the content host, and (optionally) the cross-origin
    * scheme. Both host vars must be set to enable Host-keyed serving (chrome =
    * attribution shell, content = capture bytes + `frame-ancestors`); either
@@ -58,7 +58,7 @@ export interface CloudflareHandlerConfig {
   contentHostVar?: string;
   splitSchemeVar?: string;
   /**
-   * Per-deployment served-page description copy (#453) — the index and 404
+   * Per-deployment served-page description copy — the index and 404
    * description paragraphs. A BUILD-TIME config value (not a `[vars]` binding):
    * it is site prose supplied by the deploy entry, not operational config the
    * dashboard toggles. Absent, the generic site-agnostic defaults ship. The
@@ -91,13 +91,13 @@ function envStr(value: unknown): string | undefined {
 }
 
 /**
- * Build the chrome/content split (#320) from `[vars]` — BOTH hosts, or neither.
+ * Build the chrome/content split from `[vars]` — BOTH hosts, or neither.
  * A PARTIAL config (one host set, the other absent/misspelled) must NOT silently
- * fall back to single-host serving: that would serve capture bytes first-party
- * on the trusted chrome host, the exact vulnerability #320 exists to close. So a
- * partial or invalid config THROWS — the isolate fails to build and the Worker
- * returns 500, fail-closed. Mirrors serve.js's all-or-nothing `--chrome-host`/
- * `--content-host`.
+ * fall back to single-host serving: that serves capture bytes first-party
+ * on the trusted chrome host, the exact vulnerability the split exists to
+ * close. So a partial or invalid config THROWS — the isolate fails to build and
+ * the Worker returns 500, fail-closed. Mirrors serve.js's all-or-nothing
+ * `--chrome-host`/`--content-host`.
  *
  * Presence is decided on the RAW binding, NOT a string-coerced value. Wrangler
  * permits JSON-valued `[vars]` (objects, numbers, booleans), so a binding that

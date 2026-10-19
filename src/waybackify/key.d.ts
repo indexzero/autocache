@@ -1,9 +1,9 @@
 /**
- * Hand-authored declarations for key.js so render/wayback/src/key.ts
- * can re-export it under `tsc` without this package growing a TypeScript
+ * Hand-authored declarations for key.js so a TypeScript consumer
+ * can import it under `tsc` without this package growing a TypeScript
  * toolchain. Keep in lockstep with key.js — no deps,
- * no DOM/Node types (this file typechecks under BOTH render/wayback
- * tsconfigs: types:["node"] and types:["@fastly/js-compute"]).
+ * no DOM/Node types (this file typechecks under both a Node and a
+ * DOM-less tsconfig: types:["node"] and types:["@fastly/js-compute"]).
  */
 
 /** Derive the capture key for a (timestamp, originalUrl) pair. */

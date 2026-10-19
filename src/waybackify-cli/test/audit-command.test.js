@@ -77,12 +77,12 @@ test('discovers ledger captures, audits, checkpoints, and summarizes', async () 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('prints interstitial signature + redirect target for flagged captures (#431 port)', async () => {
+test('prints interstitial signature + redirect target for flagged captures', async () => {
   const dir = makeLedger();
   const checkpoint = path.join(dir, 'cp.jsonl');
   const out = [];
   // /b comes back as a redirect interstitial carrying the fields auditCapture
-  // emits for Signal 1.5 (#363/#431): a signature and the decoded destination.
+  // emits for Signal 1.5: a signature and the decoded destination.
   const handler = auditHandler({
     env: {},
     auditCapture: async url =>
@@ -103,8 +103,8 @@ test('prints interstitial signature + redirect target for flagged captures (#431
   const code = await run(['audit', dir, '--checkpoint', checkpoint, '--delay-ms', '0'], { handlers: { audit: handler }, out: l => out.push(l), error: () => {} });
   assert.equal(code, EXIT.OK);
 
-  // The relocated printer surfaces #431's interstitial fields — ported from the
-  // retired render/wayback/bin/audit-corpus.js printer when the bin moved here.
+  // The relocated printer surfaces the interstitial fields — ported from the
+  // retired corpus audit script's printer when the bin moved here.
   assert.ok(out.some(l => l.includes('signature: redirect-interstitial')), 'signature line printed');
   assert.ok(
     out.some(l => l.includes('redirects to: 20140101000000/http://example.com/elsewhere')),

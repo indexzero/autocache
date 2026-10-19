@@ -63,10 +63,10 @@
 //                   deleting anything), but it DOES keep the store dirty (exit
 //                   nonzero) until the closure is complete.
 //   - interstitialAsBody  a status 'body' entry whose stored bytes are a
-//                   wayback interstitial (#363: a wrapper stub, a redirect
+//                   wayback interstitial (a wrapper stub, a redirect
 //                   interstitial, or a .pdf/.txt served as text/html) — a
 //                   pre-schema capture that predates cache-time refusal. REPORT
-//                   ONLY: the corpus-wide re-commit is the #364 remediation
+//                   ONLY: the corpus-wide re-commit is the remediation
 //                   sweep, not fsck's to perform.
 //   - schemaVersion sidecar whose v is not the current SIDECAR_VERSION
 //   - foreignRoot   an entry in the root that is not cap/ meta/ tmp/ — the
@@ -149,7 +149,7 @@ export const CATEGORIES = [
   { key: 'keyMismatch', label: 'sidecar filed under the wrong hash', severity: 'corruption' },
   { key: 'missingBody', label: "status 'body' with no cap/ file (incomplete)", severity: 'corruption' },
   { key: 'incompleteClosure', label: "status 'body' requisite whose sidecar is absent (closure short)", severity: 'incomplete' },
-  { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial (#363)", severity: 'advisory' },
+  { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial", severity: 'advisory' },
   { key: 'schemaVersion', label: 'sidecar schema version is not the current version', severity: 'advisory' },
   { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/ trash/ (or a trash/ that is not this tool\'s quarantine)', severity: 'advisory' },
   { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage; --fix moves it to trash/)', severity: 'reapable' },
@@ -579,7 +579,7 @@ export async function fsck(root, options = {}) {
         if (sidecar.contentLength !== size) {
           findings.sizeMismatch.push({ hash, aa, key: sidecar.key ?? null, expected: sidecar.contentLength ?? null, actual: size });
         }
-        // interstitial-as-body (#363): a pre-schema `status:body` capture whose
+        // interstitial-as-body: a pre-schema `status:body` capture whose
         // bytes are a wayback interstitial. Read the body only for html-ish
         // entries (the sole ones a body-shape signature can match); the
         // extension signature needs no body. Offline — no CDX injected here.

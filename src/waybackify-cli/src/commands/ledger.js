@@ -1,4 +1,4 @@
-// `waybackify ledger` handler — the COLLECTION (surface v2, #386): thin
+// `waybackify ledger` handler — the COLLECTION (surface v2): thin
 // wiring over the library's ledger.js (discover / flatten / against), per the
 // CLI's hard thin-wrapper rule. File paths are identity throughout — no
 // directory-layout conventions, no id derivation.

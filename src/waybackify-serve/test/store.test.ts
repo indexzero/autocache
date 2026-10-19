@@ -1,5 +1,5 @@
 /**
- * Store adapter tests (#249). The vendor types are structural (see
+ * Store adapter tests. The vendor types are structural (see
  * src/store.ts), so these suites drive R2Store with plain fake objects that
  * honor R2's actual shape — httpMetadata content-type + customMetadata status
  * over the hash-keyed layout. (The Fastly remote path is an S3Store, covered

@@ -15,8 +15,8 @@
  * Synthetic roots are built per test in tmpdirs with hand-written layout
  * files — deliberately, so each on-disk shape under test (orphan, bodiless,
  * rot) is explicit in the test that asserts it. The committed fixture
- * (test/fixtures/cache-root) is real `waybackify cache` output; the
- * end-to-end serving path over it lives in render/wayback's chicago.test.ts.
+ * (test/fixtures/cache-root) is real `waybackify cache` output. A downstream
+ * site's end-to-end test drives the full serving path over it.
  */
 
 import { createHash } from 'node:crypto';

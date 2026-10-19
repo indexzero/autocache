@@ -27,7 +27,7 @@
  * fabricates a key.
  *
  * The `dynamic[]` entry shape and the `dynamicEntryError` predicate are the
- * core's (spv/waybackify/cache.js); this module produces entries that predicate
+ * core's (src/waybackify/cache.js). This module produces entries that predicate
  * accepts (recordDynamic THROWS otherwise).
  */
 

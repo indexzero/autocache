@@ -612,7 +612,7 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
   });
 });
 
-describe('fsck — interstitial-as-body (#363, report-only)', () => {
+describe('fsck — interstitial-as-body (report-only)', () => {
   // A PRE-SCHEMA entry: written before cache-time refusal existed, so a wayback
   // interstitial sits on disk as `status:body`. Build it by committing a benign
   // body (commitEntry would refuse the interstitial today), then swapping the

@@ -1,5 +1,5 @@
 /**
- * remaster verify tests (#365) — the remastered-tier standalone validator.
+ * remaster verify tests — the remastered-tier standalone validator.
  *
  * STATIC tier is fully offline: a SYNTHETIC all-satisfiable hermetic root is
  * remastered in-test through the merged remaster engine and scanned clean (its
@@ -38,7 +38,7 @@ import {
   scanBody,
   scanEscapes
 } from '../src/verify.js';
-// The merged-in remaster engine (PR #369) — the build remaster verify validates.
+// The merged-in remaster engine — the build remaster verify validates.
 import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

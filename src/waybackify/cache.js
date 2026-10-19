@@ -396,7 +396,7 @@ async function syncDir(dir) {
  *   usual writer — commitEntry only carries what it is handed.
  * @param {Uint8Array|AsyncIterable<Uint8Array>|null} [entry.body] - required
  *   iff a bodied write is intended; a zero-byte body demotes status to 'empty'.
- *   A body whose bytes trip an interstitial signature (#363) is REFUSED — the
+ *   A body whose bytes trip an interstitial signature is REFUSED — the
  *   entry commits `interstitial` (bodiless), never the junk page.
  * @param {string|number|null} [entry.cdxStatus] - the exact capture's archived
  *   CDX statuscode, INJECTED (network-derived); a 4xx/5xx here trips the
@@ -433,7 +433,7 @@ export async function commitEntry(root, entry, hooks = {}) {
   // write byte-identical to the v2 it would otherwise be.
   if (dynamic !== undefined) sidecar.dynamic = dynamic;
 
-  // Interstitial refusal (#363): before a body is committed, check whether it
+  // Interstitial refusal: before a body is committed, check whether it
   // is the Wayback Machine talking ABOUT content rather than content. A fired
   // signature flips the entry to `interstitial` — bodiless, recording which
   // signature fired (and a redirect's decoded target) — so a wrapper stub /

@@ -1,7 +1,7 @@
 // `waybackify cache add` wiring tests — offline, library injected.
 //
 // The cache STORE (layout, write protocol, resume, requisites, the three
-// debate edge cases) is tested where it lives: spv/waybackify/test/
+// debate edge cases) is tested where it lives: src/waybackify/test/
 // cache.test.js. This file pins the thin-wrapper contract only: argv payload
 // → cacheCapture options, the one summary line on the run()-wired `out` seam
 // (stdout), progress + failures through the injected logger, failures → domain

@@ -15,7 +15,7 @@
  *     sidecar, is absent, exactly as no native-metadata store can express it).
  *     Offline and deterministic — no network, no minio, no real S3.
  *
- * The --root leg's real-listener boot lives in render/wayback's chicago.test.ts
+ * A downstream site's end-to-end test boots the --root leg's real listener
  * (serveCacheRoot over the same fixture); this file owns the --bucket leg and
  * main()'s dispatch.
  */
@@ -202,7 +202,7 @@ describe('serveBucket — remote S3 mode over a stubbed endpoint', () => {
       assert.ok((doc.headers.get('content-security-policy') ?? '').includes("default-src 'self'"));
       const html = await doc.text();
       assert.ok(html.includes('Example Domain'));
-      assert.ok(!html.includes('wayback-charlie-dev-attribution'));
+      assert.ok(!html.includes('wayback-mirror-attribution'));
       assert.ok(!html.includes('WAYBACK TOOLBAR INSERT'));
 
       // A BODILESS `empty` entry: a real archived 200 with zero bytes — served

@@ -2,7 +2,7 @@
 //
 // The verdict ENGINE (CDX statuscode signal, chrome stripping, soft-404
 // heuristics, the good/wayback404/suspect classification) is tested where it
-// lives: spv/waybackify/test/audit.test.js. This file pins the thin-wrapper
+// lives: src/waybackify/test/audit.test.js. This file pins the thin-wrapper
 // contract only: argv payload → auditCapture(url), the verdict object printed
 // to stdout VERBATIM (one JSON line, nothing else), and the exit-code mapping
 //   good → 0 · wayback404 → 1 · suspect → 3 · missing arg → 2.

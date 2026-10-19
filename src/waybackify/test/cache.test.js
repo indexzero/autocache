@@ -490,7 +490,7 @@ describe('commitEntry — write-time contract enforcement', () => {
   });
 });
 
-describe('commitEntry — interstitial refusal (#363)', () => {
+describe('commitEntry — interstitial refusal', () => {
   const FIX = path.join(FIXTURES, 'interstitial');
   const WRAPPER = fs.readFileSync(path.join(FIX, 'wrapper-stub.html'), 'utf8');
   const REDIRECT = fs.readFileSync(path.join(FIX, 'redirect-interstitial.html'), 'utf8');

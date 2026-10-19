@@ -11,8 +11,8 @@
 //
 // This module rewrites those references to the ROOT-RELATIVE
 // `/web/<ts><flag>/<orig>` form — the one shape that resolves against any
-// host, because render/wayback's path parser accepts the optional `/web`
-// prefix as a first-class capture request (see render/wayback/src/path.ts).
+// host, because the serving path parser accepts the optional `/web` prefix
+// as a first-class capture request (see src/waybackify-serve/src/path.ts).
 // A SUBRESOURCE reference is rewritten ONLY when its capture exists in the
 // supplied corpus map; anything we cannot satisfy is left byte-for-byte
 // foreign, so a strict serve/validator can still surface it. A NAVIGATIONAL
@@ -23,12 +23,12 @@
 // localizeRefs / isNavigational.
 //
 // Implementation stance — string surgery, no DOM/CSS parse — is deliberate
-// and matches the rest of this package (requisites.js, audit.js) and
-// render/wayback's serve transform (html.ts): captures are decade-old tag
-// soup no parser round-trips faithfully, the edge runtimes want zero heavy
-// dependencies, and a machine-injected wayback reference has one rigid shape
-// a scanner matches exactly. Every transform is a pure function of (bytes,
-// corpus): same input → same output, which is what makes remaster.js
+// and matches the rest of this package (requisites.js, audit.js) and the
+// serve-time transform in src/waybackify-serve/src/html.ts: captures are
+// decade-old tag soup no parser round-trips faithfully, the edge runtimes want
+// zero heavy dependencies, and a machine-injected wayback reference has one
+// rigid shape a scanner matches exactly. Every transform is a pure function of
+// (bytes, corpus): same input → same output, which is what makes remaster.js
 // deterministic.
 //
 // SCOPE (defended in the PR's "would have asked" section):
@@ -149,11 +149,11 @@ function decodeAttrEntities(s) {
 }
 
 /**
- * Repair the embedded original URL EXACTLY the way render/wayback's serving
- * parser does (path.ts#repairUrl): collapse a proxy-flattened scheme
- * (`http:/host` → `http://host`), assume https for protocol-relative, assume
- * http for a scheme-less host, and reject anything that still isn't a URL
- * with a host (null). Parity is load-bearing: a reference is "satisfiable"
+ * Repair the embedded original URL EXACTLY the way the serving path parser
+ * does (src/waybackify-serve/src/path.ts#repairUrl): collapse a proxy-flattened
+ * scheme (`http:/host` → `http://host`), assume https for protocol-relative,
+ * assume http for a scheme-less host, and reject anything that still isn't a
+ * URL with a host (null). Parity is load-bearing: a reference is "satisfiable"
  * iff the server, re-parsing the exact bytes we emit, derives a key we hold.
  * @param {string} rest
  * @returns {string|null}
@@ -346,8 +346,8 @@ function rewriteAttributes(html, corpus, counter) {
 
 /**
  * Rewrite an HTML capture: strip the Wayback Machine's injected chrome
- * (toolbar, `_static` includes, `__wm` bootstrap — ported from render/
- * wayback's serve transform), then localize wayback references in URL-bearing
+ * (toolbar, `_static` includes, `__wm` bootstrap — ported from the
+ * serve-time strip), then localize wayback references in URL-bearing
  * attributes, inline `<style>` blocks, and inline `<script>` literals.
  *
  * The attribution banner is NOT injected here — capture bytes carry nothing

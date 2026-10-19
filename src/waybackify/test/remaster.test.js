@@ -5,7 +5,7 @@
 //      it exercises (B1 attr / CSS url() / JS literal, B2 host-relative,
 //      srcset, @font-face, an unsatisfiable ref, a binary body, and the three
 //      bodiless statuses) — asserts the rewrite + carry-over + build record.
-//   2. the COMMITTED 7-entry cache-root fixture (render/wayback/test/fixtures)
+//   2. the COMMITTED 7-entry cache-root fixture (test/fixtures/cache-root)
 //      — asserts determinism (run twice, byte-identical), FsStore-servable
 //      integrity, orphan-cap drop, and a bin smoke.
 import { describe, it, before } from 'node:test';
@@ -139,7 +139,7 @@ async function buildSyntheticRoot() {
   // A binary body with a high byte — must be copied byte-identical.
   await writeEntry(root, { key: IMG_KEY, status: 'body', contentType: 'image/png', flag: 'im_', body: '\x89PNG\r\n\x1a\n binary \xff\xfe bytes' });
   await writeEntry(root, { key: FONT_KEY, status: 'body', contentType: 'font/woff2', flag: 'cs_', body: 'wOF2 fake' });
-  // The four bodiless statuses (interstitial is #363: a refused wayback fluff
+  // The four bodiless statuses (interstitial is a refused wayback fluff
   // page — bodiless like the rest, so remaster must carry it through untouched).
   await writeEntry(root, { key: `${TS}/http://example.com/empty`, status: 'empty', contentType: '' });
   await writeEntry(root, { key: `${TS}/http://example.com/redirect`, status: 'redirect', contentType: 'text/html' });

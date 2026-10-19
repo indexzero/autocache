@@ -1,4 +1,4 @@
-// Interstitial detection tests (#363) — pure, offline. Every signature is
+// Interstitial detection tests — pure, offline. Every signature is
 // exercised against a synthetic-but-faithful body (test/fixtures/interstitial/*)
 // or a metadata shape; the id_ refetch runs against an injected fetch, never
 // the wire.
@@ -91,7 +91,7 @@ describe('detectInterstitial — the false-positive posture', () => {
   });
 });
 
-describe('classifyEntry — report-first path for the #364 sweep', () => {
+describe('classifyEntry — report-first path for the remediation sweep', () => {
   it('classifies an existing entry from its sidecar + body, committing nothing', () => {
     const sidecar = { key: '20140403040000/http://example.com/report.pdf', contentType: 'text/html' };
     const d = classifyEntry(sidecar, bytes(WRAPPER));

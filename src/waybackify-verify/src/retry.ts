@@ -53,7 +53,7 @@ export const RETRY_ERROR_CODES = [
   'EPIPE',
   'UND_ERR_SOCKET',
   'UND_ERR_CONNECT_TIMEOUT'
-  // UND_ERR_RES_CONTENT_LENGTH_MISMATCH is deliberately NOT here (#499): it
+  // UND_ERR_RES_CONTENT_LENGTH_MISMATCH is deliberately NOT here: it
   // surfaces MID-BODY, after the dispatcher already handed the response off, so
   // a RetryAgent entry cannot replay it — it would only double-retry the rare
   // pre-handoff shape. The heal lives in Layer 3's per-object re-fetch

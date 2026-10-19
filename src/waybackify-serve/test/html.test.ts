@@ -1,5 +1,5 @@
 /**
- * Serve-time HTML transform tests (#249, #361) — the one string-transform
+ * Serve-time HTML transform tests — the one string-transform
  * contract left after the banner was removed:
  *
  * - stripWaybackChrome: the archive's injected chrome removed — against BOTH
@@ -124,9 +124,9 @@ describe('stripWaybackChrome', () => {
     assert.equal(stripWaybackChrome(civilian), civilian);
   });
 
-  it('adds nothing of ours — the stripped page carries no banner or marker markup (#361)', () => {
+  it('adds nothing of ours — the stripped page carries no banner or marker markup', () => {
     const out = stripWaybackChrome(REPLAYED_HTML);
-    assert.ok(!out.includes('wayback-charlie-dev-attribution'));
+    assert.ok(!out.includes('wayback-mirror-attribution'));
     assert.ok(!out.includes('archive.org/donate'));
     // The page's own content is exactly what remains.
     assert.ok(out.includes('<h1>the capture</h1>'));

@@ -1,6 +1,6 @@
 // `waybackify remaster verify` handler — thin front door over the crawl
 // package, per Q-T4-B: the load-bearing validator (static escape + determinism
-// scan, dynamic strict-serving browser sweep) is spv/waybackify-crawl's
+// scan, dynamic strict-serving browser sweep) is waybackify-crawl's
 // src/verify.js#runRemasterVerify; this file translates the parsed argv payload
 // into a runRemasterVerify() call and maps the verdict to an exit code. The
 // dynamic tier's browser code stays entirely inside the crawl package — the CLI

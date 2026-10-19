@@ -1,6 +1,6 @@
 // `waybackify cache add` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing implementation (layout, write
-// protocol, resume, requisites) is spv/waybackify/cache.js; this file
+// protocol, resume, requisites) is src/waybackify/cache.js. This file
 // translates the parsed argv payload into a cacheCapture() call, streams
 // progress + failures through the injected `logger` (stderr), prints the one
 // summary line to the run()-wired `out` seam (stdout), and turns requisite

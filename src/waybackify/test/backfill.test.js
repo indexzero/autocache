@@ -246,16 +246,16 @@ describe('backfill: a GitHub original with an explicit default port is probed', 
       const fetch = async url => {
         fetched.push(url);
         if (url === `https://github.com/${owner}/${repo}`) {
-          return { status: 301, ok: false, headers: new Headers({ location: `https://github.com/new/${repo}` }) };
+          return { status: 301, ok: false, headers: new Headers({ location: `https://github.com/new-owner/${repo}` }) };
         }
         return { status: 200, ok: true, headers: new Headers() };
       };
       const probe = url => probeGithub(url, { fetch, sleep: async () => {} });
       const { deps } = depsFor([replay], fakeCacheCapture({ [replay]: new Error('replay returned HTTP 404 — capture missing') }));
       const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
-      assert.deepEqual(fetched, [`https://github.com/${owner}/${repo}`, `https://github.com/new/${repo}/tree/master`]);
+      assert.deepEqual(fetched, [`https://github.com/${owner}/${repo}`, `https://github.com/new-owner/${repo}/tree/master`]);
       assert.equal(r.stats.gone, 0);
-      assert.deepEqual(r.renames, [{ waybackUrl: replay, from: orig, to: `https://github.com/new/${repo}/tree/master` }]);
+      assert.deepEqual(r.renames, [{ waybackUrl: replay, from: orig, to: `https://github.com/new-owner/${repo}/tree/master` }]);
     });
   }
 });

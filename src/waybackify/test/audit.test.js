@@ -1,8 +1,8 @@
-// Offline unit tests for the wayback-404 verdict engine (audit.js, #248).
+// Offline unit tests for the wayback-404 verdict engine (audit.js).
 // Everything here is canned: CDX rows are faked at the WaybackMachine seam
 // (auditCapture only calls wayback.getCapture) and replay bodies come from
 // authored fixtures under test/fixtures/replay/. Zero network — live verdict
-// tests are in audit-live.test.js behind WAYBACK_LIVE=1 (#246 split).
+// tests are in audit-live.test.js behind WAYBACK_LIVE=1.
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import fs from 'node:fs';
@@ -307,15 +307,16 @@ describe('auditCapture', () => {
 });
 
 // Signal 1.5: the corpus audit is a client of the canonical interstitial
-// detector (#363), so captures that are archive.org talking ABOUT content —
+// detector, so captures that are archive.org talking ABOUT content —
 // wrapper stubs, redirect interstitials, extension mismatches — are named
 // wayback404 instead of slipping through as good/suspect. These fixtures are the
-// exact ones interstitial.test.js uses (the #292 sweep's two species), reused
-// here so audit-time and cache-time detection are pinned to the same bytes.
+// exact ones interstitial.test.js uses (the standalone sweep's two species),
+// reused here so audit-time and cache-time detection are pinned to the same
+// bytes.
 const INTERSTITIAL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/interstitial');
 const interstitial = name => fs.readFileSync(path.join(INTERSTITIAL, name), 'utf8');
 
-describe('auditCapture — interstitial species (#363 wired into #248)', () => {
+describe('auditCapture — interstitial species (wired into the audit)', () => {
   it('wrapper stub → wayback404 with signature (was: suspect near-empty)', async () => {
     const v = await auditCapture(GOOD_URL, {
       wayback: fakeWayback(cdx200),
@@ -325,7 +326,7 @@ describe('auditCapture — interstitial species (#363 wired into #248)', () => {
     assert.equal(v.signature, 'wrapper-stub');
     assert.match(v.reason, /interstitial: wrapper-stub/);
     assert.equal(v.target, undefined, 'wrapper stub carries no redirect target');
-    // The body snippet must ride along for the human pass (#248's FP guard).
+    // The body snippet must ride along for the human pass (the audit's FP guard).
     assert.match(v.evidence, /title:|text:/, 'interstitial evidence keeps a body snippet');
   });
 
@@ -355,7 +356,7 @@ describe('auditCapture — interstitial species (#363 wired into #248)', () => {
 
   it('extension mismatch (.pdf served as text/html) → SUSPECT, not a confident wayback404', async () => {
     // A .pdf/.txt URL can legitimately replay as HTML (vanity URLs, viewer/landing
-    // pages); extension-mismatch inspects no body and maps to none of #248's
+    // pages). Extension-mismatch inspects no body and maps to none of the audit's
     // dead-link classes, so the live audit surfaces it for a human as suspect
     // rather than confidently condemning it (P3 remediation, both reviewers).
     const PDF_URL = 'https://web.archive.org/web/20140403040000/http://example.com/report.pdf';

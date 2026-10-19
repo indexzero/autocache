@@ -1,77 +1,70 @@
 # Publish-readiness — where the two packages stand
 
-The decouple's goal was always open-sourceability: `spv/waybackify` (the
-library) and `spv/waybackify-cli` (the CLI) with ZERO knowledge of the repo
-around them. This records where that stands as of 2026-07-24 — what is ready,
-what is checked, and what remains an operator decision. **Nothing here is a
-publish**; it is the pre-flight.
+The goal was always open-sourceability: `src/waybackify` (the library) and
+`src/waybackify-cli` (the CLI) with zero knowledge of any site that embeds
+them. This records where that stands as of 2026-07-24 — what is
+ready, what is checked, and what remains an operator decision. **Nothing here
+is a publish**. It is the pre-flight.
 
 ## Names and scope
 
 | package | `name` | version | `private` | bin |
 |---|---|---|---|---|
-| `spv/waybackify` | `waybackify` | 0.0.0 | `true` | — |
-| `spv/waybackify-cli` | `@autocache/waybackify-cli` | 0.0.0 | `true` | `waybackify` |
+| `src/waybackify` | `@autocache/waybackify` | 0.0.0 | unset | — |
+| `src/waybackify-cli` | `@autocache/waybackify-cli` | 0.0.0 | unset | `waybackify` |
 
 Registry availability, checked 2026-07-24 with `npm view <name> name`:
 
-- `waybackify` — **404 (unpublished; available)**
-- `@autocache/waybackify-cli` — **404 (unpublished)**; a scoped name is
-  claimable only by the scope's owner. `@autocache` (no dot) is a valid npm
-  scope and is the chosen home for these packages.
-- `waybackify-cli` (the plain fallback if the scope is dropped) —
-  **404 (unpublished; available)**
+- `@autocache/waybackify-cli` — **404 (unpublished)**. A scoped name is
+  claimable only by the scope's owner, and `@autocache` (no dot) is a valid
+  npm scope.
+- `@autocache/waybackify` was not checked on that date. The library was
+  then named plain `waybackify`, which was unpublished and available.
 
-The library keeps the plain `waybackify` name. The CLI's **bin** is also
+Both packages sit under the `@autocache` scope. The CLI's **bin** is
 `waybackify` — installing the CLI is what puts a `waybackify` command on PATH,
-while the library package of the same name ships no bin, so the two do not
-collide.
+while the library package ships no bin, so the two do not collide.
 
-Both packages are `"private": true` at version `0.0.0`: publishing requires
-flipping the flag and choosing a real version — deliberate, operator-run
-steps, not something CI should ever do implicitly.
+Neither package sets `"private"`, and both sit at version `0.0.0`. The
+`Publish` workflow (`.github/workflows/publish.yml`) runs `pnpm -r publish`
+when a GitHub release is published. Choosing a real version and cutting that
+release stay deliberate, operator-run steps.
 
 ## License
 
-Both packages declare `"license": "MIT"` and now carry a matching `LICENSE`
-file (MIT, same copyright holder as the `author` field). The repo's root
-`LICENSE` is CC BY-NC-ND 4.0 — that is the **content** license for the site
-this repo publishes, and it does not govern these packages; each package's own
-MIT file is what travels with a tarball (`npm pack` includes a package-level
-`LICENSE` automatically).
+Both packages declare `"license": "Apache-2.0"`, and the repo's root `LICENSE`
+is Apache License 2.0, so the package fields and the repository agree. Neither
+package carries its own `LICENSE` file yet. `npm pack` includes only a
+package-level `LICENSE`, so a tarball ships no license text until each package
+gets one. That is an operator item below.
 
 ## READMEs stand alone
 
 Both READMEs read correctly outside this repo:
 
-- [`spv/waybackify/README.md`](../src/waybackify/README.md) — API usage, the
+- [`src/waybackify/README.md`](../src/waybackify/README.md) — API usage, the
   Manifest / Universe / Ledger model, schema v2. No repo paths.
-- [`spv/waybackify-cli/README.md`](../src/waybackify-cli/README.md) — the pinned surface-v2
+- [`src/waybackify-cli/README.md`](../src/waybackify-cli/README.md) — the pinned surface-v2
   command table, exit codes, the thin-wrapper rule. References the library as
-  `waybackify` (a sibling-relative link that survives extraction), not by this
-  repo's `spv/` layout.
+  `waybackify` (a sibling-relative link), not by a path.
 
 The living docs in this directory (CACHE / REMASTER / SERVE / SYNC / GC)
-still cross-link `src/waybackify-serve` sources for context; they document the
-serving system as much as the packages and are expected to be re-homed or
-trimmed at extraction time.
+cross-link `src/waybackify-serve` sources for context. They document the
+serving system as much as the packages.
 
 ## The boundary proof
 
-The decoupling is enforced structurally, not by review: CI's
-**Waybackify decouple gate** (`.github/workflows/ci.yml`, job
-`waybackify-decouple`) greps everything under `spv/waybackify` and
-`spv/waybackify-cli` for the surrounding repo's corpus-tree layout, its
-identifier conventions for posts, and its repo paths, and fails the build on
-any hit — the boundary cannot erode one helpful comment at a time. (The exact
-patterns live in the workflow, not here: this file sits inside the scanned
-tree, so spelling them out would trip the gate on itself.) A green gate on
-`main` is the standing proof that both packages know nothing about this repo.
+The rule is simple: nothing under `src/waybackify` or `src/waybackify-cli`
+names a site layout, a site's identifier conventions, or a site's paths. No
+CI job greps for the boundary in this repository. Review enforces it, so every
+change to either package carries that check.
 
 ## What publishing would still need (operator decisions)
 
-1. Settle the CLI's published name: `@autocache/waybackify-cli` (requires
-   the npm scope) or plain `waybackify-cli`.
-2. Flip `"private": true` → publishable, pick initial versions.
-3. `npm publish --dry-run` both packages and review the tarball file lists
+1. Claim the `@autocache` scope on the registry, and check
+   `@autocache/waybackify` the same way.
+2. Pick initial versions and cut the GitHub release that triggers `Publish`.
+3. Add a package-level `LICENSE` file to each package so the tarball carries
+   the license text.
+4. `npm publish --dry-run` both packages and review the tarball file lists
    (no `files` allowlist exists yet — everything not npm-defaulted ships).

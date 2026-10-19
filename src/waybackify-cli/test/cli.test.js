@@ -558,7 +558,7 @@ test('run() maps handler outcomes to the documented exit codes', async () => {
   assert.equal(await run(['check', WB], { handlers: { check: () => {} }, ...silent }), EXIT.OK);
 });
 
-test('thin-CLI rule: the parsing layer imports nothing from spv/waybackify', () => {
+test('thin-CLI rule: the parsing layer imports nothing from the waybackify library', () => {
   // The library is reached ONLY through src/commands/* wiring modules. The
   // argv surface (src/cli.js) and the bin stay library-free so --help and
   // usage errors never load fetch machinery.

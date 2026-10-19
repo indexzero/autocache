@@ -1,5 +1,5 @@
 /**
- * Capture storage (#249).
+ * Capture storage.
  *
  * One Hono app (src/app.ts), two runtime targets — Cloudflare Workers backed
  * by an R2 bucket and Fastly Compute backed by S3-compatible Object Storage
@@ -9,13 +9,14 @@
  * runtime entry (src/cloudflare.ts, src/fastly.ts) wires its own impl.
  *
  * POPULATION SEAM — deliberately absent. The store starts EMPTY: mirror
- * population is blocked on the #248 wayback-404 audit (never mirror a capture
- * the audit flagged bad). The population path is the spv/waybackify CLI
- * (#254): `waybackify cache <url> -o <dir>` writes a local bucket image that
- * gets synced to R2 / Fastly Object Storage — each verified capture's body +
- * content-type under the key layout defined in src/key.ts (which that CLI must
- * share; the module is pure precisely so it can be lifted out wholesale).
- * Nothing in the serving path changes; misses simply become hits.
+ * population is blocked on the wayback-404 audit (never mirror a capture
+ * the audit flagged bad). The population path is the waybackify CLI
+ * (src/waybackify-cli): `waybackify cache <url> -o <dir>` writes a local
+ * bucket image that gets synced to R2 / Fastly Object Storage — each verified
+ * capture's body + content-type under the key layout defined in src/key.ts
+ * (which that CLI must share, and the module is pure precisely so it can be
+ * lifted out wholesale). Nothing in the serving path changes. Misses simply
+ * become hits.
  *
  * Vendor types are STRUCTURAL on purpose (R2BucketLike describes only the
  * sliver we call) so this module typechecks in any runtime and tests can hand
@@ -32,7 +33,7 @@ import { capturePath } from '@autocache/waybackify/key.js';
  * exist iff `body`. Stores that predate statuses (R2/KV as populated today)
  * simply omit the field; consumers treat absence as `body`.
  *
- * `interstitial` (#363) is bodiless like empty/redirect/error: a capture that
+ * `interstitial` is bodiless like empty/redirect/error: a capture that
  * was the Wayback Machine talking ABOUT content (a wrapper stub, a redirect
  * interstitial, a raw asset served as text/html), refused at cache time and
  * committed with no body. Every consumer treats it as another bodiless

@@ -1,5 +1,5 @@
 // `waybackify remaster build` handler — thin-wrapper wiring test. The build
-// engine (spv/waybackify/remaster.js) is covered by its own suite; here we
+// engine (src/waybackify/remaster.js) is covered by its own suite. Here we
 // prove the handler maps the two positional roots → remaster(), prints the
 // summary (--json for the raw record), and lets a build throw become exit 1.
 import assert from 'node:assert/strict';

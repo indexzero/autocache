@@ -1,5 +1,5 @@
 // LIVE verdict-engine tests — real CDX lookups + real replay fetches against
-// archive.org. Skipped by default (the PR gate stays offline, #246/#251); run
+// archive.org. Skipped by default (the PR gate stays offline). Run
 // with WAYBACK_LIVE=1 pnpm test (or pnpm run test:live). Best-effort by
 // design: archive.org throttles, so assertions prefer shape over availability
 // where the archive itself is the flaky part.

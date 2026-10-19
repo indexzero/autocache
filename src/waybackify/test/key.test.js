@@ -1,11 +1,9 @@
-// Key-derivation contract tests for the EXTRACTED key module.
+// Key-derivation contract tests for the key module.
 //
-// key.js moved here from render/wayback/src/key.ts (now a re-export shim);
-// that package's test/key.test.ts keeps pinning the same digests through the
-// shim. This file pins them AGAIN on the library side so the contract holds
-// even if the shim is ever unwired: the pinned sha256 below must equal
-// render/wayback/test/key.test.ts's byte-for-byte, forever, or the mirror
-// and its population tooling have diverged — stop and reconcile.
+// key.js is the storage naming contract shared by the mirror server and its
+// population tooling. This file pins the digests on the library side so the
+// contract holds: the pinned sha256 below is permanent. If it ever changes,
+// the mirror and its population tooling have diverged — stop and reconcile.
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
@@ -23,9 +21,8 @@ describe('captureKey', () => {
 
 describe('captureHash', () => {
   it('reproduces the cross-package pinned digest (the cross-package tripwire)', async () => {
-    // Identical to the pin in render/wayback/test/key.test.ts. Recompute
-    // only on a DELIBERATE layout change, coordinated across the mirror
-    // server and the population CLI.
+    // This pin is permanent. Recompute only on a DELIBERATE layout change,
+    // coordinated across the mirror server and the population CLI.
     assert.equal(
       await captureHash('20140403040000/http://example.com/'),
       '77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac'

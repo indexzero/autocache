@@ -1,8 +1,8 @@
-// `waybackify manifest` handler — GENERATION (surface v2, #386): thin wiring
+// `waybackify manifest` handler — GENERATION (surface v2): thin wiring
 // over the library's manifest.js#generate, per the CLI's hard thin-wrapper
 // rule. The load-bearing pipeline (link extraction, universe subset baking,
 // seen-union lookup, archive resolution, canonical serialization) is
-// spv/waybackify — this file translates the parsed argv payload into file
+// the waybackify library — this file translates the parsed argv payload into file
 // reads, one generate() call, and file writes.
 //
 // Contract (pinned by --help and the command tests):

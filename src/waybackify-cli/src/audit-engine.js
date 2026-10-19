@@ -1,10 +1,9 @@
-// The checkpointed wayback-404 audit engine — extracted from the old
-// render/wayback/bin/audit-corpus.js so the `waybackify audit` command is a
-// thin front door over it. Generic and decouple-clean: it audits a
-// caller-supplied list of captures (each `{ key, waybackUrl, timestamp,
-// original }`) and knows NOTHING of the content corpus, post conventions, or
-// repo paths — the caller (the command) discovers captures via generic ledger
-// discovery.
+// The checkpointed wayback-404 audit engine — extracted from the retired
+// corpus audit script so the `waybackify audit` command is a thin front door
+// over it. Generic and decouple-clean: it audits a caller-supplied list of
+// captures (each `{ key, waybackUrl, timestamp, original }`) and knows NOTHING
+// of the content corpus, post conventions, or repo paths — the caller (the
+// command) discovers captures via generic ledger discovery.
 //
 // The loop is resumable: each verdict is appended as one JSONL line to a
 // checkpoint file, and a re-run skips any capture the checkpoint already

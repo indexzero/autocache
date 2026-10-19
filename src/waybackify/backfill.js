@@ -3,7 +3,7 @@
 // not just the HTML. The generic, resumable, self-limiting bulk-fetch engine
 // behind `waybackify cache fill` (and any repo's thin shim over it).
 //
-// Modeled on the retired series/waybackify-words cron so the byte-download pass
+// Modeled on the retired word-list backfill cron so the byte-download pass
 // is as polite + convergent as that resolve pass was:
 //
 //   • DURABLE WORKLIST — the incomplete set is enumerated ONCE (ledger `against`

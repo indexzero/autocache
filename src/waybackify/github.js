@@ -11,27 +11,68 @@
 //   2. If the root redirects to another repo, graft the original path
 //      verbatim onto the new owner/repo, and re-verify the grafted URL.
 //   3. A grafted URL that answers is a rename: a rewrite candidate.
-//   4. A conclusive reply leaves the 404 standing: a root that answers 2xx
-//      itself, a root or a grafted URL that answers 404 or 410, or a redirect
-//      to the same repo. Only then can a caller record a terminal verdict.
+//   4. A conclusive reply leaves the 404 standing. The root answers 2xx
+//      itself, the root or the grafted URL answers 404 or 410, or the root
+//      redirects to the same repo. Only then can a caller record a terminal
+//      verdict.
 //
-// Every other reply is inconclusive and THROWS: a 403, a 408, a 429, a 5xx, a
-// redirect off GitHub or without a Location, a 3xx that is not a redirect, or
-// a network error. Thus no caller records a verdict on a guess, and the
-// caller defers the link. Backfill (gone.jsonl) and manifest generation (the
-// `exclude` verdict) share this one helper.
+// Every other reply is inconclusive and THROWS. That covers a 403, a 408, a
+// 429, a 5xx, a 3xx that is not a redirect, and a network error. It also
+// covers a redirect off GitHub or without a Location, and a grafted URL that
+// redirects out of the renamed repo. Thus no caller records a verdict on a
+// guess, and the caller defers the link. Backfill (gone.jsonl) and manifest
+// generation (the `exclude` verdict) share this one helper.
 
 const ORIGIN = 'https://github.com';
 const HOST_RE = /^(?:www\.)?github\.com$/;
 const AUTHORITY_RE = /^https?:\/\/[^/?#]*/i;
-const PATH_RE = /^\/([^/?#]+)\/([^/?#]+)([/?#].*)$/;
+// GitHub's own naming rules: an owner is alphanumerics, hyphens, and the
+// underscore of an Enterprise Managed User (`name_shortcode`), a repo adds
+// periods. Neither is ever `.` or `..`.
+const OWNER_RE = /^[A-Za-z0-9_-]+$/;
+const REPO_RE = /^[A-Za-z0-9_.-]+$/;
+// The first path segment of a github.com URL that is a GitHub route, not an
+// owner. A closed list: `/orgs/x/people` or `/login/oauth` is not a repo.
+const RESERVED_OWNERS = new Set([
+  'about', 'account', 'apps', 'blog', 'codespaces', 'collections', 'contact',
+  'copilot', 'customer-stories', 'dashboard', 'discussions', 'enterprise',
+  'events', 'explore', 'features', 'issues', 'join', 'login', 'logout',
+  'marketplace', 'mobile', 'new', 'notifications', 'organizations', 'orgs',
+  'pricing', 'pulls', 'readme', 'resources', 'search', 'security', 'sessions',
+  'settings', 'signup', 'site', 'sponsors', 'stars', 'team', 'topics',
+  'trending', 'users'
+]);
+// Text the URL parser moves or drops: a backslash is a slash in an http(s)
+// path, and a tab, CR, or LF vanishes. Either can turn one path into another.
+const MOVING_CHARS_RE = /[\\\t\r\n]/;
+
+/** True when `owner` and `repo` are names GitHub can issue. */
+function validNames(owner, repo) {
+  return OWNER_RE.test(owner) && !RESERVED_OWNERS.has(owner.toLowerCase()) && REPO_RE.test(repo);
+}
+
+/** True when a raw path segment decodes to `.` or `..`, which a fetch folds away. */
+function isDotSegment(segment) {
+  let decoded = segment;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    // A malformed escape decodes to nothing a parser folds. Keep the text.
+  }
+  return decoded === '.' || decoded === '..';
+}
 
 /**
  * Split a deep github.com link into owner, repo, and the verbatim rest (path,
  * query, and fragment after the repo). The host matches in any letter case,
  * on its default port only. The archive spells many originals with an
- * explicit `:80`. A repo root, a user page, or any other host is not a deep
- * link: null.
+ * explicit `:80`. A repo root, with or without a query or a fragment, a user
+ * page, or any other host is not a deep link: null. Neither is a GitHub
+ * route such as `/orgs/...` or `/login`. Nor is a path a fetch can move.
+ * That means a backslash, a tab, a CR, or an LF in the text. It also means
+ * a segment that decodes to `.` or `..`, so `%2e%2e` too. Every other raw
+ * character is fine. A fetch percent-encodes a space or an accented letter
+ * and requests the same path, so `blob/main/café.md` stays a deep link.
  * @param {string} url
  * @returns {{ owner: string, repo: string, rest: string } | null}
  */
@@ -45,9 +86,27 @@ export function githubRepo(url) {
   // URL drops a default port and lowercases the host, so a non-empty port
   // is a port that is not the default.
   if (!/^https?:$/.test(parsed.protocol) || parsed.port !== '' || !HOST_RE.test(parsed.hostname)) return null;
-  const m = PATH_RE.exec(url.replace(AUTHORITY_RE, ''));
-  if (!m || m[3] === '/') return null;
-  return { owner: m[1], repo: m[2], rest: m[3] };
+  // Reject only what can move the path: a backslash or a control character
+  // anywhere in the text, or a segment a fetch folds away. The rest is carried
+  // verbatim onto a graft, where it then resolves exactly as it does here.
+  if (MOVING_CHARS_RE.test(url)) return null;
+  const afterHost = url.replace(AUTHORITY_RE, '');
+  const rawPath = afterHost.split(/[?#]/, 1)[0];
+  if (rawPath.split('/').some(isDotSegment)) return null;
+  const [, owner = '', repo = '', ...deeper] = parsed.pathname.split('/');
+  if (!owner || !repo || !validNames(owner, repo)) return null;
+  // The names are plain ASCII, so the text spells them as the parser does.
+  const prefix = `/${owner}/${repo}`;
+  if (!afterHost.startsWith(prefix) || !/^(?:[/?#]|$)/.test(afterHost.slice(prefix.length))) return null;
+  // A deep link names a path inside the repo. The root with only a trailing
+  // slash, a query, or a fragment is the repo's home page, not a deep link.
+  if (deeper.join('') === '') return null;
+  return { owner, repo, rest: afterHost.slice(prefix.length) };
+}
+
+/** True when two deep links name the same owner/repo, in any letter case. */
+function sameRepo(a, b) {
+  return `${a.owner}/${a.repo}`.toLowerCase() === `${b.owner}/${b.repo}`.toLowerCase();
 }
 
 /**
@@ -61,7 +120,11 @@ export function graftGithub(url, owner, repo) {
   return `${ORIGIN}/${owner}/${repo}${githubRepo(url).rest}`;
 }
 
-/** The URL a redirect names when it stays on github.com, else null. */
+/**
+ * The URL a redirect names when it stays on github.com, on its default port,
+ * else null. The same host and port rule as githubRepo, so a hop to
+ * `github.com:8443` is as foreign as a hop to another host.
+ */
 function onGithub(location, from) {
   let target;
   try {
@@ -69,7 +132,8 @@ function onGithub(location, from) {
   } catch {
     return null;
   }
-  return /^(?:www\.)?github\.com$/i.test(target.hostname) ? target : null;
+  if (!/^https?:$/.test(target.protocol) || target.port !== '') return null;
+  return HOST_RE.test(target.hostname) ? target : null;
 }
 
 /** The owner/repo a root redirect names, or null when it names no repo. */
@@ -77,7 +141,16 @@ function redirectRepo(location, root) {
   const target = onGithub(location, root);
   if (!target) return null;
   const [, owner, repo] = target.pathname.split('/');
-  return owner && repo ? { owner, repo } : null;
+  return owner && repo && validNames(owner, repo) ? { owner, repo } : null;
+}
+
+/**
+ * True when a redirect target on github.com is the root of `repo`, with or
+ * without a trailing slash or a query. GitHub sends a disabled tab (a wiki,
+ * an empty issues list) there, so the renamed repo answers for that path.
+ */
+function isRepoRoot(target, repo) {
+  return target.pathname.replace(/\/$/, '').toLowerCase() === `/${repo.owner}/${repo.repo}`.toLowerCase();
 }
 
 /** A reply that proves the link is absent. */
@@ -95,15 +168,26 @@ const MAX_GRAFT_HOPS = 5;
 
 /**
  * Fetch the grafted URL and walk its redirects by hand, one hop at a time.
- * Every hop must stay on github.com. A `redirect: 'follow'` fetch hides the
- * chain, so a login page on another host that answers 200 or 404 looks like
- * a verdict about the graft. The walk keeps the final reply attributable to
- * GitHub. A hop off GitHub, a hop with no Location, or a chain longer than
- * MAX_GRAFT_HOPS is inconclusive.
+ * Every hop must stay inside the renamed repo: a deep link on github.com's
+ * default port under the same owner/repo, or that repo's root. A
+ * `redirect: 'follow'` fetch hides the chain. A login page that answers 200
+ * then looks like a verdict about the graft, on another host or at
+ * `github.com/login` alike. The walk keeps the final reply attributable to
+ * the repo. A hop off GitHub, to a GitHub route, or to another repo is
+ * inconclusive. So is a hop with no Location, a chain longer than
+ * MAX_GRAFT_HOPS, and a grafted URL that resolves outside `target` before
+ * the first fetch.
+ * @param {Function} fetch
+ * @param {string} to - the grafted URL
+ * @param {{ owner: string, repo: string }} target - the renamed repo
  * @returns {Promise<boolean>} true when the grafted link answers 2xx
  * @throws on an inconclusive reply
  */
-async function verifyGraft(fetch, to) {
+async function verifyGraft(fetch, to, target) {
+  const graft = githubRepo(new URL(to).href);
+  if (!graft || !sameRepo(graft, target)) {
+    throw new Error(`github probe: inconclusive, grafted URL resolves outside the renamed repo: ${to}`);
+  }
   let url = to;
   for (let hop = 0; hop <= MAX_GRAFT_HOPS; hop++) {
     const res = await fetch(url, { redirect: 'manual' });
@@ -114,6 +198,11 @@ async function verifyGraft(fetch, to) {
     if (!location) throw inconclusive('grafted URL redirect without a Location', res.status, url);
     const next = onGithub(location, url);
     if (!next) throw inconclusive('grafted URL redirect off GitHub', res.status, url);
+    const hopRepo = githubRepo(next.href);
+    const inRepo = hopRepo ? sameRepo(hopRepo, target) : isRepoRoot(next, target);
+    if (!inRepo) throw inconclusive('grafted URL redirect out of the repo', res.status, url);
+    // A fragment never goes on the wire, so the next request drops it.
+    next.hash = '';
     url = next.href;
   }
   throw new Error(`github probe: inconclusive, grafted URL redirected more than ${MAX_GRAFT_HOPS} times: ${to}`);
@@ -152,10 +241,8 @@ export async function probeGithub(url, options = {}) {
 
   const target = redirectRepo(location, root);
   if (!target) throw inconclusive('root redirect that names no repo', res.status, root);
-  if (`${target.owner}/${target.repo}`.toLowerCase() === `${parsed.owner}/${parsed.repo}`.toLowerCase()) {
-    return { renamed: false };
-  }
+  if (sameRepo(target, parsed)) return { renamed: false };
 
   const to = graftGithub(url, target.owner, target.repo);
-  return (await verifyGraft(fetch, to)) ? { renamed: true, from: url, to } : { renamed: false };
+  return (await verifyGraft(fetch, to, target)) ? { renamed: true, from: url, to } : { renamed: false };
 }

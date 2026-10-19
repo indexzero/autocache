@@ -1,4 +1,4 @@
-// Wayback replay-chrome strip — ported from render/wayback/src/html.ts.
+// Wayback replay-chrome strip — ported from src/waybackify-serve/src/html.ts.
 //
 // The bytes in the hermetic store are EXACTLY what archive.org's replay
 // returned, including the chrome the replay injects into every HTML capture:
@@ -9,7 +9,7 @@
 // for web.archive.org.
 //
 // This is a DELIBERATE, FAITHFUL PORT of the serve-time transform's strip
-// (render/wayback/src/html.ts#stripWaybackChrome) into this package, so the
+// (src/waybackify-serve/src/html.ts#stripWaybackChrome) into this package, so the
 // remastered tier bakes the strip in at build time instead of paying it per
 // request. The two implementations are byte-for-byte equivalent by
 // construction — the patterns below are copied verbatim — and the port's

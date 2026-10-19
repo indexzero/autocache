@@ -68,7 +68,7 @@ export interface FastlyHandlerConfig {
    */
   liveFallback?: boolean;
   /**
-   * The `--relax-content-csp` STOPGAP (#508), off by default: widen the content
+   * The `--relax-content-csp` STOPGAP, off by default: widen the content
    * CSP + the chrome shell framing grants with the archive origins so
    * un-localized web.archive.org references load live instead of being blocked
    * (the mobile "content blocked" break). A config boolean — Compute has no
@@ -77,7 +77,7 @@ export interface FastlyHandlerConfig {
    */
   relaxContentCsp?: boolean;
   /**
-   * The chrome/content split (#320): chrome host (attribution shell, no bytes)
+   * The chrome/content split: chrome host (attribution shell, no bytes)
    * and content host (capture bytes + `frame-ancestors`), the Fastly analogue
    * of the Cloudflare `CHROME_HOST`/`CONTENT_HOST` vars. Fastly has no runtime
    * `[vars]`, so a deployment supplies this as an owner-side config constant.
@@ -86,7 +86,7 @@ export interface FastlyHandlerConfig {
    */
   split?: SplitOptions;
   /**
-   * Per-deployment served-page description copy (#453) — the index and 404
+   * Per-deployment served-page description copy — the index and 404
    * description paragraphs, supplied as an owner-side config constant (Fastly
    * has no runtime `[vars]`). Absent, the generic site-agnostic defaults ship.
    * TRUSTED, injected as RAW HTML (carries `<a>` links) — see {@link ServedCopy}.

@@ -30,14 +30,14 @@
  *
  * FASTLY BACKEND SEAM (`fetchOptions`) — Fastly Compute's `fetch` REQUIRES a
  * named `backend` option, so every request merges `fetchOptions` (e.g.
- * `{ backend: 'object-storage' }`) into its init. The Fastly WIRING landed in
- * #288 (src/fastly.ts passes `fetchOptions: { backend: 'object-storage' }`,
+ * `{ backend: 'object-storage' }`) into its init. The Fastly WIRING is in
+ * place (src/fastly.ts passes `fetchOptions: { backend: 'object-storage' }`,
  * fastly.toml declares the backend); whether stock `aws4fetch` could carry
  * that option was INCONCLUSIVE (its AwsClient.fetch calls `fetch(request)`
  * with no init, so a backend would have to survive on the Request across
  * construction), which is why this store hand-rolls the signer and owns the
  * seam outright: the option is set on the fetch init directly. VERIFICATION
- * STATUS (#377): the `backend` passthrough is now EXERCISED under Viceroy
+ * STATUS: the `backend` passthrough is now EXERCISED under Viceroy
  * (`fastly compute serve` over the js-compute-built wasm). A capture request
  * dispatches the signed fetch to the named backend `object-storage`; Viceroy
  * routes it there and fails only at DNS because the local endpoint is a
@@ -75,7 +75,7 @@ export interface S3StoreConfig {
   prefix?: string;
   /**
    * Extra fetch-init members merged into EVERY request — the seam for Fastly
-   * Compute's required named `backend` (#288). Never carries credentials.
+   * Compute's required named `backend`. Never carries credentials.
    */
   fetchOptions?: Record<string, unknown>;
 }

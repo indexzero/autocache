@@ -92,11 +92,22 @@ describe('githubRepo: which URLs the probe applies to', () => {
     assert.equal(githubRepo(`${OLD}/%2e%2e/%2E%2E/login`), null);
     assert.equal(githubRepo(`${OLD}/issues/%2e./x`), null);
     assert.equal(githubRepo(`${OLD}/issues/.%2E/x`), null);
+    assert.equal(githubRepo(`${OLD}/issues/%2e/x`), null);
     assert.equal(githubRepo(`${OLD}/issues\\..\\..\\login`), null, 'a backslash is a slash to the URL parser');
     assert.equal(githubRepo(`${OLD}/issues\\x`), null);
     assert.equal(githubRepo(`${OLD}/issues/.\t./.\t./login`), null, 'a tab vanishes under the URL parser');
-    assert.equal(githubRepo(`${OLD}/a b/c`), null, 'a character the parser must encode is not the text as written');
+    assert.equal(githubRepo(`${OLD}/issues/.\r./x`), null, 'so does a CR');
+    assert.equal(githubRepo(`${OLD}/issues/.\n./x`), null, 'and an LF');
+    assert.equal(githubRepo(`${OLD}/x/..%5c..%5clogin`).rest, '/x/..%5c..%5clogin', 'an encoded backslash is only text, and the path stays inside the repo');
+  });
+
+  it('accepts a raw space, an accented letter, and other characters a fetch merely percent-encodes', () => {
+    assert.equal(githubRepo(`${OLD}/blob/main/café.md`).rest, '/blob/main/café.md');
+    assert.equal(githubRepo(`${OLD}/blob/main/read me.md`).rest, '/blob/main/read me.md');
+    assert.equal(githubRepo(`${OLD}/blob/main/日本語.md`).rest, '/blob/main/日本語.md');
+    assert.equal(githubRepo(`${OLD}/blob/main/a"b{c}.md`).rest, '/blob/main/a"b{c}.md');
     assert.equal(githubRepo(`${OLD}/caf%C3%A9/x`).rest, '/caf%C3%A9/x', 'an already-encoded path reads as written');
+    assert.equal(githubRepo(`${OLD}/blob/main/100%.md`).rest, '/blob/main/100%.md', 'a malformed escape is only text');
   });
 
   it('returns null for an owner or repo outside GitHub naming', () => {
@@ -288,6 +299,16 @@ describe('probeGithub: the repo-root probe', () => {
     await assert.rejects(() => probeGithub(DEEP, { fetch: down, sleep: noSleep }), /fetch failed/);
     const graftBusy = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 429 } });
     await assert.rejects(() => probeGithub(DEEP, { fetch: graftBusy, sleep: noSleep }), /HTTP 429/);
+  });
+
+  it('a raw accented letter or space in the path resolves to a rename end to end', async () => {
+    for (const file of ['café.md', 'read me.md']) {
+      const deep = `${OLD}/blob/master/${file}`;
+      const grafted = `${NEW}/blob/master/${file}`;
+      const fetch = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [grafted]: { status: 200 } });
+      assert.deepEqual(await probeGithub(deep, { fetch, sleep: noSleep }), { renamed: true, from: deep, to: grafted }, file);
+      assert.equal(fetch.calls.length, 2, file);
+    }
   });
 
   it('a path that escapes the repo through a backslash never reaches the network', async () => {

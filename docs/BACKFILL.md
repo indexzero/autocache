@@ -61,9 +61,9 @@ waybackify cache fill <dir> --root <root>
      never as gone. The engine probes an original with an explicit default
      port (`http://github.com:80/...`) like any other. A repo home page with
      only a query or a fragment is not a deep link. Neither is a GitHub route
-     such as `/orgs/...` or `/login`. Nor is a path the URL parser spells
-     differently from the text (a dot segment, a backslash, a tab). The
-     engine never probes any of them. A grafted path that redirects to the
+     such as `/orgs/...` or `/login`. Nor is a path a fetch can move: a
+     backslash, a tab, or a line break in the text, or a `.` or `..` segment.
+     The engine never probes any of them. A grafted path that redirects to the
      renamed repo's root follows it, and the root's answer settles the link.
      GitHub can give an inconclusive reply: a 403, 408, 429, or 5xx, or a
      network error. A redirect off GitHub or without a Location, or a grafted

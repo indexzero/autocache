@@ -31,11 +31,6 @@ const AUTHORITY_RE = /^https?:\/\/[^/?#]*/i;
 // periods. Neither is ever `.` or `..`.
 const OWNER_RE = /^[A-Za-z0-9_-]+$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+$/;
-
-/** True when `owner` and `repo` are names GitHub can issue. */
-function validNames(owner, repo) {
-  return OWNER_RE.test(owner) && !RESERVED_OWNERS.has(owner.toLowerCase()) && REPO_RE.test(repo);
-}
 // The first path segment of a github.com URL that is a GitHub route, not an
 // owner. A closed list: `/orgs/x/people` or `/login/oauth` is not a repo.
 const RESERVED_OWNERS = new Set([
@@ -47,6 +42,25 @@ const RESERVED_OWNERS = new Set([
   'settings', 'signup', 'site', 'sponsors', 'stars', 'team', 'topics',
   'trending', 'users'
 ]);
+// Text the URL parser moves or drops: a backslash is a slash in an http(s)
+// path, and a tab, CR, or LF vanishes. Either can turn one path into another.
+const MOVING_CHARS_RE = /[\\\t\r\n]/;
+
+/** True when `owner` and `repo` are names GitHub can issue. */
+function validNames(owner, repo) {
+  return OWNER_RE.test(owner) && !RESERVED_OWNERS.has(owner.toLowerCase()) && REPO_RE.test(repo);
+}
+
+/** True when a raw path segment decodes to `.` or `..`, which a fetch folds away. */
+function isDotSegment(segment) {
+  let decoded = segment;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    // A malformed escape decodes to nothing a parser folds. Keep the text.
+  }
+  return decoded === '.' || decoded === '..';
+}
 
 /**
  * Split a deep github.com link into owner, repo, and the verbatim rest (path,
@@ -54,10 +68,11 @@ const RESERVED_OWNERS = new Set([
  * on its default port only. The archive spells many originals with an
  * explicit `:80`. A repo root, with or without a query or a fragment, a user
  * page, or any other host is not a deep link: null. Neither is a GitHub
- * route such as `/orgs/...` or `/login`. Nor is a path the URL parser spells
- * differently from the text. A `.` or `..` segment (literal or `%2e`), a
- * backslash, or a tab all resolve to another page. A fetch of such text is
- * not a fetch of the path as written.
+ * route such as `/orgs/...` or `/login`. Nor is a path a fetch can move: a
+ * backslash, a tab, a CR, or an LF in the text, or a segment that decodes
+ * to `.` or `..` (so `%2e%2e` too). Every other raw character is fine. A
+ * fetch percent-encodes a space or an accented letter and requests the same
+ * path, so `blob/main/café.md` stays a deep link.
  * @param {string} url
  * @returns {{ owner: string, repo: string, rest: string } | null}
  */
@@ -71,17 +86,22 @@ export function githubRepo(url) {
   // URL drops a default port and lowercases the host, so a non-empty port
   // is a port that is not the default.
   if (!/^https?:$/.test(parsed.protocol) || parsed.port !== '' || !HOST_RE.test(parsed.hostname)) return null;
-  // The parsed pathname is what a fetch requests: `\` is `/`, a tab is gone,
-  // and every dot segment is folded away. The text must already read that
-  // way, so the verbatim rest resolves under a graft exactly as it does here.
+  // Reject only what can move the path: a backslash or a control character
+  // anywhere in the text, or a segment a fetch folds away. The rest is carried
+  // verbatim onto a graft, where it then resolves exactly as it does here.
+  if (MOVING_CHARS_RE.test(url)) return null;
   const afterHost = url.replace(AUTHORITY_RE, '');
-  if (parsed.pathname !== afterHost.split(/[?#]/, 1)[0]) return null;
+  const rawPath = afterHost.split(/[?#]/, 1)[0];
+  if (rawPath.split('/').some(isDotSegment)) return null;
   const [, owner = '', repo = '', ...deeper] = parsed.pathname.split('/');
   if (!owner || !repo || !validNames(owner, repo)) return null;
+  // The names are plain ASCII, so the text spells them as the parser does.
+  const prefix = `/${owner}/${repo}`;
+  if (!afterHost.startsWith(prefix) || !/^(?:[/?#]|$)/.test(afterHost.slice(prefix.length))) return null;
   // A deep link names a path inside the repo. The root with only a trailing
   // slash, a query, or a fragment is the repo's home page, not a deep link.
   if (deeper.join('') === '') return null;
-  return { owner, repo, rest: afterHost.slice(`/${owner}/${repo}`.length) };
+  return { owner, repo, rest: afterHost.slice(prefix.length) };
 }
 
 /** True when two deep links name the same owner/repo, in any letter case. */

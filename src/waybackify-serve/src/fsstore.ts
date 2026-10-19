@@ -55,7 +55,7 @@ import type { Capture, CaptureMeta, CaptureStatus, Store } from './store.ts';
  * The one sidecar schema version this reader accepts. It equals cache.js
  * SIDECAR_VERSION. Any other version fails loud, never a silent miss.
  */
-const SIDECAR_VERSION = 3;
+export const SIDECAR_VERSION = 3;
 
 /** The slice of a sidecar this store consumes. */
 interface Sidecar {

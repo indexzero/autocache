@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.ts';
-import { loadCorpusKeySet } from '../src/corpus.ts';
+import { loadCorpusCatalog, loadCorpusKeySet } from '../src/corpus.ts';
 import { captureKey } from '../src/path.ts';
 import { MemoryStore } from '../src/store.ts';
 
@@ -209,6 +209,22 @@ describe('loadCorpusKeySet — the meta-walk', () => {
       assert.deepEqual([...keys], ['20140403040000/http://example.com/good']);
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a sidecar of another version: v3 only, in both loaders (a shape problem, not rot)', async () => {
+    for (const v of [1, 2, 99]) {
+      const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-corpus-v${v}-`);
+      try {
+        await fsp.mkdir(`${root}/meta/aa`, { recursive: true });
+        await fsp.writeFile(`${root}/meta/aa/good.json`, JSON.stringify({ v: 3, key: '20140403040000/http://example.com/good' }));
+        await fsp.writeFile(`${root}/meta/aa/old.json`, JSON.stringify({ v, key: '20140403040000/http://example.com/old' }));
+        const message = `corpus: unsupported sidecar version ${v} at ${root}/meta/aa/old.json`;
+        await assert.rejects(loadCorpusKeySet(root), { message });
+        await assert.rejects(loadCorpusCatalog(root), { message });
+      } finally {
+        await fsp.rm(root, { recursive: true, force: true });
+      }
     }
   });
 

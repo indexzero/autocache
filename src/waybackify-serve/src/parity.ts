@@ -36,6 +36,7 @@
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import { capturePath, metaPath } from '@autocache/waybackify/key.js';
+import { SIDECAR_VERSION } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import { serveBucket, serveCacheRoot, type RunningServer } from './node.ts';
 import { signRequest, type SigV4Credentials } from './sigv4.ts';
@@ -214,7 +215,9 @@ interface Sidecar {
  * Walk `<root>/meta/<aa>/*.json` — the sidecar count is the ENTRY count, the
  * same completion token FsStore trusts. Each sidecar's `key` re-derives its
  * object keys through the shared key module (never hand-rolled), so the entry's
- * cap/meta keys are exactly what the bucket must carry.
+ * cap/meta keys are exactly what the bucket must carry. The walk reads the
+ * current sidecar version only (the FsStore rule). Any other version is an
+ * error, never a silent entry.
  */
 export async function enumerateRoot(root: string): Promise<Entry[]> {
   const metaDir = `${root}/meta`;
@@ -222,7 +225,11 @@ export async function enumerateRoot(root: string): Promise<Entry[]> {
   for (const aa of await readdirOrEmpty(metaDir)) {
     for (const file of await readdirOrEmpty(`${metaDir}/${aa}`)) {
       if (!file.endsWith('.json')) continue;
-      const sidecar = JSON.parse(await fsp.readFile(`${metaDir}/${aa}/${file}`, 'utf8')) as Sidecar;
+      const meta = `${metaDir}/${aa}/${file}`;
+      const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as Sidecar;
+      if (sidecar.v !== SIDECAR_VERSION) {
+        throw new Error(`parity: unsupported sidecar version ${sidecar.v} at ${meta}`);
+      }
       const capKey = await capturePath(sidecar.key);
       const metaKey = await metaPath(sidecar.key);
       entries.push({

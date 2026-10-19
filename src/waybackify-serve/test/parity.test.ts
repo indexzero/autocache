@@ -16,6 +16,8 @@
  * Offline and deterministic — no network, no minio, no real S3.
  */
 
+import fsp from 'node:fs/promises';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import net, { type AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
@@ -78,6 +80,21 @@ describe('parity — enumerateRoot', () => {
     // Object keys are derived through the shared key module.
     const example = entries.find(e => e.key === '20140403040000/http://example.com/');
     assert.equal(example?.capKey, await capturePath('20140403040000/http://example.com/'));
+  });
+
+  it('refuses a sidecar of another version: the walk reads v3 only, like FsStore', async () => {
+    for (const v of [1, 2, 99]) {
+      const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-parity-v${v}-`);
+      try {
+        await fsp.cp(FIXTURE_ROOT, root, { recursive: true });
+        const meta = `${root}/meta/77/77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac.json`;
+        const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as Record<string, unknown>;
+        await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v }));
+        await assert.rejects(enumerateRoot(root), { message: `parity: unsupported sidecar version ${v} at ${meta}` });
+      } finally {
+        await fsp.rm(root, { recursive: true, force: true });
+      }
+    }
   });
 });
 

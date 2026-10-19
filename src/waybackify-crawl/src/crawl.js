@@ -82,6 +82,8 @@ const defaultDeps = {
  * order — the corpus-batch worklist and the acceptance sample source. Reads
  * every `<root>/meta/<aa>/*.json` sidecar and keeps the `status:'body'` HTML
  * ones. Defensive: an unreadable/unparseable sidecar is skipped, not fatal.
+ * A sidecar of another version is refused (the readSidecar rule): a crawl
+ * over an older root must say so, never read it.
  *
  * @param {string} root
  * @returns {Promise<string[]>} sorted captureKeys of HTML documents
@@ -104,13 +106,18 @@ export async function enumerateHtmlDocKeys(root) {
     }
     for (const file of files.sort()) {
       if (!file.endsWith('.json')) continue;
+      const metaPath = path.join(metaDir, aa, file);
+      let sidecar;
       try {
-        const sidecar = JSON.parse(await fsp.readFile(path.join(metaDir, aa, file), 'utf8'));
-        if (sidecar.status === 'body' && classifyContentType(sidecar.contentType) === 'html' && typeof sidecar.key === 'string') {
-          keys.push(sidecar.key);
-        }
+        sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
       } catch {
-        /* skip a torn/foreign sidecar */
+        continue; /* skip a torn/foreign sidecar */
+      }
+      if (sidecar.v !== SIDECAR_VERSION) {
+        throw new Error(`enumerateHtmlDocKeys: unsupported sidecar version ${sidecar.v} at ${metaPath}`);
+      }
+      if (sidecar.status === 'body' && classifyContentType(sidecar.contentType) === 'html' && typeof sidecar.key === 'string') {
+        keys.push(sidecar.key);
       }
     }
   }

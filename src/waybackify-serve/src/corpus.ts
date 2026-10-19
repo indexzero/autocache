@@ -21,6 +21,21 @@ import fsp from 'node:fs/promises';
 const REQUISITE_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);
 
 /**
+ * The one sidecar version every reader accepts (FsStore's rule, inlined so
+ * this module stays dependency-free). A sidecar of another version is a
+ * shape problem, not rot: the walk fails loud on it instead of skipping it,
+ * because the server that boots on such a root must not serve it.
+ */
+const SIDECAR_VERSION = 3;
+
+/** Throw on a parsed sidecar of another version. */
+function assertSidecarVersion(sidecar: { v?: unknown }, meta: string): void {
+  if (sidecar.v !== SIDECAR_VERSION) {
+    throw new Error(`corpus: unsupported sidecar version ${String(sidecar.v)} at ${meta}`);
+  }
+}
+
+/**
  * Build the set of capture keys a cache-root holds by reading every
  * `<root>/meta/<aa>/<hash>.json` sidecar and collecting its `.key`.
  *
@@ -54,15 +69,18 @@ export async function loadCorpusKeySet(root: string): Promise<Set<string>> {
     }
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
+      const meta = `${metaDir}/${aa}/${file}`;
+      let sidecar: { v?: unknown; key?: unknown };
       try {
-        const raw = await fsp.readFile(`${metaDir}/${aa}/${file}`, 'utf8');
-        const key = (JSON.parse(raw) as { key?: unknown }).key;
-        if (typeof key === 'string') keys.add(key);
+        sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as { v?: unknown; key?: unknown };
       } catch {
         // Unreadable or unparseable sidecar: skip it. This set is an
         // optimization, not an authority (see the header) — one bad file must
         // not sink the boot walk.
+        continue;
       }
+      assertSidecarVersion(sidecar, meta);
+      if (typeof sidecar.key === 'string') keys.add(sidecar.key);
     }
   }
   return keys;
@@ -77,7 +95,8 @@ export async function loadCorpusKeySet(root: string): Promise<Set<string>> {
  *
  * DEFENSIVE-BY-DESIGN for the same reason as loadCorpusKeySet (see its
  * header): this is an optimization catalog, not an authority, so an
- * unreadable/unparseable/keyless sidecar is skipped, never a boot abort.
+ * unreadable/unparseable/keyless sidecar is skipped, never a boot abort. A
+ * sidecar of another version is the one exception: it is refused.
  */
 export async function loadCorpusCatalog(root: string): Promise<{ keys: Set<string>; requisites: Set<string> }> {
   const keys = new Set<string>();
@@ -101,15 +120,19 @@ export async function loadCorpusCatalog(root: string): Promise<{ keys: Set<strin
     }
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
+      const meta = `${metaDir}/${aa}/${file}`;
+      let sidecar: { v?: unknown; key?: unknown; flag?: unknown };
       try {
-        const raw = await fsp.readFile(`${metaDir}/${aa}/${file}`, 'utf8');
-        const { key, flag } = JSON.parse(raw) as { key?: unknown; flag?: unknown };
-        if (typeof key !== 'string') continue;
-        keys.add(key);
-        if (typeof flag === 'string' && REQUISITE_FLAGS.has(flag)) requisites.add(key);
+        sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as { v?: unknown; key?: unknown; flag?: unknown };
       } catch {
         // Unreadable or unparseable sidecar: skip it (see loadCorpusKeySet).
+        continue;
       }
+      assertSidecarVersion(sidecar, meta);
+      const { key, flag } = sidecar;
+      if (typeof key !== 'string') continue;
+      keys.add(key);
+      if (typeof flag === 'string' && REQUISITE_FLAGS.has(flag)) requisites.add(key);
     }
   }
   return { keys, requisites };

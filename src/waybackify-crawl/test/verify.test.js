@@ -550,6 +550,12 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
       `<link rel="shortcut icon" href="${stem}favicon">`,
       `<link rel="alternate stylesheet" href="${stem}alt">`,
       `<link rel="alternate" type="text/css" href="${stem}alt2">`,
+      // A resource rel token wins over a navigational one.
+      `<link rel="canonical preload" as="image" href="${stem}logo7">`,
+      `<link rel="alternate icon" href="${stem}favicon2">`,
+      `<link rel="prev modulepreload" href="${stem}mod">`,
+      `<link rel="author" href="${stem}author">`,
+      `<link href="${stem}norel">`,
       `<svg><image href="${stem}logo"/></svg>`,
       `<svg><use xlink:href="${stem}sprite#i"/></svg>`,
       `<svg><image xlink:href="${stem}logo2"/></svg>`,
@@ -574,6 +580,8 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
       `<link rel="canonical" href="${stem}about">`,
       `<link rel="next" href="${stem}page2">`,
       `<link rel="alternate" hreflang="fr" href="${stem}fr">`,
+      `<link rel="canonical alternate" href="${stem}both">`,
+      `<link REL="Canonical" href="${stem}upper">`,
       // The exact `rel` attribute decides, not a `data-rel` or another value that contains the word.
       `<link data-rel="stylesheet" rel="canonical" href="${stem}about2">`,
       `<link title="stylesheet" rel=canonical href=${stem}about3>`,
@@ -606,7 +614,9 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     const cases = [
       [`<img alt=logo src=${stem}logo>`, 'novelResource', `${OTHER}/http://assets.example.com/logo`],
       [`<link rel=stylesheet href=${stem}theme>`, 'novelResource', `${OTHER}/http://assets.example.com/theme`],
-      [`<link data-rel="stylesheet" rel="canonical" href="${stem}about">`, 'novelPage', `${OTHER}/http://assets.example.com/about`]
+      [`<link data-rel="stylesheet" rel="canonical" href="${stem}about">`, 'novelPage', `${OTHER}/http://assets.example.com/about`],
+      [`<link rel="canonical preload" as="image" href="${stem}logo2">`, 'novelResource', `${OTHER}/http://assets.example.com/logo2`],
+      [`<link rel="alternate stylesheet" href="${stem}alt">`, 'novelResource', `${OTHER}/http://assets.example.com/alt`]
     ];
     for (const [body, cls, key] of cases) {
       const hermetic = await mkroot('remaster-verify-attr-form-src-');

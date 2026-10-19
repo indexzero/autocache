@@ -284,9 +284,15 @@ const NAV_ATTRS = new Map([
   ['button', new Set(['formaction'])],
   ['input', new Set(['formaction'])]
 ]);
-// A <link> is navigational when its rel is one of these, unless the same tag
-// names a stylesheet (by rel or by type).
+// A <link> is navigational only when every token of its rel is one of these.
+// Any resource token in the list, or a stylesheet type, makes it a resource:
+// `rel="canonical preload"` still preloads, and `rel="alternate icon"` is an
+// icon.
 const LINK_NAV_RELS = new Set(['next', 'prev', 'canonical', 'alternate']);
+const LINK_RESOURCE_RELS = new Set([
+  'stylesheet', 'icon', 'preload', 'modulepreload', 'prefetch', 'manifest',
+  'apple-touch-icon', 'apple-touch-icon-precomposed', 'mask-icon'
+]);
 
 /**
  * Does a URL in attribute `name` of `tagName` load a resource? Only a
@@ -302,8 +308,9 @@ function isResourceAttr(tagName, name, attrs) {
   if (tagName !== 'link' || name !== 'href') return true;
   const valueOf = n => attrs.find(a => a.name === n)?.value ?? '';
   const rels = valueOf('rel').toLowerCase().split(/\s+/).filter(Boolean);
-  if (rels.includes('stylesheet') || /^text\/css\b/i.test(valueOf('type').trim())) return true;
-  return !rels.some(rel => LINK_NAV_RELS.has(rel));
+  if (rels.length === 0 || /^text\/css\b/i.test(valueOf('type').trim())) return true;
+  if (rels.some(rel => LINK_RESOURCE_RELS.has(rel))) return true;
+  return !rels.every(rel => LINK_NAV_RELS.has(rel));
 }
 
 /**

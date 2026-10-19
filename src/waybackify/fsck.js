@@ -214,7 +214,7 @@ async function walkFiles(dir) {
 /**
  * The rootless cap/ keys that the sidecars on disk name RIGHT NOW: a cheap
  * re-read (parse only, no hashing) of every sidecar, for the re-checks around
- * a quarantine move. Any sidecar that cannot be read or parsed could name any
+ * a quarantine move. Any sidecar that fails to read or parse may name any
  * body, so `unreadable` is set and the caller treats every body as named.
  * @param {string} root
  * @returns {Promise<{ keys: Set<string>, unreadable: boolean }>}
@@ -323,7 +323,7 @@ async function createRunDir(root) {
       if (error.code !== 'EEXIST') throw error;
     }
   }
-  throw new Error(`fsck: could not create a unique quarantine directory under ${trash}`);
+  throw new Error(`fsck: no unique quarantine directory under ${trash} after 16 attempts`);
 }
 
 /**
@@ -678,7 +678,7 @@ export async function fsck(root, options = {}) {
       // names the body, so it is no orphan and the move is skipped.
       const now = await namedCapKeys(root);
       if (now.unreadable) {
-        f.reapError = 'a sidecar changed during the run and could not be read, so the move was skipped';
+        f.reapError = 'a sidecar changed during the run and does not read, so the move was skipped';
         continue;
       }
       if (now.keys.has(`cap/${f.aa}/${f.hash}`)) {
@@ -846,7 +846,7 @@ export async function emptyTrash(root, options = {}) {
       continue;
     }
     if (named.unreadable) {
-      kept.push({ path: f.path, reason: 'a sidecar could not be read, so it may name this body' });
+      kept.push({ path: f.path, reason: 'a sidecar does not read, so it may name this body' });
       continue;
     }
     if (named.keys.has(rest.join('/'))) {

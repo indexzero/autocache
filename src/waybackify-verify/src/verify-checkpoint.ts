@@ -3,11 +3,14 @@
  * (./parity.ts) keeps its progress in a {@link VerifyCheckpoint} value. This
  * module stores that value as one JSON file per bucket target:
  *
- *   <root>/.verify/<host>-<bucket>[-<prefix>].<hash12>.json
+ *   <root>/.verify/<hash32>.json
  *
- * The readable part of the name helps an operator. The hash is over the exact
- * normalized target, so two targets never share a file. The naked tier and an
- * `orig/` tier of one bucket therefore keep separate checkpoints.
+ * The name is a fixed-length hash of the normalized target (endpoint, bucket,
+ * prefix). It never embeds the prefix, so a long prefix or one with path
+ * separators cannot make a long or nested filename. Two targets never share a
+ * file. The naked tier and an `orig/` tier of one bucket therefore keep
+ * separate checkpoints. The file carries the full identity (the target and
+ * the root signature), and a resume checks both before it trusts a verdict.
  *
  * The directory sits beside the `.crawl/` and `.refetch/` state of the sibling
  * commands. The bucket projection walks `meta/` only, so it never uploads the
@@ -95,18 +98,22 @@ export function checkpointTarget(target: { endpoint: string; bucket: string; pre
   };
 }
 
-/** The checkpoint file of one bucket target under one root. */
+/** The hex length of a checkpoint filename stem: 128 bits of the target hash. */
+const CHECKPOINT_NAME_LENGTH = 32;
+
+/**
+ * The checkpoint file of one bucket target under one root. The basename is
+ * always `CHECKPOINT_NAME_LENGTH` hex characters plus `.json`, whatever the
+ * target looks like. `readCheckpoint` names the target inside the file, and
+ * the CLI logs the path, so an operator still finds the right file.
+ */
 export function checkpointPath(root: string, target: { endpoint: string; bucket: string; prefix?: string }): string {
   const normal = checkpointTarget(target);
-  let host: string;
-  try {
-    host = new URL(normal.endpoint).host;
-  } catch {
-    host = normal.endpoint;
-  }
-  const readable = [host, normal.bucket, normal.prefix].filter(Boolean).join('-').replace(/[^A-Za-z0-9._-]+/g, '_');
-  const digest = createHash('sha256').update(JSON.stringify([normal.endpoint, normal.bucket, normal.prefix])).digest('hex').slice(0, 12);
-  return path.join(root, VERIFY_DIR, `${readable}.${digest}.json`);
+  const digest = createHash('sha256')
+    .update(JSON.stringify([normal.endpoint, normal.bucket, normal.prefix]))
+    .digest('hex')
+    .slice(0, CHECKPOINT_NAME_LENGTH);
+  return path.join(root, VERIFY_DIR, `${digest}.json`);
 }
 
 /**

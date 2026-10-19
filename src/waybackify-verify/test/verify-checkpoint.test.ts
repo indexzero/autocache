@@ -41,11 +41,25 @@ describe('verify checkpoint — location', () => {
     assert.deepEqual(checkpointTarget({ endpoint: 'https://acct.r2.example', bucket: 'captures' }), { endpoint: 'https://acct.r2.example', bucket: 'captures', prefix: '' });
   });
 
-  it('lives under <root>/.verify/ and names the endpoint, bucket, and prefix', () => {
+  it('lives under <root>/.verify/ as a fixed-length hash of the target', () => {
     const file = checkpointPath('/cache', TARGET);
     assert.equal(path.dirname(file), path.join('/cache', VERIFY_DIR));
     assert.equal(VERIFY_DIR, '.verify');
-    assert.match(path.basename(file), /^acct\.r2\.example-captures-orig\.[0-9a-f]{12}\.json$/);
+    assert.match(path.basename(file), /^[0-9a-f]{32}\.json$/);
+    assert.equal(checkpointPath('/cache', { ...TARGET, endpoint: 'https://acct.r2.example', prefix: 'orig' }), file, 'the normal form names the file');
+  });
+
+  it('never embeds the prefix: a 240-byte prefix and one with path separators give the same-length flat name', () => {
+    const long = 'archive/'.repeat(30);
+    assert.equal(Buffer.byteLength(long), 240);
+    const prefixes = ['', 'orig', long, 'a/b/c', '../../escape'];
+    const files = prefixes.map(prefix => checkpointPath('/cache', { ...TARGET, prefix }));
+    for (const [i, file] of files.entries()) {
+      assert.equal(path.dirname(file), path.join('/cache', VERIFY_DIR), prefixes[i]);
+      assert.equal(path.basename(file).length, 32 + '.json'.length, prefixes[i]);
+      assert.doesNotMatch(path.basename(file), /[/\\]/, prefixes[i]);
+    }
+    assert.equal(new Set(files).size, files.length, 'distinct prefixes keep distinct files');
   });
 
   it('gives the naked tier and the orig/ tier separate files', () => {
@@ -69,6 +83,19 @@ describe('verify checkpoint — read, write, remove', () => {
     await writeCheckpoint(file, sample());
     assert.deepEqual(await readCheckpoint(file), sample());
     assert.deepEqual(fs.readdirSync(path.dirname(file)), [path.basename(file)]);
+  });
+
+  it('writes, reads, and removes the checkpoint of a 240-byte prefix on disk', async () => {
+    // The name is a hash, so the filesystem never sees the prefix. Before the
+    // hash, this write and its temporary file failed with ENAMETOOLONG.
+    const root = tempRoot();
+    const target = { ...TARGET, prefix: 'archive/'.repeat(30) };
+    const file = checkpointPath(root, target);
+    const value = { ...sample(), target: checkpointTarget(target) };
+    await writeCheckpoint(file, value);
+    assert.deepEqual(await readCheckpoint(file), value);
+    await removeCheckpoint(file);
+    assert.equal(fs.existsSync(file), false);
   });
 
   it('reads an absent checkpoint as undefined', async () => {

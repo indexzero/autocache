@@ -228,6 +228,29 @@ test('a default run removes an old checkpoint before the engine reads the bucket
   assert.equal(fs.existsSync(file), false);
 });
 
+test('a 240-byte --prefix stores and removes its checkpoint like any other target', async () => {
+  // The checkpoint filename is a hash of the target, so a long prefix never
+  // reaches the filesystem. An existing .verify/ directory is the case that
+  // once failed with ENAMETOOLONG before the engine ran.
+  const root = tempRoot();
+  fs.mkdirSync(path.join(root, '.verify'));
+  const prefix = 'archive/'.repeat(30);
+  const target = { endpoint: 'http://x', bucket: 'b', prefix };
+  const args = ['--bucket', 'b', '--endpoint', 'http://x', '--prefix', prefix];
+  const runWith = (parity, calls) =>
+    run(['bucket', 'verify', '-r', root, ...args], { handlers: { bucketVerify: bucketVerifyHandler({ env: CREDS, parity }) }, logger: NOOP_LOGGER, out: () => {}, error: () => {} });
+
+  const calls = [];
+  assert.equal(await runWith(checkpointingParity({ pass: false }, calls)), EXIT.DOMAIN);
+  assert.equal(calls.length, 1, 'the engine ran');
+  const file = checkpointPath(root, target);
+  assert.match(path.basename(file), /^[0-9a-f]{32}\.json$/);
+  assert.ok(fs.existsSync(file), 'the failing run kept its checkpoint');
+
+  assert.equal(await runWith(checkpointingParity({ pass: true })), EXIT.OK);
+  assert.equal(fs.existsSync(file), false, 'the passing run removed it');
+});
+
 test('a run that fails on a mismatch names the kept checkpoint file', async () => {
   const root = tempRoot();
   const infos = [];

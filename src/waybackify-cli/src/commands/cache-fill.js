@@ -64,6 +64,12 @@ export function cacheFillHandler(deps = {}) {
               `${ev.outcome.padEnd(8)} ${ev.url}`
             );
             break;
+          case 'rename':
+            logger.warn(
+              { evt: 'fill-rename', type: ev.type, waybackUrl: ev.waybackUrl, from: ev.from, to: ev.to },
+              `rename   ${ev.from} → ${ev.to} (rewrite candidate, not gone)`
+            );
+            break;
           case 'connfail':
             logger.warn(
               { evt: 'fill-connfail', type: ev.type, streak: ev.streak, abortAfter: ev.abortAfter, url: ev.url },

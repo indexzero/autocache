@@ -21,7 +21,9 @@
 //   • SELF-LIMITING — a run of consecutive CONNECTION failures (archive.org down
 //     or blocking us) ABORTS the run rather than firing hundreds of doomed
 //     requests. A genuinely-missing capture (404) is recorded in .refetch/
-//     gone.jsonl and never retried.
+//     gone.jsonl and never retried. A 404 on a github.com deep link must
+//     first survive the GitHub root probe (github.js): a renamed repo
+//     goes to .refetch/renamed.jsonl as a rewrite candidate, never to gone.
 //   • RESUMABLE — killable at any point; the cache root is the done-truth, so a
 //     re-run skips what's already fully closed and finishes the rest. `max`
 //     caps a single run.
@@ -32,6 +34,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseWaybackUrl } from './audit.js';
+import { probeGithub } from './github.js';
 import { discover as defaultDiscover, against as defaultAgainst } from './ledger.js';
 import { WaybackMachine } from './index.js';
 import { NOOP_LOGGER } from './noop-logger.js';
@@ -105,6 +109,24 @@ function readUrls(file) {
   return out;
 }
 
+/**
+ * Settle a capture the archive 404'd. A github.com deep link must survive the
+ * root probe first: a rename is a rewrite candidate, a probe that cannot
+ * answer defers, and only a surviving 404 is gone.
+ * @returns {Promise<{ outcome: 'gone'|'renamed'|'deferred', rename?: object }>}
+ */
+async function settleMissing(url, probe) {
+  const original = parseWaybackUrl(url)?.original;
+  let verdict;
+  try {
+    verdict = original ? await probe(original) : null;
+  } catch {
+    return { outcome: 'deferred' };
+  }
+  if (!verdict?.renamed) return { outcome: 'gone' };
+  return { outcome: 'renamed', rename: { waybackUrl: url, from: verdict.from, to: verdict.to } };
+}
+
 const refetchDir = root => path.join(root, '.refetch');
 
 /**
@@ -122,9 +144,11 @@ const refetchDir = root => path.join(root, '.refetch');
  * @param {(ev: object) => void} [opts.onProgress] - progress observer (see events below)
  * @param {Object} [opts.logger] - injected diagnostic logger (default no-op);
  *   threaded into the CDX client + every cacheCapture for the §4 fetch trace
- * @param {Object} [opts.deps] - test seams: { discover, against, cacheCapture, wayback, fetch, sleep }
+ * @param {Object} [opts.deps] - test seams: { discover, against, cacheCapture, wayback, fetch, sleep, probe }
  * @returns {Promise<{worklist: {built: boolean, count: number, path: string},
- *   pending: number, gone: number, stats: object|null, aborted: boolean, dryRun: boolean}>}
+ *   pending: number, gone: number, stats: object|null, aborted: boolean, dryRun: boolean,
+ *   renames: Array<{waybackUrl: string, from: string, to: string}>}>} `renames`
+ *   lists the rewrite candidates that this run found
  */
 export async function backfill(opts = {}) {
   const {
@@ -146,6 +170,7 @@ export async function backfill(opts = {}) {
   const against = deps.against ?? defaultAgainst;
   const cacheCapture = deps.cacheCapture ?? (await import('./cache.js')).cacheCapture;
   const sleep = deps.sleep ?? (ms => new Promise(r => setTimeout(r, ms)));
+  const probe = deps.probe ?? probeGithub;
   // The injected logger flows into BOTH the CDX client (retry firehose) and each
   // per-capture fetch (the doc + requisite trace) — the two halves of §4.
   const wayback = deps.wayback ?? new WaybackMachine({ timeout: 60000, logger });
@@ -153,6 +178,7 @@ export async function backfill(opts = {}) {
   const dir = refetchDir(root);
   const worklistPath = path.join(dir, 'worklist.jsonl');
   const gonePath = path.join(dir, 'gone.jsonl');
+  const renamedPath = path.join(dir, 'renamed.jsonl');
 
   // 1. Durable worklist — build ONCE (or refresh), otherwise reuse.
   let urls;
@@ -176,13 +202,17 @@ export async function backfill(opts = {}) {
   onProgress({ type: 'worklist', built, count: urls.length, path: worklistPath });
 
   const gone = new Set(readUrls(gonePath));
-  const pending = urls.filter(u => !gone.has(u));
-  onProgress({ type: 'plan', pending: pending.length, gone: gone.size, total: urls.length });
+  // A recorded rename waits for a rewrite policy. Refetching the old URL
+  // cannot advance it, so it leaves the pending set like a gone capture.
+  const renamed = new Set(readUrls(renamedPath));
+  const pending = urls.filter(u => !gone.has(u) && !renamed.has(u));
+  onProgress({ type: 'plan', pending: pending.length, gone: gone.size, renamed: renamed.size, total: urls.length });
 
   const worklist = { built, count: urls.length, path: worklistPath };
+  const renames = [];
   if (dryRun) {
     onProgress({ type: 'dry-run', pending: pending.length });
-    return { worklist, pending: pending.length, gone: gone.size, stats: null, aborted: false, dryRun: true };
+    return { worklist, pending: pending.length, gone: gone.size, stats: null, aborted: false, dryRun: true, renames };
   }
 
   // 2. Process — cacheCapture in-process, paced, deferring transients, aborting
@@ -197,7 +227,7 @@ export async function backfill(opts = {}) {
       break;
     }
 
-    let outcome; // 'fetched' | 'cached' | 'deferred' | 'gone' | 'connfail'
+    let outcome; // 'fetched' | 'cached' | 'deferred' | 'gone' | 'renamed' | 'connfail'
     try {
       const summary = await cacheCapture(url, { root, wayback, fetch: deps.fetch, logger });
       const failures = summary.failures ?? [];
@@ -219,7 +249,16 @@ export async function backfill(opts = {}) {
     } catch (err) {
       outcome = classifyFailure(err);
       if (outcome === 'transient') outcome = 'deferred';
-      else if (outcome === 'gone') fs.appendFileSync(gonePath, `${JSON.stringify({ waybackUrl: url })}\n`);
+      else if (outcome === 'gone') {
+        const settled = await settleMissing(url, probe);
+        outcome = settled.outcome;
+        if (outcome === 'gone') fs.appendFileSync(gonePath, `${JSON.stringify({ waybackUrl: url })}\n`);
+        if (settled.rename) {
+          fs.appendFileSync(renamedPath, `${JSON.stringify(settled.rename)}\n`);
+          renames.push(settled.rename);
+          onProgress({ type: 'rename', ...settled.rename });
+        }
+      }
     }
 
     onProgress({ type: 'entry', url, outcome });
@@ -240,14 +279,14 @@ export async function backfill(opts = {}) {
         break;
       }
     } else {
-      connStreak = 0; // a real reply (fetched / 404-gone) breaks the streak
+      connStreak = 0; // a real reply (fetched / 404-gone / renamed) breaks the streak
       if (outcome === 'fetched') stats.fetched++;
       else if (outcome === 'gone') stats.gone++;
-      else stats.deferred++;
+      else if (outcome !== 'renamed') stats.deferred++;
     }
     if (delayMs > 0) await sleep(delayMs);
   }
 
   onProgress({ type: 'summary', stats, aborted });
-  return { worklist, pending: pending.length, gone: gone.size, stats, aborted, dryRun: false };
+  return { worklist, pending: pending.length, gone: gone.size, stats, aborted, dryRun: false, renames };
 }

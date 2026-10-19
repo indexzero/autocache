@@ -12,6 +12,7 @@
     "./bucket-batch.js": "./bucket-batch.js",
     "./cache.js": "./cache.js",
     "./fsck.js": "./fsck.js",
+    "./github.js": "./github.js",
     "./interstitial.js": "./interstitial.js",
     "./key.js": "./key.js",
     "./ledger.js": "./ledger.js",

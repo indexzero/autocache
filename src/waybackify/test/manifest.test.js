@@ -21,6 +21,7 @@ import {
   validateManifest,
   writeManifest
 } from '../manifest.js';
+import { probeGithub } from '../github.js';
 
 const tmpdir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-'));
 
@@ -514,4 +515,85 @@ describe('generate', () => {
     assert.deepEqual(back.rewrites, manifest.rewrites);
     assert.deepEqual(back.exclude, [...new Set(manifest.exclude)].sort());
   });
+});
+
+describe('generate: a not-archived GitHub deep link probes the repo root first', () => {
+  const OLD = 'https://github.com/old-owner/old-repo/issues/1';
+  const NEW = 'https://github.com/new-owner/new-repo/issues/1';
+  const SOURCE = `See [the issue](${OLD}).`;
+  const notArchived = async () => null;
+
+  it('a rename becomes a manifest rewrite and a seen rewrite, not an exclude', async () => {
+    const calls = [];
+    const probe = async url => {
+      calls.push(url);
+      return { renamed: true, from: url, to: NEW };
+    };
+    const { manifest, seen, deferred } = await generate(SOURCE, null, null, { resolve: notArchived, probe });
+    assert.deepEqual(calls, [OLD]);
+    assert.deepEqual(manifest.rewrites, { [OLD]: NEW });
+    assert.deepEqual(manifest.exclude, []);
+    assert.deepEqual(seen.rewrites, { [OLD]: NEW });
+    assert.deepEqual(seen.exclude, []);
+    assert.deepEqual(deferred, []);
+    assert.equal(apply(SOURCE, manifest).content, `See [the issue](${NEW}).`);
+  });
+
+  it('only a link that survives the root probe is excluded', async () => {
+    const probe = async () => ({ renamed: false });
+    const { manifest, seen } = await generate(SOURCE, null, null, { resolve: notArchived, probe });
+    assert.deepEqual(manifest.exclude, [OLD]);
+    assert.deepEqual(seen.exclude, [OLD]);
+    assert.deepEqual(manifest.rewrites, {});
+  });
+
+  it('a probe that cannot answer defers the url and records no verdict', async () => {
+    const probe = async () => {
+      throw new Error('github probe: root returned HTTP 503');
+    };
+    const { manifest, seen, deferred } = await generate(SOURCE, null, null, { resolve: notArchived, probe });
+    assert.deepEqual(deferred, [{ url: OLD, error: 'github probe: root returned HTTP 503' }]);
+    assert.deepEqual(manifest.exclude, []);
+    assert.deepEqual(seen.exclude, []);
+  });
+
+  it('an archived GitHub link never pays for a probe', async () => {
+    const probe = async () => assert.fail('probe must not run');
+    const snap = { url: `https://web.archive.org/web/20160312105649/${OLD}`, timestamp: '20160312105649' };
+    const { manifest } = await generate(SOURCE, null, null, { resolve: async () => snap, probe });
+    assert.equal(manifest.entries[OLD].wayback, snap.url);
+  });
+});
+
+describe('generate: an inconclusive GitHub reply defers the url', () => {
+  const OLD = 'https://github.com/old-owner/old-repo/issues/1';
+  const ROOT = 'https://github.com/old-owner/old-repo';
+  const GRAFT = 'https://github.com/new-owner/new-repo/issues/1';
+  const LOGIN = 'https://elsewhere.example/login';
+  const SOURCE = `See [the issue](${OLD}).`;
+  const reply = (status, location) => ({ status, ok: status >= 200 && status < 300, headers: new Headers(location ? { location } : {}) });
+  const cases = [
+    ['denied at the root', { [ROOT]: reply(403) }],
+    ['timed out at the root', { [ROOT]: reply(408) }],
+    ['root 302 without a Location', { [ROOT]: reply(302) }],
+    ['root 304', { [ROOT]: reply(304) }],
+    ['denied at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(403) }],
+    ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }],
+    ['redirected off GitHub at the graft, other host answers 200', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(200) }],
+    ['redirected off GitHub at the graft, other host answers 404', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(404) }]
+  ];
+  for (const [name, script] of cases) {
+    it(`${name}: no exclude or rewrite in the manifest or in seen`, async () => {
+      const fetched = [];
+      const probe = url => probeGithub(url, { fetch: async u => (fetched.push(u), script[u]), sleep: async () => {} });
+      const { manifest, seen, deferred } = await generate(SOURCE, null, null, { resolve: async () => null, probe });
+      assert.equal(deferred.length, 1);
+      assert.equal(deferred[0].url, OLD);
+      assert.deepEqual(manifest.exclude, []);
+      assert.deepEqual(manifest.rewrites, {});
+      assert.deepEqual(seen.exclude, []);
+      assert.deepEqual(seen.rewrites, {});
+      assert.ok(!fetched.includes(LOGIN), 'the probe never leaves github.com');
+    });
+  }
 });

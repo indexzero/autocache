@@ -53,6 +53,17 @@ waybackify cache fill <dir> --root <root>
      blocking us.
    - **404** → the archive genuinely lacks that capture; it is recorded in
      `<root>/.refetch/gone.jsonl` and never retried.
+   - **404 on a github.com deep link** → the engine probes the GitHub repo
+     root first. When the root redirects to a renamed repo, the engine grafts
+     the original path onto the new owner/name and re-verifies it. A grafted
+     path that answers makes the capture a rewrite candidate. The engine
+     records it in `<root>/.refetch/renamed.jsonl` and logs it as `rename`,
+     never as gone. The engine probes an original with an explicit default
+     port (`http://github.com:80/...`) like any other. GitHub can give an
+     inconclusive reply: a 403, 408, 429, or 5xx, a redirect off GitHub or
+     without a Location, or a network error. Then the engine defers the
+     capture, and it stays eligible for the next run. Only a 404 that
+     survives the probe is gone.
 
 4. **Resume by re-running.** The cache root is the done-truth. Kill it any time;
    a re-run skips what is already fully closed and finishes the rest. `--max N`
@@ -78,6 +89,7 @@ Progress streams to **stderr**; one JSON summary line prints to **stdout**:
 |---|---|
 | `worklist.jsonl` | the long-running base — the incomplete set, enumerated once (`--refresh` to rebuild) |
 | `gone.jsonl` | captures the archive 404'd — excluded from every future run |
+| `renamed.jsonl` | captures of renamed GitHub repos: `{waybackUrl, from, to}` rewrite candidates, excluded from every future run |
 
 ## Examples
 

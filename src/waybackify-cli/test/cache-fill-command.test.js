@@ -76,3 +76,17 @@ test('dry-run summary omits stats (no fetch happened)', async () => {
   assert.equal(line.dryRun, true);
   assert.equal(line.fetched, undefined);
 });
+
+test('a GitHub rename streams to stderr as a rewrite candidate', async () => {
+  const stderr = [];
+  const handler = cacheFillHandler({
+    backfill: async opts => {
+      opts.onProgress({ type: 'rename', waybackUrl: 'https://web.archive.org/web/1/https://github.com/a/b/issues/1', from: 'https://github.com/a/b/issues/1', to: 'https://github.com/c/d/issues/1' });
+      return okResult;
+    }
+  });
+  const push = (o, m) => stderr.push(m);
+  const logger = { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
+  await handler({ args: { dir: 'w' }, flags: { root: '/c' }, logger, out: () => {} });
+  assert.deepEqual(stderr, ['rename   https://github.com/a/b/issues/1 → https://github.com/c/d/issues/1 (rewrite candidate, not gone)']);
+});

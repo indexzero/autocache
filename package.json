@@ -10,7 +10,7 @@
     "type": "git",
     "url": "git+https://github.com/indexzero/autocache.git"
   },
-  "packageManager": "pnpm@10.34.0",
+  "packageManager": "pnpm@12.14.0",
   "engines": {
     "node": ">=24"
   },

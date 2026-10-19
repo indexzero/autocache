@@ -18,7 +18,7 @@ autocache is a pnpm monorepo. Five packages live under `src/*`.
 | `@autocache/waybackify-serve` | the edge server — Node, Cloudflare Workers, and Fastly Compute |
 | `@autocache/waybackify-verify` | the bucket verifier — the four-layer parity check behind `bucket verify` |
 
-The project requires Node 24 or later and pnpm 10.
+The project requires Node 24 or later and pnpm 12. CI runs on Node 26.
 
 ## Set up your environment
 

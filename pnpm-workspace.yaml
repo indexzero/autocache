@@ -1,2 +1,8 @@
 packages:
   - "src/*"
+
+# pnpm 11 and later fail an install on an unlisted build script. esbuild ships
+# its binary in a platform package, so its postinstall stays off, as it was
+# under pnpm 10.
+allowBuilds:
+  esbuild: false

@@ -223,12 +223,17 @@ function tokenAround(text, start, end) {
 
 // The raw-text content of an HTML <script> or <style> block. A browser does
 // not decode entities there, so a ref inside keeps its entity text in the key.
-const RAW_TEXT_OPEN_RE = /<(script|style)(?=[\s/>])/gi;
+const RAW_TEXT_TAGS = new Set(['script', 'style']);
+// A tag token at one '<': an open or close tag with a name. Sticky, so it
+// tests a single position.
+const TAG_TOKEN_RE = /<(\/?)([a-zA-Z][^\s/>]*)/y;
 
 /**
- * The index just past the '>' that ends the open tag at `from`, or -1. Walks
- * the attributes the way an HTML tokenizer does, so a '>' inside a quoted
- * attribute value does not end the tag.
+ * The index just past the '>' that ends the tag at `from`, or -1 when a
+ * quoted attribute value never closes. Walks the attributes the way an HTML
+ * tokenizer does, so a '>' inside a quoted value does not end the tag. On -1
+ * the rest of the body is that attribute's value, so no raw text can follow:
+ * the caller stops, and every later ref decodes as attribute text.
  */
 function openTagEnd(html, from) {
   let i = from;
@@ -252,18 +257,47 @@ function openTagEnd(html, from) {
   return -1;
 }
 
-/** The [start, end) spans of the raw-text blocks in an HTML body. */
+/**
+ * The `[start, end, name]` spans of the raw-text blocks in an HTML body, in
+ * byte order. Walks the markup the way a tokenizer does: a comment is skipped
+ * whole, and a tag's quoted attribute values are skipped, so a `<script>`
+ * token inside either never opens a span.
+ */
 function rawTextSpans(html) {
   const spans = [];
-  RAW_TEXT_OPEN_RE.lastIndex = 0;
-  for (let m = RAW_TEXT_OPEN_RE.exec(html); m !== null; m = RAW_TEXT_OPEN_RE.exec(html)) {
-    const start = openTagEnd(html, m.index + m[0].length);
-    if (start === -1) break; // an unterminated open tag has no content
-    const close = new RegExp(`</${m[1]}(?=[\\s/>])`, 'gi');
-    close.lastIndex = start;
-    const end = close.exec(html)?.index ?? html.length; // an unclosed block runs to the end
-    spans.push([start, end]);
-    RAW_TEXT_OPEN_RE.lastIndex = end;
+  let i = html.indexOf('<');
+  while (i !== -1) {
+    if (html.startsWith('<!--', i)) {
+      const close = html.indexOf('-->', i + 4);
+      if (close === -1) break; // an unterminated comment runs to the end
+      i = html.indexOf('<', close + 3);
+      continue;
+    }
+    TAG_TOKEN_RE.lastIndex = i;
+    const m = TAG_TOKEN_RE.exec(html);
+    if (m === null) {
+      const next = html[i + 1];
+      if (next === '!' || next === '?' || next === '/') {
+        // `<!DOCTYPE`, `<?xml`, `</ >`: a doctype or bogus comment ends at the next '>'
+        const close = html.indexOf('>', i + 1);
+        i = close === -1 ? -1 : html.indexOf('<', close + 1);
+      } else {
+        i = html.indexOf('<', i + 1); // a stray '<' is text
+      }
+      continue;
+    }
+    const end = openTagEnd(html, i + m[0].length);
+    if (end === -1) break;
+    const name = m[2].toLowerCase();
+    if (m[1] === '' && RAW_TEXT_TAGS.has(name)) {
+      const close = new RegExp(`</${name}(?=[\\s/>])`, 'gi');
+      close.lastIndex = end;
+      const blockEnd = close.exec(html)?.index ?? html.length; // an unclosed block runs to the end
+      spans.push([end, blockEnd, name]);
+      i = html.indexOf('<', blockEnd);
+      continue;
+    }
+    i = html.indexOf('<', end);
   }
   return spans;
 }
@@ -294,10 +328,13 @@ export function scanBody(key, text, { html = false } = {}) {
   const findings = [];
   const owned = [];
   const raw = html ? rawTextSpans(text) : [];
+  let rawAt = 0; // matches and spans both come in byte order, so one pointer walks the spans
   for (const m of text.matchAll(WAYBACK_REF_RE)) {
     const [full, host, ts, flag, rawOriginal] = m;
     if (!host) continue; // root-relative: the correct remastered form
-    const decodeEntities = html && !raw.some(([start, end]) => start <= m.index && m.index < end);
+    while (rawAt < raw.length && raw[rawAt][1] <= m.index) rawAt++;
+    const inRaw = rawAt < raw.length && raw[rawAt][0] <= m.index;
+    const decodeEntities = html && !inRaw;
     const ref = refCaptureKey(ts, rawOriginal, { decodeEntities });
     const url = full.slice(0, full.length - rawOriginal.length + ref.trimmed.length);
     const offset = m.index + host.indexOf('archive.org');

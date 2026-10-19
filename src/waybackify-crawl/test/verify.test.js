@@ -320,6 +320,39 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     }
   });
 
+  it('a "<script>" token inside a comment or an attribute value does not open a raw-text span', () => {
+    const img = `<img data-note="a > b" src="https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2">`;
+    const decoded = `${TS}/http://example.com/endpoint?a=1&b=2`;
+    for (const decoy of ['', '<!-- <script> -->', '<div title="<script>"></div>', '<!DOCTYPE html><?xml version="1.0"?>', '<p>a < b</p>']) {
+      assert.deepEqual(scanBody('k', decoy + img, { html: true }).map(f => f.upstreamKey), [decoded], decoy || 'control');
+    }
+    // A real script block after the decoys still keeps its text raw.
+    const inline = `//web.archive.org/web/${TS}/http://example.com/inline?a=1&amp;b=2`;
+    const html = `<!-- <script> --><div title="<script>"></div><script>var u = '${inline}';</script>${img}`;
+    assert.deepEqual(
+      scanBody('k', html, { html: true }).map(f => f.upstreamKey),
+      [`${TS}/http://example.com/inline?a=1&amp;b=2`, decoded]
+    );
+  });
+
+  it('a comment or attribute "<script>" decoy before an in-store ref still fails the layer as inStore', async () => {
+    const storedKey = `${TS}/http://example.com/endpoint?a=1&b=2`;
+    const img = `<img data-note="a > b" src="https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2">`;
+    for (const decoy of ['<!-- <script> -->', '<div title="<script>"></div>']) {
+      const hermetic = await mkroot('remaster-verify-decoy-src-');
+      await writeEntry(hermetic, { key: DOC_KEY, contentType: 'text/html', body: '<html></html>' });
+      await writeEntry(hermetic, { key: storedKey, contentType: 'application/json', body: '{}' });
+      const out = await mkroot('remaster-verify-decoy-out-');
+      await remaster(hermetic, out);
+      await overwriteBody(out, DOC_KEY, bytesOf(`<html><body>${decoy}${img}</body></html>`));
+      const report = await scanEscapes(await enumerateRemastered(out));
+      assert.deepEqual(report.residual.classes.inStore.entries.map(e => e.key), [storedKey], decoy);
+      assert.equal(report.pass, false, decoy);
+      await fsp.rm(hermetic, { recursive: true, force: true });
+      await fsp.rm(out, { recursive: true, force: true });
+    }
+  });
+
   it('a script src after a quoted ">" resolves to the stored capture', async () => {
     const storedKey = `${TS}/http://example.com/loader?a=1&b=2`;
     const hermetic = await mkroot('remaster-verify-quoted-src-');

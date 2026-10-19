@@ -45,6 +45,7 @@ import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
 import { dynamicEntryError, SIDECAR_VERSION } from '@autocache/waybackify/cache.js';
 import { classifyContentType, refCaptureKey, waybackRefRe } from '@autocache/waybackify/rewrite.js';
+import { Tokenizer, TokenizerMode } from 'parse5';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
 
 // The library never constructs pino (design §1); default no-op.
@@ -222,107 +223,125 @@ function tokenAround(text, start, end) {
   return text.slice(from, to);
 }
 
-// How the HTML tokenizer reads an element's content. No tag opens inside any
-// of these, so a `<script>` token there is text, never a span opener.
-//   raw     RAWTEXT, script data, or PLAINTEXT: no character references
-//           decode, so a ref inside keeps its entity text in the key.
-//   rcdata  RCDATA: character references decode, as in markup.
-//   markup  <noscript>: a scripting browser reads it as raw text and loads
-//           nothing from it. A client without scripting parses it as markup,
-//           and the mirror serves that reader too, so refs inside decode.
-const CONTENT_STATES = {
-  script: 'raw',
-  style: 'raw',
-  xmp: 'raw',
-  iframe: 'raw',
-  noembed: 'raw',
-  noframes: 'raw',
-  plaintext: 'raw',
-  title: 'rcdata',
-  textarea: 'rcdata',
-  noscript: 'markup'
+/* ------------------------------------------------------------------------ *
+ * HTML positions — read from the parse5 tokenizer, never from a hand scan
+ * ------------------------------------------------------------------------ */
+
+// How the tokenizer reads an element's content once its start tag is seen.
+// The tree builder normally makes this switch, so the handler below makes it.
+//   SCRIPT_DATA, RAWTEXT, PLAINTEXT  no tags and no character references:
+//                                    a ref inside keeps its entity text
+//   RCDATA                           no tags, and character references decode
+const CONTENT_MODES = {
+  script: TokenizerMode.SCRIPT_DATA,
+  style: TokenizerMode.RAWTEXT,
+  xmp: TokenizerMode.RAWTEXT,
+  iframe: TokenizerMode.RAWTEXT,
+  noembed: TokenizerMode.RAWTEXT,
+  noframes: TokenizerMode.RAWTEXT,
+  noscript: TokenizerMode.RAWTEXT,
+  plaintext: TokenizerMode.PLAINTEXT,
+  title: TokenizerMode.RCDATA,
+  textarea: TokenizerMode.RCDATA
 };
-// A tag token at one '<': an open or close tag with a name. Sticky, so it
-// tests a single position.
-const TAG_TOKEN_RE = /<(\/?)([a-zA-Z][^\s/>]*)/y;
+
+// The navigational positions: the only markup positions where a URL names a
+// page the reader follows. Every other attribute value loads a resource,
+// whatever the URL's extension: src, srcset, poster, SVG href and xlink:href,
+// object data, embed and track src, an input image, and so on.
+const NAV_ATTRS = {
+  a: new Set(['href']),
+  area: new Set(['href']),
+  form: new Set(['action']),
+  button: new Set(['formaction']),
+  input: new Set(['formaction'])
+};
+// A <link> is navigational when its rel is one of these, unless the same tag
+// names a stylesheet (by rel or by type).
+const LINK_NAV_RELS = new Set(['next', 'prev', 'canonical', 'alternate']);
 
 /**
- * The index just past the '>' that ends the tag at `from`, or -1 when a
- * quoted attribute value never closes. Walks the attributes the way an HTML
- * tokenizer does, so a '>' inside a quoted value does not end the tag. On -1
- * the rest of the body is that attribute's value, so no raw text can follow:
- * the caller stops, and every later ref decodes as attribute text.
+ * Does a URL in attribute `name` of `tagName` load a resource? Only a
+ * navigational position names a page the reader follows. Every other
+ * attribute loads whatever it names, so the URL's extension does not decide.
+ *
+ * @param {string} tagName - lower-case, from the tokenizer
+ * @param {string} name - the exact attribute name, lower-case, from the tokenizer
+ * @param {Array<{name: string, value: string}>} attrs - the tag's attributes
  */
-function openTagEnd(html, from) {
-  let i = from;
-  while (i < html.length) {
-    const ch = html[i];
-    if (ch === '>') return i + 1;
-    if (ch === '=') {
-      i++;
-      while (i < html.length && /\s/.test(html[i])) i++;
-      const quote = html[i];
-      if (quote === '"' || quote === "'") {
-        const close = html.indexOf(quote, i + 1);
-        if (close === -1) return -1;
-        i = close + 1;
-        continue;
-      }
-      continue; // an unquoted value ends at whitespace or '>', which this loop handles
-    }
-    i++;
-  }
-  return -1;
+function isResourceAttr(tagName, name, attrs) {
+  if (NAV_ATTRS[tagName]?.has(name)) return false;
+  if (tagName !== 'link' || name !== 'href') return true;
+  const valueOf = n => attrs.find(a => a.name === n)?.value ?? '';
+  const rels = valueOf('rel').toLowerCase().split(/\s+/).filter(Boolean);
+  if (rels.includes('stylesheet') || /^text\/css\b/i.test(valueOf('type').trim())) return true;
+  return !rels.some(rel => LINK_NAV_RELS.has(rel));
 }
 
 /**
- * The `[start, end, name]` spans of the raw-text blocks in an HTML body, in
- * byte order. Walks the markup the way a tokenizer does: a comment is skipped
- * whole, a tag's quoted attribute values are skipped, and the content of any
- * element in CONTENT_STATES runs to its close tag with no tag inside. Only a
- * `raw` element records a span. `<plaintext>` runs to the end of the body.
+ * @typedef {Object} HtmlRegion
+ * @property {number} start
+ * @property {number} end
+ * @property {boolean} raw      - character references do not decode here
+ * @property {boolean} resource - a URL here loads a resource
+ * @property {string} kind      - the element or `tag attr`, for a reader
  */
-function rawTextSpans(html) {
-  const spans = [];
-  let i = html.indexOf('<');
-  while (i !== -1) {
-    if (html.startsWith('<!--', i)) {
-      const close = html.indexOf('-->', i + 4);
-      if (close === -1) break; // an unterminated comment runs to the end
-      i = html.indexOf('<', close + 3);
-      continue;
+
+/**
+ * The regions of an HTML body where a ref reads differently from markup
+ * text: raw text (script data, RAWTEXT, PLAINTEXT, comments) and attribute
+ * values. In byte order, without overlap. Text outside every region is
+ * markup text: character references decode, and no position loads a URL.
+ * The tokenizer supplies tag names, exact attribute names and spans
+ * (quoted, single-quoted, or unquoted), comments, and the content states.
+ * <noscript> content is tokenized again as markup, since a client without
+ * scripting parses it and the mirror serves that reader too.
+ *
+ * @param {string} html
+ * @param {number} [base] - the offset of `html` within the outer body
+ * @returns {HtmlRegion[]}
+ */
+function htmlRegions(html, base = 0) {
+  const regions = [];
+  let open = null; // the raw block whose end tag the tokenizer has not seen yet
+  const closeOpen = end => {
+    if (open === null) return;
+    if (open.tagName === 'noscript') regions.push(...htmlRegions(html.slice(open.start, end), base + open.start));
+    else regions.push({ start: base + open.start, end: base + end, raw: true, resource: open.tagName === 'style', kind: open.tagName });
+    open = null;
+  };
+  const tokenizer = new Tokenizer(
+    { sourceCodeLocationInfo: true },
+    {
+      onStartTag({ tagName, attrs, location }) {
+        for (const attr of attrs) {
+          const loc = location.attrs?.[attr.name];
+          if (!loc) continue;
+          regions.push({ start: base + loc.startOffset, end: base + loc.endOffset, raw: false, resource: isResourceAttr(tagName, attr.name, attrs), kind: `${tagName} ${attr.name}` });
+        }
+        const mode = CONTENT_MODES[tagName];
+        if (mode === undefined) return;
+        tokenizer.state = mode;
+        if (mode === TokenizerMode.RCDATA) return; // decodes like markup, and the tokenizer finds its end tag
+        open = { tagName, start: location.endOffset };
+      },
+      onEndTag({ tagName, location }) {
+        if (open !== null && tagName === open.tagName) closeOpen(location.startOffset);
+      },
+      onComment({ location }) {
+        regions.push({ start: base + location.startOffset, end: base + location.endOffset, raw: true, resource: false, kind: '#comment' });
+      },
+      onEof({ location }) {
+        closeOpen(location?.startOffset ?? html.length); // an unclosed block, or <plaintext>, runs to the end
+      },
+      onDoctype() {},
+      onCharacter() {},
+      onNullCharacter() {},
+      onWhitespaceCharacter() {}
     }
-    TAG_TOKEN_RE.lastIndex = i;
-    const m = TAG_TOKEN_RE.exec(html);
-    if (m === null) {
-      const next = html[i + 1];
-      if (next === '!' || next === '?' || next === '/') {
-        // `<!DOCTYPE`, `<?xml`, `</ >`: a doctype or bogus comment ends at the next '>'
-        const close = html.indexOf('>', i + 1);
-        i = close === -1 ? -1 : html.indexOf('<', close + 1);
-      } else {
-        i = html.indexOf('<', i + 1); // a stray '<' is text
-      }
-      continue;
-    }
-    const end = openTagEnd(html, i + m[0].length);
-    if (end === -1) break;
-    const name = m[2].toLowerCase();
-    const state = m[1] === '' ? CONTENT_STATES[name] : undefined;
-    if (state !== undefined) {
-      let blockEnd = html.length; // <plaintext>, or an unclosed block, runs to the end
-      if (name !== 'plaintext') {
-        const close = new RegExp(`</${name}(?=[\\s/>])`, 'gi');
-        close.lastIndex = end;
-        blockEnd = close.exec(html)?.index ?? html.length;
-      }
-      if (state === 'raw') spans.push([end, blockEnd, name]);
-      i = html.indexOf('<', blockEnd);
-      continue;
-    }
-    i = html.indexOf('<', end);
-  }
-  return spans;
+  );
+  tokenizer.write(html, true);
+  return regions.sort((a, b) => a.start - b.start);
 }
 
 /**
@@ -331,43 +350,6 @@ function rawTextSpans(html) {
  */
 function stripFragment(key) {
   return key.replace(/#[\s\S]*$/, '');
-}
-
-// Markup positions that load a resource whatever the URL's extension: the
-// subresource attributes, a stylesheet or icon <link>, and CSS url().
-const RESOURCE_ATTRS = new Set(['src', 'srcset', 'poster', 'background', 'data']);
-const LINK_RESOURCE_REL_RE = /\brel\s*=\s*["']?[^"'>]*\b(?:stylesheet|icon|preload|modulepreload)\b/i;
-// The attribute whose value runs up to the end of the slice: `name=` then an
-// optional quote, then value text with no quote in it.
-const ATTR_BEFORE_RE = /\s([a-zA-Z][\w:.-]*)\s*=\s*["']?[^"']*$/;
-const CSS_URL_BEFORE_RE = /url\(\s*["']?$/i;
-
-/**
- * Does the ref at `index` sit where a browser loads a resource? CSS text (a
- * stylesheet body, a <style> block, a style attribute's url()) and the HTML
- * subresource attributes fetch whatever they name, so the URL's extension
- * does not decide. Only an anchor-like link can be a page navigation.
- *
- * @param {string} text
- * @param {number} index - where the ref starts
- * @param {{ css: boolean, html: boolean, rawSpan: string|null }} context - the
- *   body kind, and the name of the raw-text block the ref sits in, if any
- */
-function inResourceContext(text, index, { css, html, rawSpan }) {
-  if (css || rawSpan === 'style') return true; // CSS text: url() and @import load a resource
-  if (CSS_URL_BEFORE_RE.test(text.slice(Math.max(0, index - 8), index))) return true; // a style attribute's url()
-  if (!html || rawSpan !== null) return false; // script text carries no markup context
-  const tagStart = text.lastIndexOf('<', index);
-  if (tagStart === -1) return false;
-  const attr = ATTR_BEFORE_RE.exec(text.slice(tagStart, index))?.[1].toLowerCase();
-  if (attr === undefined) return false;
-  if (RESOURCE_ATTRS.has(attr)) return true;
-  if (attr !== 'href') return false;
-  TAG_TOKEN_RE.lastIndex = tagStart;
-  const tag = TAG_TOKEN_RE.exec(text);
-  if (tag === null || tag[1] !== '' || tag[2].toLowerCase() !== 'link') return false;
-  const tagEnd = openTagEnd(text, tagStart + tag[0].length);
-  return LINK_RESOURCE_REL_RE.test(text.slice(tagStart, tagEnd === -1 ? text.length : tagEnd));
 }
 
 /**
@@ -380,22 +362,23 @@ function inResourceContext(text, index, { css, html, rawSpan }) {
  *
  * @param {string} key
  * @param {string} text
- * @param {{ html?: boolean, css?: boolean }} [options] - the body kind. In HTML a
- *   browser decodes entities in the markup but not in <script> or <style>
- *   text, so `upstreamKey` decodes them only outside those blocks. In CSS,
- *   and in the HTML subresource positions, every ref is a resource load.
+ * @param {{ html?: boolean, css?: boolean }} [options] - the body kind. In HTML
+ *   the tokenizer's regions decide: a ref in raw text keeps its entity text
+ *   in `upstreamKey`, a ref in an attribute value decodes, and only a
+ *   navigational attribute is a page position. In CSS every ref is a
+ *   resource load.
  */
 export function scanBody(key, text, { html = false, css = false } = {}) {
   const findings = [];
   const owned = [];
-  const raw = html ? rawTextSpans(text) : [];
-  let rawAt = 0; // matches and spans both come in byte order, so one pointer walks the spans
+  const regions = html ? htmlRegions(text) : [];
+  let at = 0; // matches and regions both come in byte order, so one pointer walks the regions
   for (const m of text.matchAll(waybackRefRe())) {
     const [full, host, ts, flag, rawOriginal] = m;
     if (!host) continue; // root-relative: the correct remastered form
-    while (rawAt < raw.length && raw[rawAt][1] <= m.index) rawAt++;
-    const inRaw = rawAt < raw.length && raw[rawAt][0] <= m.index;
-    const decodeEntities = html && !inRaw;
+    while (at < regions.length && regions[at].end <= m.index) at++;
+    const region = at < regions.length && regions[at].start <= m.index ? regions[at] : null;
+    const decodeEntities = html && !(region?.raw ?? false);
     const ref = refCaptureKey(ts, rawOriginal, { decodeEntities });
     const url = full.slice(0, full.length - rawOriginal.length + ref.trimmed.length);
     const offset = m.index + host.indexOf('archive.org');
@@ -412,7 +395,7 @@ export function scanBody(key, text, { html = false, css = false } = {}) {
       // has none. The reported url keeps it.
       upstreamKey: ref.key === null ? null : stripFragment(ref.key),
       flag: flag ?? null,
-      resource: inResourceContext(text, m.index, { css, html, rawSpan: inRaw ? raw[rawAt][2] : null }),
+      resource: css || (region?.resource ?? false),
       offset,
       excerpt: excerptAround(text, offset, offset + 'archive.org'.length)
     });

@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@autocache/waybackify": "workspace:*",
-    "@autocache/waybackify-serve": "workspace:*"
+    "@autocache/waybackify-serve": "workspace:*",
+    "parse5": "^8.0.1"
   }
 }

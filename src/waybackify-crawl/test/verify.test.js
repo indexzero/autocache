@@ -294,6 +294,15 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     assert.equal(scanBody('k', html)[0].upstreamKey, `${TS}/http://example.com/?a=1&amp;b=2`);
   });
 
+  it('scanBody keeps byte offsets across CRLF line ends and unquoted values', () => {
+    const decoded = `${TS}/http://example.com/?a=1&b=2`;
+    const html = `<html>\r\n<body>\r\n<img\r\n  alt=logo\r\n  src=https://web.archive.org/web/${TS}/http://example.com/?a=1&amp;b=2\r\n>\r\n</body></html>`;
+    const [finding] = scanBody('k', html, { html: true });
+    assert.equal(finding.upstreamKey, decoded);
+    assert.equal(finding.resource, true);
+    assert.equal(html.slice(finding.offset, finding.offset + 'archive.org'.length), 'archive.org');
+  });
+
   it('scanBody keeps entity text raw inside HTML script and style blocks', () => {
     const ref = `//web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2`;
     const html = [
@@ -468,7 +477,7 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     assert.equal(classOf(`https://web.archive.org/web/${OTHER}/http://other.test/loader`), 'novelPage');
   });
 
-  it('a ref in a resource-loading context is a resource whatever its extension', () => {
+  it('every non-navigational position is a resource whatever its extension', () => {
     const classOf = (body, options) => {
       const { residual } = classifyUpstream(scanBody('k', body, options), new Set(), new Set());
       return Object.entries(residual.classes).find(([, c]) => c.count > 0)[0];
@@ -477,17 +486,48 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     // CSS text loads whatever url() and @import name.
     assert.equal(classOf(`body { background: url(${stem}logo) }`, { css: true }), 'novelResource');
     assert.equal(classOf(`@import "${stem}theme";`, { css: true }), 'novelResource');
-    // HTML subresource positions.
-    assert.equal(classOf(`<img data-note="a > b" src="${stem}logo">`, { html: true }), 'novelResource');
-    assert.equal(classOf(`<img srcset="${stem}a 1x, ${stem}b 2x">`, { html: true }), 'novelResource');
-    assert.equal(classOf(`<video poster="${stem}cover"></video>`, { html: true }), 'novelResource');
-    assert.equal(classOf(`<link href="${stem}theme" rel="stylesheet">`, { html: true }), 'novelResource');
-    assert.equal(classOf(`<link rel="shortcut icon" href="${stem}favicon">`, { html: true }), 'novelResource');
     assert.equal(classOf(`<div style="background:url('${stem}bg')"></div>`, { html: true }), 'novelResource');
     assert.equal(classOf(`<style>p{background:url(${stem}bg)}</style>`, { html: true }), 'novelResource');
-    // A navigation link, a non-resource <link>, and JS text stay page-like.
-    assert.equal(classOf(`<a href="${stem}about">about</a>`, { html: true }), 'novelPage');
-    assert.equal(classOf(`<link rel="canonical" href="${stem}about">`, { html: true }), 'novelPage');
+    // HTML and SVG load positions.
+    const resources = [
+      `<img data-note="a > b" src="${stem}logo">`,
+      `<img srcset="${stem}a 1x, ${stem}b 2x">`,
+      `<video poster="${stem}cover"></video>`,
+      `<link href="${stem}theme" rel="stylesheet">`,
+      `<link rel="shortcut icon" href="${stem}favicon">`,
+      `<link rel="alternate stylesheet" href="${stem}alt">`,
+      `<link rel="alternate" type="text/css" href="${stem}alt2">`,
+      `<svg><image href="${stem}logo"/></svg>`,
+      `<svg><use xlink:href="${stem}sprite#i"/></svg>`,
+      `<svg><image xlink:href="${stem}logo2"/></svg>`,
+      `<object data="${stem}movie"></object>`,
+      `<embed src="${stem}plugin">`,
+      `<video><track src="${stem}captions"></video>`,
+      `<input type="image" src="${stem}button">`,
+      `<img alt="a<b" src="${stem}logo3">`,
+      // Unquoted and single-quoted values are attribute values all the same.
+      `<img alt=logo src=${stem}logo4>`,
+      `<link rel=stylesheet href=${stem}theme2>`,
+      `<img alt='logo' src='${stem}logo5'>`,
+      `<IMG SRC=${stem}logo6 ALT=x>`
+    ];
+    for (const body of resources) assert.equal(classOf(body, { html: true }), 'novelResource', body);
+    // Only a navigational position, text content, or JS text reads as a page.
+    const pages = [
+      `<a href="${stem}about">about</a>`,
+      `<area href="${stem}map" shape="rect">`,
+      `<form action="${stem}submit"></form>`,
+      `<button formaction="${stem}go">go</button>`,
+      `<link rel="canonical" href="${stem}about">`,
+      `<link rel="next" href="${stem}page2">`,
+      `<link rel="alternate" hreflang="fr" href="${stem}fr">`,
+      // The exact `rel` attribute decides, not a `data-rel` or another value that contains the word.
+      `<link data-rel="stylesheet" rel="canonical" href="${stem}about2">`,
+      `<link title="stylesheet" rel=canonical href=${stem}about3>`,
+      `<a data-src="x" href="${stem}about4">x</a>`,
+      `<p>${stem}about</p>`
+    ];
+    for (const body of pages) assert.equal(classOf(body, { html: true }), 'novelPage', body);
     assert.equal(classOf(`var p = "${stem}about";`), 'novelPage');
   });
 
@@ -502,6 +542,44 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     await remaster(hermetic, out);
     const report = await scanEscapes(await enumerateRemastered(out));
     assert.deepEqual(report.residual.classes.novelResource.entries.map(e => e.key), [`${OTHER}/http://assets.example.com/logo`]);
+    assert.equal(report.residual.classes.novelPage.count, 0);
+    assert.equal(report.pass, false);
+    await fsp.rm(hermetic, { recursive: true, force: true });
+    await fsp.rm(out, { recursive: true, force: true });
+  });
+
+  it('an unquoted src or stylesheet href fails the layer as novelResource, and a data-rel decoy stays a page', async () => {
+    const stem = `https://web.archive.org/web/${OTHER}/http://assets.example.com/`;
+    const cases = [
+      [`<img alt=logo src=${stem}logo>`, 'novelResource', `${OTHER}/http://assets.example.com/logo`],
+      [`<link rel=stylesheet href=${stem}theme>`, 'novelResource', `${OTHER}/http://assets.example.com/theme`],
+      [`<link data-rel="stylesheet" rel="canonical" href="${stem}about">`, 'novelPage', `${OTHER}/http://assets.example.com/about`]
+    ];
+    for (const [body, cls, key] of cases) {
+      const hermetic = await mkroot('remaster-verify-attr-form-src-');
+      await writeEntry(hermetic, { key: DOC_KEY, contentType: 'text/html', body: `<html><body>${body}</body></html>` });
+      const out = await mkroot('remaster-verify-attr-form-out-');
+      await remaster(hermetic, out);
+      const report = await scanEscapes(await enumerateRemastered(out));
+      assert.deepEqual(report.residual.classes[cls].entries.map(e => e.key), [key], body);
+      assert.equal(report.pass, cls === 'novelPage', body);
+      await fsp.rm(hermetic, { recursive: true, force: true });
+      await fsp.rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it('an extensionless SVG image href or use xlink:href fails the layer as novelResource', async () => {
+    const stem = `https://web.archive.org/web/${OTHER}/http://assets.example.com/`;
+    const hermetic = await mkroot('remaster-verify-svg-resource-src-');
+    await writeEntry(hermetic, {
+      key: DOC_KEY,
+      contentType: 'text/html',
+      body: `<html><body><svg><image href="${stem}logo"/><use xlink:href="${stem}sprite#i"/></svg></body></html>`
+    });
+    const out = await mkroot('remaster-verify-svg-resource-out-');
+    await remaster(hermetic, out);
+    const report = await scanEscapes(await enumerateRemastered(out));
+    assert.deepEqual(report.residual.classes.novelResource.entries.map(e => e.key), [`${OTHER}/http://assets.example.com/logo`, `${OTHER}/http://assets.example.com/sprite`]);
     assert.equal(report.residual.classes.novelPage.count, 0);
     assert.equal(report.pass, false);
     await fsp.rm(hermetic, { recursive: true, force: true });

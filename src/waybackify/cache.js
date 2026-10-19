@@ -387,7 +387,7 @@ async function syncDir(dir) {
  *   CDX statuscode, INJECTED (network-derived); a 4xx/5xx here trips the
  *   archived-error interstitial signature. Offline callers omit it.
  * @param {string} [entry.fetchedAt] - ISO-8601 (defaults to now)
- * @param {Object} [hooks] - test seams; `afterBodyCommit(paths)` runs between
+ * @param {Object} [hooks] - test seams. `afterBodyCommit(paths)` runs between
  *   the body rename and the sidecar rename (the crash-atomicity window).
  *   `paths` is entryPaths() plus `body` (the digest-named file, or null).
  * @returns {Promise<object>} the sidecar as written (parsed form)

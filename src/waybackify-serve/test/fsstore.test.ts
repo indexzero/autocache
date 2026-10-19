@@ -99,7 +99,7 @@ async function bodyText(capture: Capture): Promise<string> {
 
 /**
  * The population seam for the shared store-conformance suite: realize each
- * seed as the `waybackify cache` writer would on disk — a canonical v3 sidecar
+ * seed as the `waybackify cache` writer does on disk — a canonical v3 sidecar
  * (bodied entries carry a real SRI contentHash + byte contentLength; an orphan
  * is cap/ bytes with NO sidecar). This is the FsStore's one seam impl; the
  * cross-store parity assertions live in store-conformance.ts.

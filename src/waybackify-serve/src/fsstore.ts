@@ -62,7 +62,7 @@ interface Sidecar {
   key: string;
   contentType: string;
   status: CaptureStatus;
-  /** Present iff status === 'body'. SRI `sha256-<base64>`; locates the body. */
+  /** Present iff status === 'body'. SRI `sha256-<base64>`. It locates the body. */
   contentHash?: string;
   /** Present iff status === 'body'. */
   contentLength?: number;

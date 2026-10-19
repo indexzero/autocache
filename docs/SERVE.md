@@ -165,8 +165,8 @@ Fastly Object Storage, AWS S3). The full projection + the operational runbook
 ([SRI spec §3.1](https://www.w3.org/TR/sri-1/#integrity-metadata-description)),
 recorded during the write. Consumers SHOULD verify it:
 
-- **on sync** (cheap, sequential): hash `cap/<dd>/<digest>` while uploading;
-  abort the object on mismatch.
+- **on sync** (cheap, sequential): hash `cap/<dd>/<digest>` while uploading.
+  Abort the object on mismatch.
 - **on read** (optional — the server's latency call): a Node FsStore can hash the
   stream as it serves and log mismatches after the fact.
 

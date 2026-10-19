@@ -139,7 +139,7 @@ authoritative and mandatory.
 | `key` | string | always | **Verbatim** captureKey, UTF-8. The sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
 | `contentType` | string | always (`''` when the archive sent none) | Rides each bucket object's native `Content-Type` header. Write-time enforced (key.js `assertMetadataSafe`): no CR/LF (the value rides an HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes (the sync targets' object-metadata cap). |
 | `status` | `body \| redirect \| error \| empty \| interstitial` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus — and `interstitial`) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
-| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (a non-negotiable from the design debate). The same digest is the body's **address**: `bodyPath(contentHash)` is `cap/<dd>/<digest>`. |
+| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written. Only record-at-write enables verify-on-read (a non-negotiable from the design debate). The same digest is the body's **address**: `bodyPath(contentHash)` is `cap/<dd>/<digest>`. |
 | `contentLength` | int | iff `status == "body"` | Byte count, counted during the same streaming write. |
 | `signature` | string | iff `status == "interstitial"` | Which interstitial signature fired: `wrapper-stub`, `redirect-interstitial`, `extension-mismatch`, or `archived-error` (#363). The audit trail for why the capture was refused, and the key the #364 remediation sweep dispatches on. |
 | `target` | `{ url, timestamp }` | iff `signature == "redirect-interstitial"` (when decodable) | The decoded destination of a redirect interstitial — the only content that page carried. Absent when the stub had no parseable `/web/…` reference. |
@@ -459,8 +459,8 @@ neither of which is reachable by any reader (an orphan has no completion token;
 a `tmp/` file was never renamed into place). It **never** touches a valid entry
 and **refuses** to "fix" corruption: a `hashMismatch` / `sizeMismatch` /
 `keyMismatch` / `missingBody` / `malformed` finding is evidence to investigate,
-not garbage to sweep. It also never deletes a `foreignRoot` entry — that could be precious
-operational data; relocating it is the operator's call.
+not garbage to sweep. It also never deletes a `foreignRoot` entry. The entry is
+operational data, possibly precious, and the operator relocates it.
 
 ## Recorded dissents (design notes, not implemented)
 

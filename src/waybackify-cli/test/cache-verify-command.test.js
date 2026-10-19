@@ -34,9 +34,14 @@ function handlerFor(report) {
   const out = [];
   const emptied = [];
   const restores = [];
+  const order = [];
   const handler = cacheVerifyHandler({
-    fsck: async (root, options) => { calls.push({ root, options }); return report; },
-    emptyTrash: async root => { emptied.push(root); return { path: `${root}/trash`, files: 2, bytes: 10 }; },
+    fsck: async (root, options) => { calls.push({ root, options }); order.push('fsck'); return report; },
+    emptyTrash: async (root, options) => {
+      emptied.push({ root, options });
+      order.push('emptyTrash');
+      return { path: `${root}/trash`, files: 2, bytes: 10, kept: [{ path: `${root}/trash/run-0/cap/ab/h9`, reason: 'a current sidecar names this body; restore the run instead' }] };
+    },
     restoreTrash: async (root, run) => {
       restores.push({ root, run });
       return {
@@ -49,7 +54,7 @@ function handlerFor(report) {
     totalFindings,
     unresolvedFindings
   });
-  return { handler, calls, out, emptied, restores };
+  return { handler, calls, out, emptied, restores, order };
 }
 
 /** A logger that records every line, info and warn alike. */
@@ -115,15 +120,23 @@ test('--fix output names the quarantine directory the orphans moved to', async (
   assert.ok(out.some(l => l.includes('1 orphan cap/ file(s) moved to /c/trash/run-1')), 'the summary names the quarantine');
 });
 
-test('--empty-trash runs the explicit deletion before the verify, and reports it through the logger', async () => {
-  const { handler, calls, out, emptied } = handlerFor(reportOf());
+test('--empty-trash runs AFTER the verify report, keeps this run\'s moves, and reports every kept body', async () => {
+  const report = reportOf(
+    { orphanCap: [{ aa: 'ab', hash: 'h', path: '/c/cap/ab/h' }] },
+    { orphanCap: ['/c/cap/ab/h'], staleTmp: [], trash: '/c/trash/run-1', moves: [{ from: '/c/cap/ab/h', to: '/c/trash/run-1/cap/ab/h' }], skipped: [] }
+  );
+  const { handler, calls, out, emptied, order } = handlerFor(report);
   const logs = [];
-  const push = (o, m) => logs.push(typeof o === 'string' ? o : m);
-  const logger = { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
-  assert.equal(await run(['cache', 'verify', '-r', '/c', '--empty-trash'], { handlers: { cacheVerify: handler }, out: l => out.push(l), logger, error: () => {} }), EXIT.OK);
-  assert.deepEqual(emptied, ['/c']);
-  assert.equal(calls.length, 1, 'the verify still runs');
-  assert.ok(logs.some(l => l.includes('emptied /c/trash (2 file(s), 10 bytes)')));
+  assert.equal(
+    await run(['cache', 'verify', '-r', '/c', '--fix', '--empty-trash'], { handlers: { cacheVerify: handler }, out: l => out.push(l), logger: recordingLogger(logs), error: () => {} }),
+    EXIT.OK
+  );
+  assert.deepEqual(order, ['fsck', 'emptyTrash'], 'the verify runs first');
+  assert.deepEqual(emptied, [{ root: '/c', options: { keepRun: '/c/trash/run-1' } }], 'this run\'s quarantine directory is kept');
+  assert.equal(calls.length, 1);
+  assert.ok(out.some(l => l.includes('moved to /c/trash/run-1')), 'the report is printed before the deletion');
+  assert.ok(logs.some(l => l === 'cache verify: kept /c/trash/run-0/cap/ab/h9 (a current sidecar names this body; restore the run instead)'));
+  assert.ok(logs.some(l => l.includes('emptied /c/trash (2 file(s), 10 bytes deleted, 1 kept)')));
 });
 
 test('without --empty-trash the quarantine is never touched', async () => {

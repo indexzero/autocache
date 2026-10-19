@@ -394,9 +394,10 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     assert.equal(emptied.path, path.join(root, TRASH_DIR));
     assert.equal(emptied.files, 1);
     assert.equal(emptied.bytes, 'not garbage after all'.length);
+    assert.deepEqual(emptied.kept, []);
     assert.ok(!fs.existsSync(path.join(root, TRASH_DIR)));
     assert.equal((await fsck(root)).counts.trashFiles, 0);
-    assert.deepEqual(await emptyTrash(root), { path: path.join(root, TRASH_DIR), files: 0, bytes: 0 }, 'emptying an empty quarantine is a no-op');
+    assert.deepEqual(await emptyTrash(root), { path: path.join(root, TRASH_DIR), files: 0, bytes: 0, kept: [] }, 'emptying an empty quarantine is a no-op');
   });
 
   it('restoreTrash never replaces a live body: a repaired body stays, the stale evidence stays in quarantine, and it is reported', async () => {
@@ -416,6 +417,47 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     assert.equal(fs.readFileSync(body, 'utf8'), 'correct archived body', 'the repaired body is untouched');
     assert.equal(fs.readFileSync(saved, 'utf8'), 'corrupted old evidence', 'the evidence stays in quarantine');
     assert.equal(totalFindings(await fsck(root)), 0, 'the store is clean');
+  });
+
+  it('emptyTrash keeps a quarantined body that a current sidecar names, reports it, and missingBody points at it', async () => {
+    // The sidecar is lost, the body is quarantined, then the sidecar comes back
+    // (a repair) before any restore: the only copy of its bytes is in trash/.
+    const { body, meta } = await commitBody(root, '2020/http://x.example/body', 'the only copy');
+    const sidecarText = await fsp.readFile(meta, 'utf8');
+    await fsp.unlink(meta);
+    const moved = await fsck(root, { fix: true });
+    const [{ to }] = moved.reaped.moves;
+    await fsp.writeFile(meta, sidecarText);
+
+    const report = await fsck(root);
+    only(report, 'missingBody');
+    assert.equal(report.findings.missingBody[0].quarantined, to, 'the finding says where the body is');
+
+    const emptied = await emptyTrash(root);
+    assert.equal(emptied.files, 0);
+    assert.deepEqual(emptied.kept, [{ path: to, reason: 'a current sidecar names this body; restore the run instead' }]);
+    assert.ok(fs.existsSync(to), 'the named body survives --empty-trash');
+
+    const restore = await restoreTrash(root, path.basename(moved.reaped.trash));
+    assert.deepEqual(restore.restored, [{ from: to, to: body }]);
+    assert.equal(totalFindings(await fsck(root)), 0);
+  });
+
+  it('emptyTrash keeps the run that keepRun names and deletes the rest', async () => {
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'old');
+    const old = await fsck(root, { fix: true });
+    await fsp.writeFile(orphan, 'new');
+    const current = await fsck(root, { fix: true });
+
+    const emptied = await emptyTrash(root, { keepRun: current.reaped.trash });
+    assert.equal(emptied.files, 1, 'the older run is deleted');
+    assert.deepEqual(emptied.kept, [{ path: current.reaped.moves[0].to, reason: 'moved by this run' }]);
+    assert.ok(!fs.existsSync(old.reaped.trash), 'the emptied run directory is pruned');
+    assert.equal(fs.readFileSync(current.reaped.moves[0].to, 'utf8'), 'new');
+    assert.equal((await fsck(root)).counts.trashFiles, 1);
   });
 
   it('restoreTrash takes a run directory name, never a path, and names a missing run', async () => {

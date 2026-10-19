@@ -408,7 +408,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     flag('--root|-r <root>', 'cache root to verify (contains cap/ meta/ tmp/ and the trash/ quarantine) — required'),
     flag('--fix', 'move orphan cap/ files to trash/<run>/ and delete stale tmp/ scratch (opt-in); never deletes a body, never touches corruption or a short closure; assumes no concurrent writer'),
     flag('--restore <run>', 'move the bodies of one quarantine run (a directory name under trash/) back to cap/; a body whose live path is occupied is skipped and reported, never replaced; runs before the verify'),
-    flag('--empty-trash', 'delete the trash/ quarantine that earlier --fix runs filled (the only action that deletes a body file); runs before the verify'),
+    flag('--empty-trash', 'delete the bodies in the trash/ quarantine (the only action that deletes a body file); runs after the verify report, keeps this run\'s moves and any body a current sidecar names'),
     flag('--json', 'emit the raw report as JSON (for tooling/checkpoints)'),
     flag('--quiet', 'suppress the per-category "ok" lines'),
     validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),

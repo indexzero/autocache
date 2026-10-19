@@ -384,8 +384,18 @@ export async function fsck(root, options = {}) {
     findings.staleTmp.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, 'tmp', ent.name) });
   }
   // The quarantine is inventoried, never verified: a body in trash/ is not
-  // live content, and nothing in it is a finding.
-  const trashFiles = (await walkFiles(path.join(root, TRASH_DIR))).filter(f => path.basename(f.path) !== TRASH_MARKER).length;
+  // live content, and nothing in it is a finding. The index by cap/ key lets a
+  // missingBody finding say where the body went (the restore hint).
+  const trashDir = path.join(root, TRASH_DIR);
+  const trashByCapKey = new Map();
+  for (const f of await walkFiles(trashDir)) {
+    if (path.basename(f.path) === TRASH_MARKER) continue;
+    const [, ...rest] = path.relative(trashDir, f.path).split(path.sep); // <run>/cap/<dd>/<digest>
+    const capKey = rest.join('/');
+    if (!trashByCapKey.has(capKey)) trashByCapKey.set(capKey, []);
+    trashByCapKey.get(capKey).push(f.path);
+  }
+  const trashFiles = [...trashByCapKey.values()].reduce((n, v) => n + v.length, 0);
 
   // ---- sidecar sweep (the authority) ---------------------------------------
   const metaFiles = (await walkShards(root, 'meta')).filter(f => f.name.endsWith('.json'));
@@ -496,7 +506,14 @@ export async function fsck(root, options = {}) {
       }
       const capPath = capKey === null ? null : path.join(root, capKey);
       if (capKey === null || !capKeys.has(capKey)) {
-        findings.missingBody.push({ hash, aa, key: sidecar.key ?? null, contentHash: sidecar.contentHash ?? null });
+        const quarantined = capKey === null ? undefined : trashByCapKey.get(capKey)?.[0];
+        findings.missingBody.push({
+          hash,
+          aa,
+          key: sidecar.key ?? null,
+          contentHash: sidecar.contentHash ?? null,
+          ...(quarantined ? { quarantined } : {})
+        });
       } else {
         const actual = await fileSRI(capPath);
         if (actual !== sidecar.contentHash) {
@@ -748,19 +765,51 @@ async function pruneEmptyDirs(dir) {
 }
 
 /**
- * Empty the quarantine: delete `<root>/trash` and everything under it. This
- * is the ONLY path that deletes a body file, and it runs only when an
- * operator asks for it (`cache verify --empty-trash`). Returns what was
- * removed so the caller can report it. A root with no trash/ removes nothing.
+ * Empty the quarantine: delete the bodies under `<root>/trash`. This is the
+ * ONLY path that deletes a body file, and it runs only when an operator asks
+ * for it (`cache verify --empty-trash`, after the verify report). Two kinds of
+ * body are KEPT and reported instead of deleted: a body that a current sidecar
+ * names (its live file is missing, so this copy is the one to restore), and a
+ * body that the run named by `keepRun` just moved. When every sidecar reads
+ * and nothing is kept, trash/ goes away entirely. A root with no trash/
+ * removes nothing.
  *
  * @param {string} root
- * @returns {Promise<{ path: string, files: number, bytes: number }>}
+ * @param {Object} [options]
+ * @param {string|null} [options.keepRun] - a run directory whose bodies stay (this run's moves)
+ * @returns {Promise<{ path: string, files: number, bytes: number, kept: Array<{ path: string, reason: string }> }>}
  */
-export async function emptyTrash(root) {
+export async function emptyTrash(root, options = {}) {
+  const { keepRun = null } = options;
   const dir = path.join(root, TRASH_DIR);
-  const files = (await walkFiles(dir)).filter(f => path.basename(f.path) !== TRASH_MARKER);
-  await fsp.rm(dir, { recursive: true, force: true });
-  return { path: dir, files: files.length, bytes: files.reduce((n, f) => n + f.size, 0) };
+  const named = await namedCapKeys(root);
+  const kept = [];
+  let files = 0;
+  let bytes = 0;
+  for (const f of await walkFiles(dir)) {
+    if (path.basename(f.path) === TRASH_MARKER) continue;
+    const [run, ...rest] = path.relative(dir, f.path).split(path.sep);
+    if (keepRun !== null && path.join(dir, run) === keepRun) {
+      kept.push({ path: f.path, reason: 'moved by this run' });
+      continue;
+    }
+    if (named.unreadable) {
+      kept.push({ path: f.path, reason: 'a sidecar could not be read, so it may name this body' });
+      continue;
+    }
+    if (named.keys.has(rest.join('/'))) {
+      kept.push({ path: f.path, reason: 'a current sidecar names this body; restore the run instead' });
+      continue;
+    }
+    await fsp.unlink(f.path);
+    files++;
+    bytes += f.size;
+  }
+  for (const ent of await readdirSafe(dir)) {
+    if (ent.isDirectory()) await pruneEmptyDirs(path.join(dir, ent.name));
+  }
+  if (kept.length === 0) await fsp.rm(dir, { recursive: true, force: true });
+  return { path: dir, files, bytes, kept };
 }
 
 /**

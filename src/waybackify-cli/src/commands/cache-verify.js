@@ -124,14 +124,6 @@ export function cacheVerifyHandler(deps = {}) {
       );
     }
 
-    // --empty-trash is the ONE action that deletes body files: it empties the
-    // quarantine --fix filled on earlier runs. Explicit, separate, and first,
-    // so this run's own moves (if --fix is also set) survive it.
-    if (flags.emptyTrash) {
-      const emptied = await emptyTrash(flags.root);
-      logger.info({ evt: 'fsck-empty-trash', ...emptied }, `cache verify: emptied ${emptied.path} (${emptied.files} file(s), ${emptied.bytes} bytes)`);
-    }
-
     // --root|-r is canonical (cli.js). --fix moves orphan cap/ files to the
     // trash/ quarantine and deletes stale tmp/. Corruption and a short closure
     // are never touched. Silent-loop progress (§6): the re-hash sweep speaks
@@ -140,6 +132,20 @@ export function cacheVerifyHandler(deps = {}) {
 
     if (flags.json) out(JSON.stringify(report, null, 2));
     else printReport(report, { quiet: Boolean(flags.quiet), CATEGORIES, totalFindings, unresolvedFindings }, out);
+
+    // --empty-trash is the ONE action that deletes body files: it empties the
+    // quarantine earlier --fix runs filled. It runs AFTER the verify, so the
+    // operator sees the report (and any missingBody with a quarantine path)
+    // first. It keeps this run's own moves and any body a current sidecar
+    // names, and reports each kept file.
+    if (flags.emptyTrash) {
+      const emptied = await emptyTrash(flags.root, { keepRun: report.reaped?.trash ?? null });
+      for (const k of emptied.kept) logger.warn({ evt: 'fsck-empty-trash-kept', ...k }, `cache verify: kept ${k.path} (${k.reason})`);
+      logger.info(
+        { evt: 'fsck-empty-trash', path: emptied.path, files: emptied.files, bytes: emptied.bytes, kept: emptied.kept.length },
+        `cache verify: emptied ${emptied.path} (${emptied.files} file(s), ${emptied.bytes} bytes deleted, ${emptied.kept.length} kept)`
+      );
+    }
 
     const unresolved = unresolvedFindings(report);
     if (unresolved > 0) {

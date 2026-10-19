@@ -452,7 +452,7 @@ discrepancy:
 | `hashMismatch` | corruption | `status: "body"` whose `contentHash` ≠ the SRI of the `cap/` bytes — the one failure `fsync` cannot catch (it persists *what* was written, not *that the right bytes* were). |
 | `sizeMismatch` | corruption | `status: "body"` whose `contentLength` ≠ the size of the `cap/` file its `contentHash` names. A sidecar that names another capture's body passes the hash check by construction (the digest is the file name), and this check catches it. |
 | `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
-| `missingBody` | corruption | `status: "body"` with no `cap/` file at its `contentHash` (or with a `contentHash` that is not a sha256 SRI) — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
+| `missingBody` | corruption | `status: "body"` with no `cap/` file at its `contentHash` (or with a `contentHash` that is not a sha256 SRI) — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). When the body sits in the quarantine, the finding carries `quarantined: <path>`, and `--restore <run>` brings it back. |
 | `incompleteClosure` | incomplete | a `status: "body"` doc that references a page requisite (`im_`/`cs_`/`js_`/`oe_` captureKey in its `requisites[]`) **or** a well-formed browser-discovered dynamic child (a `dynamic[].key`, v3 — findings marked `dynamic: true`) whose own sidecar is absent from this store. The frontier is `requisites ∪ dynamic`. Store-relative (the doc's own edge list; no ledger, no network). **Report only** — a short closure is filled by re-running `cache add`/`cache fill`, never by reaping — but it keeps the store dirty (nonzero exit) until complete. |
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. A `status` outside `{body, empty, redirect, error, interstitial}` is malformed too: such a sidecar cannot say whether it owns a body. So is a bodiless status that carries `contentHash` or `contentLength` (present iff `status: "body"`): that is a body sidecar whose status rotted, and its body sits in `cap/` unnamed. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
@@ -511,15 +511,19 @@ waybackify cache verify --root <root> --restore <run>
 ```
 
 To **empty** the quarantine, run the explicit, separate action. It is the only
-path that deletes a body file, and it runs before the verify so that the run's
-own moves survive it:
+path that deletes a body file. It runs **after** the verify in the same
+command, so the operator sees the report first, including any `missingBody`
+that points at a quarantined copy. It keeps two kinds of body and reports each:
+a body that a current sidecar names (its live file is missing, so this copy is
+the one to restore), and a body the same command's `--fix` just moved.
 
 ```sh
 waybackify cache verify --root <root> --empty-trash
 ```
 
-The library exposes the same action as `fsck.js#emptyTrash(root)`, which
-returns the path, file count, and byte total it removed.
+The library exposes the same action as `fsck.js#emptyTrash(root, { keepRun })`,
+which returns the path, the file count and byte total it deleted, and the list
+of kept files with their reasons.
 
 ### `--fix` and concurrent writers
 

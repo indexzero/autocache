@@ -1,6 +1,6 @@
 {
   "name": "@autocache/waybackify-verify",
-  "version": "0.0.0",
+  "version": "0.5.0",
   "description": "The wayback mirror verifier — the four-layer root to bucket parity check, its retrying undici dispatcher, and its resumable checkpoint store. Node-only audit code over the serving core of waybackify-serve. The waybackify CLI runs it as `bucket verify`.",
   "type": "module",
   "exports": {

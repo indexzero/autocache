@@ -41,7 +41,7 @@
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import { capturePath, metaPath } from '@autocache/waybackify/key.js';
-import { isSidecarObject } from '@autocache/waybackify-serve/fsstore';
+import { SIDECAR_VERSION, isSidecarObject } from '@autocache/waybackify-serve/fsstore';
 import { S3Store } from '@autocache/waybackify-serve/s3store';
 import { serveBucket, serveCacheRoot, type RunningServer } from '@autocache/waybackify-serve/node';
 import { signRequest, type SigV4Credentials } from '@autocache/waybackify-serve/sigv4';
@@ -246,13 +246,6 @@ export function normalizeContentType(contentType: string): string {
   return contentType || 'application/octet-stream';
 }
 
-/**
- * The one sidecar schema the verifier reads. An older sidecar fails loud at
- * enumeration, before any bucket read, because its fields do not describe the
- * current body layout. Rebuild the root with `cache add` or `cache fill`.
- */
-const SIDECAR_VERSION = 3;
-
 /** The sidecar fields this verifier reads (the archive of record). */
 interface Sidecar {
   v: number;
@@ -272,8 +265,10 @@ interface Sidecar {
  * same completion token FsStore trusts. Each sidecar's `key` re-derives its
  * object keys through the shared key module (never hand-rolled), so the entry's
  * cap/meta keys are exactly what the bucket must carry. The walk reads the
- * current sidecar version only (the FsStore rule). Any other version is an
- * error, never a silent entry.
+ * current sidecar version only, the same `SIDECAR_VERSION` the serve reader
+ * exports, so the two never drift. Any other version is an error at
+ * enumeration, before any bucket read, never a silent entry. Rebuild such a
+ * root with `cache add` or `cache fill`.
  */
 export async function enumerateRoot(root: string): Promise<Entry[]> {
   const metaDir = `${root}/meta`;

@@ -1,6 +1,6 @@
 {
   "name": "@autocache/waybackify-serve",
-  "version": "0.0.0",
+  "version": "0.5.0",
   "description": "The wayback mirror serving core — one Hono app (/web/<ts><flag?>/<url> router + chrome strip + standalone CSP), the Store abstraction (FsStore/S3Store/R2Store/MemoryStore), and the Node listener (serveCacheRoot/serveBucket). Production and the crawl probe serve the identical router.",
   "type": "module",
   "bin": {

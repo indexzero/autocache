@@ -1,6 +1,6 @@
 // The standalone go/no-go.
 //
-// Proves the four packages work for an npm consumer with no workspace in
+// Proves the five packages work for an npm consumer with no workspace in
 // sight: pack every src/* package into a tarball, install the tarballs into
 // a scratch consumer with plain npm, and run the full example pipeline
 // through the installed bins. This is the pre-publish rehearsal of exactly
@@ -66,7 +66,8 @@ try {
         },
         overrides: {
           '@autocache/waybackify': tarballs['@autocache/waybackify'],
-          '@autocache/waybackify-crawl': tarballs['@autocache/waybackify-crawl']
+          '@autocache/waybackify-crawl': tarballs['@autocache/waybackify-crawl'],
+          '@autocache/waybackify-verify': tarballs['@autocache/waybackify-verify']
         }
       },
       null,

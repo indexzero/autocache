@@ -68,11 +68,11 @@ function isDotSegment(segment) {
  * on its default port only. The archive spells many originals with an
  * explicit `:80`. A repo root, with or without a query or a fragment, a user
  * page, or any other host is not a deep link: null. Neither is a GitHub
- * route such as `/orgs/...` or `/login`. Nor is a path a fetch can move: a
- * backslash, a tab, a CR, or an LF in the text, or a segment that decodes
- * to `.` or `..` (so `%2e%2e` too). Every other raw character is fine. A
- * fetch percent-encodes a space or an accented letter and requests the same
- * path, so `blob/main/café.md` stays a deep link.
+ * route such as `/orgs/...` or `/login`. Nor is a path a fetch can move.
+ * That means a backslash, a tab, a CR, or an LF in the text. It also means
+ * a segment that decodes to `.` or `..`, so `%2e%2e` too. Every other raw
+ * character is fine. A fetch percent-encodes a space or an accented letter
+ * and requests the same path, so `blob/main/café.md` stays a deep link.
  * @param {string} url
  * @returns {{ owner: string, repo: string, rest: string } | null}
  */

@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
-import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } from '../key.js';
+import { assertMetadataSafe, bodyPath, captureHash, captureKey, capturePath, metaPath } from '../key.js';
 
 describe('captureKey', () => {
   it('is `${timestamp}/${originalUrl}`, verbatim — no encoding, no normalization', () => {
@@ -67,6 +67,22 @@ describe('capturePath / metaPath', () => {
     const hash = await captureHash(key);
     assert.equal(await capturePath(key), `cap/${hash.slice(0, 2)}/${hash}`);
     assert.equal(await metaPath(key), `meta/${hash.slice(0, 2)}/${hash}.json`);
+  });
+});
+
+describe('bodyPath', () => {
+  it('addresses a body by the sha256 digest that its SRI contentHash records', () => {
+    const bytes = new TextEncoder().encode('shared page chrome');
+    const digest = crypto.createHash('sha256').update(bytes);
+    const hex = digest.copy().digest('hex');
+    const sri = `sha256-${digest.digest('base64')}`;
+    assert.equal(bodyPath(sri), `cap/${hex.slice(0, 2)}/${hex}`);
+  });
+
+  it('throws on a value that is not a sha256 SRI digest', () => {
+    for (const bad of [undefined, '', 'sha256-unverified', 'sha512-AAAA', 'sha256-', `sha256-${'A'.repeat(40)}`]) {
+      assert.throws(() => bodyPath(bad), /contentHash/, String(bad));
+    }
   });
 });
 

@@ -38,16 +38,16 @@ consumers never read it.
 
 ## Contents
 
-| key | hash prefix | status | contentType | origin |
-|---|---|---|---|---|
-| `19981202230410/http://www.google.com/` | `58a9d3a4` | body | `text/html` | real |
-| `19981202230410/http://www.google.com/alpha.jpg` | `2017ddfc` | body | `text/html` | real |
-| `19981202230410/http://www.google.com/google.jpg` | `497a08c2` | body | `image/jpeg` | real |
-| `20140403040000/http://example.com/` | `77c4b856` | body | `text/html` | real |
-| `20140403040000/http://example.com/empty` | `71790232` | empty | `""` | synthetic |
-| `20140403040000/http://example.com/redirect` | `a0b0d94a` | redirect | `text/html; charset=utf-8` | synthetic |
-| `20140403040000/http://example.com/missing.gif` | `fb56241b` | error | `""` | synthetic |
-| `20140403040000/http://example.com/orphan` | `d325db35` | — (orphan `cap/`, no sidecar) | — | synthetic |
+| key | sidecar hash prefix | body digest prefix | status | contentType | origin |
+|---|---|---|---|---|---|
+| `19981202230410/http://www.google.com/` | `58a9d3a4` | `3b20aca7` | body | `text/html` | real |
+| `19981202230410/http://www.google.com/alpha.jpg` | `2017ddfc` | `19a721a8` | body | `text/html` | real |
+| `19981202230410/http://www.google.com/google.jpg` | `497a08c2` | `ef4e7da1` | body | `image/jpeg` | real |
+| `20140403040000/http://example.com/` | `77c4b856` | `6cbb98d4` | body | `text/html` | real |
+| `20140403040000/http://example.com/empty` | `71790232` | — | empty | `""` | synthetic |
+| `20140403040000/http://example.com/redirect` | `a0b0d94a` | — | redirect | `text/html; charset=utf-8` | synthetic |
+| `20140403040000/http://example.com/missing.gif` | `fb56241b` | — | error | `""` | synthetic |
+| `20140403040000/http://example.com/orphan` | — | `1258fb5b` | — (orphan `cap/`, no sidecar) | — | synthetic |
 
 Notes:
 
@@ -86,6 +86,17 @@ archive.org evolves its injected chrome, and every sidecar records a fresh
 sidecars and document bytes at runtime instead of pinning body hashes.
 
 The four synthetic entries are hand-authored, never re-fetched. To reproduce
-them, write each sidecar through `spv/waybackify/cache.js#canonicalJSON` at the
+them, write each sidecar through `src/waybackify/cache.js#canonicalJSON` at the
 `meta/<aa>/<hash>.json` path `key.js#metaPath` derives for its captureKey (the
-orphan is raw bytes at `key.js#capturePath` with NO sidecar).
+orphan is raw bytes at the `key.js#bodyPath` of its own SRI digest, with NO
+sidecar).
+
+Every sidecar carries `"v":3`. The real entries were written as `v: 1` and
+were later restamped as `v: 3`, because readers accept only the current
+version. No other sidecar byte changed. The v3 schema adds only optional
+fields.
+
+Bodies are content-addressed: each `cap/<dd>/<digest>` file is named by the
+SHA-256 hex of its bytes, the digest that the sidecar `contentHash` records.
+The sidecar hash prefix column is `sha256hex(captureKey)`. The body digest
+column is the body file name.

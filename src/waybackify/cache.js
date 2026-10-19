@@ -5,24 +5,29 @@
 // ON-DISK LAYOUT (normative — the design debate's position E;
 // field-by-field docs in docs/CACHE.md):
 //
-//   <root>/cap/<aa>/<hash>        body bytes, verbatim, NO extension
+//   <root>/cap/<dd>/<digest>      body bytes, verbatim, NO extension,
+//                                 CONTENT-ADDRESSED (one file per distinct body)
 //   <root>/meta/<aa>/<hash>.json  authoritative sidecar (canonical JSON)
 //   <root>/tmp/                   ingest scratch — same filesystem as cap/
 //                                 and meta/ so rename(2) stays atomic
 //
-//   hash = sha256hex(captureKey), captureKey = `${timestamp}/${originalUrl}`
-//   aa   = hash.slice(0, 2)
+//   hash   = sha256hex(captureKey), captureKey = `${timestamp}/${originalUrl}`
+//   aa     = hash.slice(0, 2)
+//   digest = sha256hex(body bytes), the digest sidecar.contentHash records
+//   dd     = digest.slice(0, 2)
 //
 // <hash> is byte-identical to the bucket object key's <hash> (both derive
-// from key.js's captureHash), and sidecar.key is the verbatim capture key —
-// the root IS the deploy artifact.
+// from key.js's captureHash), and sidecar.key is the verbatim capture key.
+// The sidecar is the capture identity (one per timestamp/url). Its
+// contentHash locates the body, so byte-identical captures under different
+// keys (the same page chrome at two snapshot timestamps) share one cap/ file.
 //
 // WRITE PROTOCOL (normative; per entry):
 //   1. stream body → tmp/<hash>.<pid>-<rand>.part, hashing as bytes flow
 //   2. fsync the temp file (filehandle.sync() → POSIX fsync(2):
 //      https://nodejs.org/api/fs.html#filehandlesync — "Request that all
 //      data for the open file descriptor is flushed to the storage device")
-//   3. atomic rename → cap/<aa>/<hash>
+//   3. atomic rename → cap/<dd>/<digest> (the digest from step 1)
 //      (https://nodejs.org/api/fs.html#fspromisesrenameoldpath-newpath;
 //      atomicity is the POSIX rename(2) guarantee for same-filesystem
 //      renames — https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html:
@@ -63,7 +68,8 @@
 // computed DURING the streaming write via crypto.createHash's streaming
 // update/digest API (https://nodejs.org/api/crypto.html#cryptocreatehashalgorithm-options,
 // https://nodejs.org/api/crypto.html#hashupdatedata-inputencoding).
-// Integrity, not addressing: the filename stays the identity hash.
+// The same digest is the body's address: key.js#bodyPath maps contentHash
+// to cap/<dd>/<digest>.
 //
 // RESUME: completion signal = sidecar exists, nothing else. The fetch
 // frontier on re-run = `requisites[] ∪ dynamic[].key` — the document's
@@ -78,16 +84,17 @@
 // requisite never appears in the stored bytes, which is the whole reason its
 // flag is recorded in the sidecar.
 //
-// CONCURRENCY: no locks. Same-key writers use distinct temp names and both
-// rename onto the final name — last-writer-wins on identical bytes (the
-// wayback timestamp pins content). Distinct keys never share paths.
+// CONCURRENCY: no locks. Writers use distinct temp names. Two writers of
+// equal bytes (same key or not) both rename onto the one digest-named body,
+// and both renames publish identical bytes. Distinct keys never share a
+// sidecar path.
 
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { WaybackMachine } from './index.js';
 import { parseWaybackUrl } from './audit.js';
-import { assertMetadataSafe, captureHash, captureKey, capturePath, metaPath } from './key.js';
+import { assertMetadataSafe, bodyPath, captureHash, captureKey, metaPath } from './key.js';
 import { extractRequisites } from './requisites.js';
 import { detectInterstitial } from './interstitial.js';
 import { NOOP_LOGGER } from './noop-logger.js';
@@ -97,27 +104,23 @@ import { isUnmirrorable } from './beacons.js';
 // requisite firehose; WaybackMachine's #cdxRows is the other half). The library
 // never constructs pino (design §1) — it defaults to NOOP_LOGGER.
 
-// The version new writes stamp. Bumped to 2 for the `interstitial` status
-// (#363): a v2 sidecar may carry `status: "interstitial"` (+ `signature`, and a
-// redirect's decoded `target`), an enum value a strictly-v1 reader would not
-// understand — hence the coordinated bump the schema discipline requires
-// (CACHE.md §sidecar). Bumped to 3 for the optional `dynamic[]` array: a doc's
-// browser-discovered requisites (recorded by recordDynamic from the `remaster
-// verify` dynamic probe). v3 is a backward-compatible SUPERSET of v2 — it only
-// ADDS one optional array whose entries carry a persisted replay `flag`
-// (unrecoverable from stored bytes), so every v2/v1 field keeps its meaning and
-// a v3 write with no dynamic data is byte-identical to the v2 it would have
-// been (the field is ABSENT, never invented empty).
+// The sidecar schema version. Writers stamp it and readers accept ONLY it.
+// v3 carries the `interstitial` status and the optional `dynamic[]`
+// array of browser-discovered requisites. A sidecar of any other version is
+// refused, never read or upgraded. Rebuild an older root.
 export const SIDECAR_VERSION = 3;
 
-// Readers accept a v3, v2, OR legacy v1 sidecar: each newer version is a
-// backward-compatible SUPERSET (v2 ADDS the interstitial status + its fields;
-// v3 ADDS the optional `dynamic[]` array), so a v1 root — the whole existing
-// corpus — still reads, as does a v2 one. A version outside this set is
-// genuinely unknown and must fail loud, never be treated as complete-current.
-// Old v1 `status:body` entries that HIDE an interstitial are surfaced by
-// `fsck`'s interstitial-as-body category, not by rejecting them here.
-export const SUPPORTED_SIDECAR_VERSIONS = Object.freeze(new Set([1, 2, 3]));
+/**
+ * Whether a parsed JSON value has the SHAPE of a sidecar: a plain object. A
+ * file that parses to null, a number, a string, or an array is malformed, and
+ * a reader must say so before it reads any property (`null.v` is a TypeError,
+ * not a diagnostic).
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+export function isSidecarObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /** Content types the requisite extractor runs over (documents). */
 const isHtmlish = ct => !ct || /html|xhtml/i.test(ct);
@@ -196,25 +199,28 @@ export function dynamicEntryError(entry) {
  * ------------------------------------------------------------------------ */
 
 /**
- * Resolve the on-disk paths for a capture key.
+ * Resolve the on-disk sidecar path for a capture key. The body path is not a
+ * function of the key: resolve it from the sidecar's contentHash (bodyFile).
  * @param {string} root
  * @param {string} key - verbatim captureKey (NEVER used as a path component)
- * @returns {Promise<{ hash: string, aa: string, body: string, meta: string }>}
+ * @returns {Promise<{ hash: string, aa: string, meta: string }>}
  */
 export async function entryPaths(root, key) {
   const hash = await captureHash(key);
-  const aa = hash.slice(0, 2);
-  // key.js#capturePath/#metaPath own the `<aa>`-shard layout (the bucket
-  // object-key contract); we resolve those rootless keys under our root.
-  // Their `/`-joined keys pass cleanly through path.join, which re-segments
-  // on `/` and re-joins with the OS separator — the object-key form never
-  // leaks OS separators back out (it stays only in these local paths).
-  return {
-    hash,
-    aa,
-    body: path.join(root, await capturePath(key)),
-    meta: path.join(root, await metaPath(key))
-  };
+  // key.js#metaPath owns the `<aa>`-shard layout. Its `/`-joined key passes
+  // cleanly through path.join, which re-joins with the OS separator.
+  return { hash, aa: hash.slice(0, 2), meta: path.join(root, await metaPath(key)) };
+}
+
+/**
+ * Resolve the on-disk body file for an SRI contentHash (key.js#bodyPath under
+ * the root). Byte-identical bodies resolve to one file.
+ * @param {string} root
+ * @param {string} contentHash - `sha256-<base64>`
+ * @returns {string}
+ */
+export function bodyFile(root, contentHash) {
+  return path.join(root, bodyPath(contentHash));
 }
 
 /**
@@ -269,12 +275,13 @@ export async function readSidecar(root, key) {
     throw error;
   }
   const sidecar = JSON.parse(raw);
+  if (!isSidecarObject(sidecar)) {
+    throw new Error(`readSidecar: malformed sidecar at ${meta} (not a JSON object)`);
+  }
   // Minimal authenticity checks (doubt-cycle finding): a sidecar at this
   // path MUST claim this key (the file is the sole identity record — a
-  // mismatch is tampering/rot, not absence) and a known schema version (a
-  // future v2 must be met by a reader that understands it, not silently
-  // treated as complete-v1).
-  if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
+  // mismatch is tampering/rot, not absence) and the current schema version.
+  if (sidecar.v !== SIDECAR_VERSION) {
     throw new Error(`readSidecar: unsupported sidecar version ${sidecar.v} at ${meta}`);
   }
   if (sidecar.key !== key) {
@@ -395,8 +402,9 @@ async function syncDir(dir) {
  *   CDX statuscode, INJECTED (network-derived); a 4xx/5xx here trips the
  *   archived-error interstitial signature. Offline callers omit it.
  * @param {string} [entry.fetchedAt] - ISO-8601 (defaults to now)
- * @param {Object} [hooks] - test seams; `afterBodyCommit()` runs between the
- *   body rename and the sidecar rename (the crash-atomicity window)
+ * @param {Object} [hooks] - test seams. `afterBodyCommit(paths)` runs between
+ *   the body rename and the sidecar rename (the crash-atomicity window).
+ *   `paths` is entryPaths() plus `body` (the digest-named file, or null).
  * @returns {Promise<object>} the sidecar as written (parsed form)
  */
 export async function commitEntry(root, entry, hooks = {}) {
@@ -448,9 +456,9 @@ export async function commitEntry(root, entry, hooks = {}) {
     }
   }
 
+  let bodyTarget = null;
   if (status === 'body') {
     if (body === null) throw new TypeError(`commitEntry: status 'body' requires body bytes (key: ${key})`);
-    await fsp.mkdir(path.dirname(paths.body), { recursive: true });
     const tmp = tmpPath(root, paths.hash, '');
     const { sri, contentLength } = await writeTmp(tmp, body);
     if (contentLength === 0) {
@@ -460,14 +468,19 @@ export async function commitEntry(root, entry, hooks = {}) {
       await fsp.unlink(tmp);
       status = sidecar.status = 'empty';
     } else {
-      await fsp.rename(tmp, paths.body); // step 3: publish bytes (not yet complete)
-      await syncDir(path.dirname(paths.body)); // pin rename ordering (see header)
+      // Step 3: publish the bytes at their digest-named path (not yet
+      // complete). When equal bytes already sit there, the rename replaces
+      // them with identical bytes, so every sidecar that points here stays true.
+      bodyTarget = bodyFile(root, sri);
+      await fsp.mkdir(path.dirname(bodyTarget), { recursive: true });
+      await fsp.rename(tmp, bodyTarget);
+      await syncDir(path.dirname(bodyTarget)); // pin rename ordering (see header)
       sidecar.contentHash = sri;
       sidecar.contentLength = contentLength;
     }
   }
 
-  if (hooks.afterBodyCommit) await hooks.afterBodyCommit(paths);
+  if (hooks.afterBodyCommit) await hooks.afterBodyCommit({ ...paths, body: bodyTarget });
 
   // Steps 4–5: sidecar last. Its rename is the sole completion token.
   const tmpMeta = tmpPath(root, paths.hash, '.json');
@@ -597,7 +610,7 @@ export async function recordDynamic(root, docKey, entries = []) {
   for (const entry of incoming) if (!byKey.has(entry.key)) byKey.set(entry.key, entry);
   const merged = [...byKey.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
-  const sidecar = { ...existing, v: SIDECAR_VERSION };
+  const sidecar = { ...existing };
   if (merged.length > 0) sidecar.dynamic = merged;
   else delete sidecar.dynamic; // never carry an empty array (existing had none)
 
@@ -822,7 +835,7 @@ export async function cacheCapture(waybackUrl, options = {}) {
       // RESUME note above). Dynamic children never live in the body — their
       // URLs come from dynamicByKey (the persisted flag).
       if (docBytes === null && docSidecar.status === 'body') {
-        docBytes = await fsp.readFile(docPaths.body);
+        docBytes = await fsp.readFile(bodyFile(root, docSidecar.contentHash));
       }
       const byKey = new Map(
         docBytes === null ? [] : extractRequisites(new TextDecoder('utf-8').decode(docBytes)).map(r => [r.key, r])

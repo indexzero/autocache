@@ -11,8 +11,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commitEntry, entryPaths } from '../cache.js';
-import { fsck, totalFindings, unresolvedFindings, CATEGORIES } from '../fsck.js';
+import { bodyFile, commitEntry, entryPaths } from '../cache.js';
+import { emptyTrash, fsck, moveNoReplace, restoreTrash, totalFindings, unresolvedFindings, CATEGORIES, TRASH_DIR, TRASH_MARKER } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.resolve(HERE, 'fixtures/cache-root');
@@ -21,10 +21,10 @@ const WRAPPER = fs.readFileSync(path.join(HERE, 'fixtures/interstitial/wrapper-s
 const mkroot = () => fsp.mkdtemp(path.join(os.tmpdir(), 'waybackify-fsck-'));
 const bytesOf = s => new TextEncoder().encode(s);
 
-/** Commit a bodied entry and hand back its resolved paths. */
+/** Commit a bodied entry and hand back its resolved paths (body by contentHash). */
 async function commitBody(root, key, body = `body-for-${key}`) {
-  await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytesOf(body) });
-  return entryPaths(root, key);
+  const sidecar = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytesOf(body) });
+  return { ...(await entryPaths(root, key)), body: bodyFile(root, sidecar.contentHash) };
 }
 
 /** Every finding category empty except the named ones. */
@@ -54,6 +54,24 @@ describe('fsck — clean root', () => {
     assert.equal(report.counts.capFiles, 2);
   });
 
+  it('a body shared by two captures is one cap/ file, referenced, never an orphan', async () => {
+    const root = await mkroot();
+    const a = await commitBody(root, '20081013100657/http://github.com/s.css', 'body{}');
+    const b = await commitBody(root, '20081024183240/http://github.com/s.css', 'body{}');
+    assert.equal(a.body, b.body, 'one digest-named file');
+
+    const report = await fsck(root);
+    only(report);
+    assert.equal(report.counts.sidecars, 2);
+    assert.equal(report.counts.bodies, 2);
+    assert.equal(report.counts.capFiles, 1);
+
+    // Dropping one sidecar leaves the body referenced by the other.
+    await fsp.unlink(a.meta);
+    only(await fsck(root, { fix: true }));
+    assert.ok(fs.existsSync(b.body), 'a body that a sidecar still names is never reaped');
+  });
+
   it('an empty / never-populated root is clean, not an error', async () => {
     const root = await mkroot();
     const report = await fsck(root);
@@ -73,7 +91,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     await fsp.writeFile(body, 'TAMPERED bytes'); // flip the stored body
 
     const report = await fsck(root);
-    only(report, 'hashMismatch');
+    only(report, 'hashMismatch', 'sizeMismatch');
     const f = report.findings.hashMismatch[0];
     assert.match(f.expected, /^sha256-/);
     assert.match(f.actual, /^sha256-/);
@@ -100,7 +118,43 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     only(await fsck(root), 'missingBody');
   });
 
-  it('flags a sidecar whose schema version is outside the supported set', async () => {
+  it('--fix keeps the body when its contentHash rots to another valid SRI (evidence, not an orphan)', async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    // Change one character inside the digest: the result is still a valid SRI.
+    const rotted = `sha256-${sidecar.contentHash[7] === 'A' ? 'B' : 'A'}${sidecar.contentHash.slice(8)}`;
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentHash: rotted }));
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'missingBody');
+    assert.equal(report.findings.missingBody[0].contentHash, rotted, 'the rotted digest is reported');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
+    assert.ok(fs.existsSync(body), 'the true body is kept for investigation');
+  });
+
+  it('--fix keeps the body when its contentHash rots to a value that is not an SRI', async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentHash: 'sha256-unverified' }));
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'missingBody');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
+    assert.ok(fs.existsSync(body), 'the true body is kept for investigation');
+  });
+
+  it("detects status 'body' whose contentHash is not a sha256 SRI (the body cannot be located)", async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentHash: 'sha256-unverified' }));
+    await fsp.unlink(body);
+
+    const report = await fsck(root);
+    only(report, 'missingBody');
+    assert.equal(report.findings.missingBody[0].contentHash, 'sha256-unverified');
+  });
+
+  it('flags a sidecar whose schema version is not the current version', async () => {
     const { meta } = await commitBody(root, '2011/http://x.example/');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
     await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v: 99 }));
@@ -110,18 +164,137 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     assert.equal(report.findings.schemaVersion[0].v, 99);
   });
 
-  it('a legacy v1 sidecar is SUPPORTED — no schemaVersion finding', async () => {
-    const { meta } = await commitBody(root, '2011/http://legacy.example/');
+  it('flags a v1 or v2 sidecar: only the current version is supported (A6)', async () => {
+    const { meta } = await commitBody(root, '2011/http://old.example/');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
-    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v: 1 })); // as the v1 writer left it
-    only(await fsck(root)); // clean: v1 is still readable, not a migration flag
+    for (const v of [1, 2]) {
+      await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v }));
+      const report = await fsck(root);
+      only(report, 'schemaVersion');
+      assert.equal(report.findings.schemaVersion[0].v, v);
+    }
+  });
+
+  it('reports a sidecar that parses to a non-object (null, [], "x", 1) as malformed, without throwing, and --fix moves nothing', async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      const report = await fsck(root, { fix: true });
+      only(report, 'malformed');
+      assert.equal(report.findings.malformed[0].error, 'not a JSON object', text);
+      assert.equal(report.reapSuspended, true);
+      assert.ok(fs.existsSync(body), `the body survives a sidecar of ${text}`);
+    }
   });
 
   it('reports an unparseable sidecar as malformed, without throwing', async () => {
-    const { meta } = await commitBody(root, '2011/http://x.example/');
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
     await fsp.writeFile(meta, '{ this is not json');
 
     only(await fsck(root), 'malformed');
+    // The unreadable sidecar can name any body, so --fix reaps no cap/ file.
+    only(await fsck(root, { fix: true }), 'malformed');
+    assert.ok(fs.existsSync(body), 'the body of an unreadable sidecar is evidence, never reaped');
+  });
+
+  it('a sidecar whose contentHash names ANOTHER live body: sizeMismatch, and --fix keeps the unnamed body', async () => {
+    // Capture A's sidecar is rewritten to name capture B's body. The digest
+    // check passes by construction (the digest IS the file name), so only the
+    // size check can tell. A's own body is now unnamed and must survive.
+    const a = await commitBody(root, '2014/http://x.example/a.css', 'body { color: red }');
+    const b = await commitBody(root, '2016/http://x.example/b.css', 'x');
+    const aSidecar = JSON.parse(await fsp.readFile(a.meta, 'utf8'));
+    const bSidecar = JSON.parse(await fsp.readFile(b.meta, 'utf8'));
+    await fsp.writeFile(a.meta, JSON.stringify({ ...aSidecar, contentHash: bSidecar.contentHash }));
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'sizeMismatch');
+    assert.deepEqual(report.findings.sizeMismatch[0], {
+      hash: path.basename(a.meta, '.json'),
+      aa: path.basename(path.dirname(a.meta)),
+      key: '2014/http://x.example/a.css',
+      expected: aSidecar.contentLength,
+      actual: 1
+    });
+    assert.equal(report.reapSuspended, true);
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
+    assert.ok(fs.existsSync(a.body), 'the body A meant to name is kept');
+    assert.ok(fs.existsSync(b.body), 'B is untouched');
+    assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
+  });
+
+  it('a sidecar whose status is corrupted is malformed, and --fix keeps its body', async () => {
+    const { body, meta } = await commitBody(root, '2020/http://x.example/asset', 'irreplaceable captured bytes');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status: 'b0dy' })); // one byte of metadata rot
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'malformed');
+    assert.match(report.findings.malformed[0].error, /status "b0dy" is not one of/);
+    assert.equal(report.reapSuspended, true);
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
+    assert.ok(fs.existsSync(body), 'the body of a sidecar with an unknown status is evidence, never reaped');
+    assert.ok(fs.existsSync(meta), 'the sidecar is kept too');
+    assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
+  });
+
+  it('a body sidecar whose status rots to a bodiless value but keeps contentHash is malformed, and --fix moves nothing', async () => {
+    const { body, meta } = await commitBody(root, '2014/http://x.example/a.css', 'body { color: red }');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    for (const status of ['empty', 'redirect', 'error', 'interstitial']) {
+      await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status })); // contentHash + contentLength stay
+
+      const report = await fsck(root, { fix: true });
+      only(report, 'malformed');
+      assert.match(report.findings.malformed[0].error, new RegExp(`status "${status}" carries contentHash or contentLength`));
+      assert.equal(report.reapSuspended, true);
+      assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
+      assert.ok(fs.existsSync(body), `the body stays in cap/ under status ${status}`);
+      assert.equal(unresolvedFindings(report), 1);
+    }
+    // Either field alone is enough.
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status: 'empty', contentHash: undefined }));
+    only(await fsck(root), 'malformed');
+    // A genuine bodiless sidecar (neither field) is clean.
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status: 'empty', contentHash: undefined, contentLength: undefined }));
+    await fsp.unlink(body);
+    assert.equal(totalFindings(await fsck(root)), 0);
+  });
+
+  it('detects a contentLength that disagrees with the stored body size', async () => {
+    const { meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentLength: sidecar.contentLength + 1 }));
+
+    const report = await fsck(root);
+    only(report, 'sizeMismatch');
+    assert.equal(report.findings.sizeMismatch[0].expected, sidecar.contentLength + 1);
+    assert.equal(report.findings.sizeMismatch[0].actual, sidecar.contentLength);
+  });
+
+  it('a true orphan waits while any sidecar fails a check, and is reaped once the proof holds', async () => {
+    const { body } = await commitBody(root, '2011/http://x.example/');
+    const good = await fsp.readFile(body);
+    await fsp.writeFile(body, 'TAMPERED'); // hashMismatch + sizeMismatch on the valid neighbour
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'garbage');
+
+    const suspended = await fsck(root, { fix: true });
+    only(suspended, 'hashMismatch', 'sizeMismatch');
+    assert.equal(suspended.reapSuspended, true);
+    assert.deepEqual(suspended.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
+    assert.ok(fs.existsSync(orphan), 'nothing is reaped while the proof is broken');
+
+    await fsp.writeFile(body, good); // the operator restores the bytes
+    const clean = await fsck(root, { fix: true });
+    only(clean, 'orphanCap');
+    assert.equal(clean.reapSuspended, false);
+    assert.deepEqual(clean.reaped.orphanCap, [orphan]);
+    assert.ok(!fs.existsSync(orphan), 'the orphan is quarantined once every sidecar proves ownership');
+    assert.ok(fs.existsSync(clean.reaped.moves[0].to), 'and it is in trash/, not deleted');
+    assert.equal(unresolvedFindings(clean), 0);
   });
 
   it('--fix REFUSES to touch corruption (leaves the cap file and finding intact)', async () => {
@@ -129,10 +302,10 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     await fsp.writeFile(body, 'TAMPERED');
 
     const report = await fsck(root, { fix: true });
-    only(report, 'hashMismatch');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    only(report, 'hashMismatch', 'sizeMismatch');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] });
     assert.ok(fs.existsSync(body), 'corrupt body is preserved for investigation');
-    assert.equal(unresolvedFindings(report), 1);
+    assert.equal(unresolvedFindings(report), 2);
   });
 });
 
@@ -176,13 +349,266 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     const report = await fsck(root, { fix: true });
     assert.deepEqual(report.reaped.orphanCap, [orphan]);
     assert.deepEqual(report.reaped.staleTmp, [tmp]);
-    assert.ok(!fs.existsSync(orphan), 'orphan reaped');
-    assert.ok(!fs.existsSync(tmp), 'stale tmp reaped');
+    assert.ok(!fs.existsSync(orphan), 'orphan gone from cap/');
+    assert.ok(!fs.existsSync(tmp), 'stale tmp deleted');
     assert.ok(fs.existsSync(goodBody) && fs.existsSync(goodMeta), 'valid entry untouched');
     assert.equal(unresolvedFindings(report), 0, 'a fixed store is clean');
 
-    // idempotent: a second pass finds nothing
+    // The orphan was MOVED, not deleted: it sits in this run's quarantine
+    // under its own relative path, byte-identical.
+    assert.ok(report.reaped.trash.startsWith(path.join(root, TRASH_DIR, '')), 'the quarantine is inside the root');
+    const moved = path.join(report.reaped.trash, 'cap', hash.slice(0, 2), hash);
+    assert.deepEqual(report.reaped.moves, [{ from: orphan, to: moved }]);
+    assert.equal(fs.readFileSync(moved, 'utf8'), 'garbage', 'the bytes survive in quarantine');
+
+    // idempotent: a second pass finds nothing, and never scans trash/ as live content
+    const again = await fsck(root);
+    assert.equal(totalFindings(again), 0);
+    assert.equal(again.counts.capFiles, 1, 'the quarantined body is not a cap/ file');
+    assert.equal(again.counts.trashFiles, 1, 'but it is inventoried');
+  });
+
+  it('--fix never deletes a body: an operator restores a quarantined body by moving it back, and emptyTrash is the only deletion', async () => {
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'not garbage after all');
+
+    const first = await fsck(root, { fix: true });
+    const [{ to }] = first.reaped.moves;
+    assert.ok(fs.existsSync(to));
+
+    // Restore (the documented operator step, `cache verify --restore <run>`):
+    // the body goes back under cap/. It is an orphan again, and --fix
+    // quarantines it again under a new run dir.
+    const restore = await restoreTrash(root, path.basename(first.reaped.trash));
+    assert.deepEqual(restore, { run: first.reaped.trash, restored: [{ from: to, to: orphan }], skipped: [] });
+    assert.ok(!fs.existsSync(first.reaped.trash), 'an emptied run directory is pruned');
+    const second = await fsck(root, { fix: true });
+    assert.equal(second.reaped.moves.length, 1);
+    assert.notEqual(second.reaped.trash, first.reaped.trash, 'each run gets its own quarantine directory');
+    assert.equal(fs.readFileSync(second.reaped.moves[0].to, 'utf8'), 'not garbage after all');
+
+    // The explicit, separate action empties the quarantine.
+    const emptied = await emptyTrash(root);
+    assert.equal(emptied.path, path.join(root, TRASH_DIR));
+    assert.equal(emptied.files, 1);
+    assert.equal(emptied.bytes, 'not garbage after all'.length);
+    assert.deepEqual(emptied.kept, []);
+    assert.ok(!fs.existsSync(path.join(root, TRASH_DIR)));
+    assert.equal((await fsck(root)).counts.trashFiles, 0);
+    assert.deepEqual(await emptyTrash(root), { path: path.join(root, TRASH_DIR), files: 0, bytes: 0, kept: [] }, 'emptying an empty quarantine is a no-op');
+  });
+
+  it('restoreTrash never replaces a live body: a repaired body stays, the stale evidence stays in quarantine, and it is reported', async () => {
+    // A body whose sidecar was lost and whose bytes rotted is quarantined.
+    const { body, meta } = await commitBody(root, '2020/http://x.example/body', 'correct archived body');
+    await fsp.unlink(meta);
+    await fsp.writeFile(body, 'corrupted old evidence');
+    const quarantined = await fsck(root, { fix: true });
+    const [{ to: saved }] = quarantined.reaped.moves;
+    // A refetch repairs the live capture before the operator restores.
+    await commitBody(root, '2020/http://x.example/body', 'correct archived body');
+    assert.equal(fs.readFileSync(body, 'utf8'), 'correct archived body');
+
+    const result = await restoreTrash(root, path.basename(quarantined.reaped.trash));
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.skipped, [{ from: saved, to: body, reason: 'a live body exists at that path' }]);
+    assert.equal(fs.readFileSync(body, 'utf8'), 'correct archived body', 'the repaired body is untouched');
+    assert.equal(fs.readFileSync(saved, 'utf8'), 'corrupted old evidence', 'the evidence stays in quarantine');
+    assert.equal(totalFindings(await fsck(root)), 0, 'the store is clean');
+  });
+
+  it('emptyTrash keeps a quarantined body that a current sidecar names, reports it, and missingBody points at it', async () => {
+    // The sidecar is lost, the body is quarantined, then the sidecar comes back
+    // (a repair) before any restore: the only copy of its bytes is in trash/.
+    const { body, meta } = await commitBody(root, '2020/http://x.example/body', 'the only copy');
+    const sidecarText = await fsp.readFile(meta, 'utf8');
+    await fsp.unlink(meta);
+    const moved = await fsck(root, { fix: true });
+    const [{ to }] = moved.reaped.moves;
+    await fsp.writeFile(meta, sidecarText);
+
+    const report = await fsck(root);
+    only(report, 'missingBody');
+    assert.equal(report.findings.missingBody[0].quarantined, to, 'the finding says where the body is');
+
+    const emptied = await emptyTrash(root);
+    assert.equal(emptied.files, 0);
+    assert.deepEqual(emptied.kept, [{ path: to, reason: 'a current sidecar names this body; restore the run instead' }]);
+    assert.ok(fs.existsSync(to), 'the named body survives --empty-trash');
+
+    const restore = await restoreTrash(root, path.basename(moved.reaped.trash));
+    assert.deepEqual(restore.restored, [{ from: to, to: body }]);
     assert.equal(totalFindings(await fsck(root)), 0);
+  });
+
+  it('emptyTrash keeps the run that keepRun names and deletes the rest', async () => {
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'old');
+    const old = await fsck(root, { fix: true });
+    await fsp.writeFile(orphan, 'new');
+    const current = await fsck(root, { fix: true });
+
+    const emptied = await emptyTrash(root, { keepRun: current.reaped.trash });
+    assert.equal(emptied.files, 1, 'the older run is deleted');
+    assert.deepEqual(emptied.kept, [{ path: current.reaped.moves[0].to, reason: 'moved by this run' }]);
+    assert.ok(!fs.existsSync(old.reaped.trash), 'the emptied run directory is pruned');
+    assert.equal(fs.readFileSync(current.reaped.moves[0].to, 'utf8'), 'new');
+    assert.equal((await fsck(root)).counts.trashFiles, 1);
+  });
+
+  it('a pre-existing trash/ that this tool did not create (no marker) is foreignRoot and is left alone', async () => {
+    await fsp.mkdir(path.join(root, TRASH_DIR, 'operator-stuff'), { recursive: true });
+    await fsp.writeFile(path.join(root, TRASH_DIR, 'operator-stuff', 'notes.txt'), 'precious');
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'garbage');
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'foreignRoot', 'orphanCap');
+    assert.match(report.findings.foreignRoot[0].reason, /no \.fsck-quarantine marker/);
+    assert.equal(report.counts.trashFiles, 0, 'a foreign trash/ is not inventoried');
+    assert.deepEqual(report.reaped.moves, [], 'nothing is moved into a foreign trash/');
+    assert.match(report.findings.orphanCap[0].reapError, /exists without the \.fsck-quarantine marker/);
+    assert.ok(fs.existsSync(orphan), 'the orphan stays in cap/');
+    assert.equal(fs.readFileSync(path.join(root, TRASH_DIR, 'operator-stuff', 'notes.txt'), 'utf8'), 'precious');
+    await assert.rejects(emptyTrash(root), /exists without the \.fsck-quarantine marker/);
+    await assert.rejects(restoreTrash(root, 'operator-stuff'), /exists without the \.fsck-quarantine marker/);
+    assert.equal(fs.readFileSync(path.join(root, TRASH_DIR, 'operator-stuff', 'notes.txt'), 'utf8'), 'precious', 'still left alone');
+  });
+
+  it('a symlinked trash/ is never followed: foreignRoot, not inventoried, no moves, no emptying, target untouched', async () => {
+    const outside = await mkroot();
+    await fsp.mkdir(path.join(outside, 'cap', 'ab'), { recursive: true });
+    await fsp.writeFile(path.join(outside, 'cap', 'ab', 'abcd'), 'outside the root');
+    await fsp.writeFile(path.join(outside, TRASH_MARKER), '{}\n'); // even with a marker at the target
+    await fsp.symlink(outside, path.join(root, TRASH_DIR));
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'garbage');
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'foreignRoot', 'orphanCap');
+    assert.equal(report.findings.foreignRoot[0].reason, 'trash/ is a symlink, never followed');
+    assert.equal(report.counts.trashFiles, 0);
+    assert.deepEqual(report.reaped.moves, []);
+    assert.match(report.findings.orphanCap[0].reapError, /is a symlink/);
+    await assert.rejects(emptyTrash(root), /is a symlink/);
+    await assert.rejects(restoreTrash(root, 'cap'), /is a symlink/);
+    assert.equal(fs.readFileSync(path.join(outside, 'cap', 'ab', 'abcd'), 'utf8'), 'outside the root', 'the target is untouched');
+    assert.ok(fs.existsSync(orphan));
+  });
+
+  it('restoreTrash takes a run directory name, never a path, and names a missing run', async () => {
+    for (const bad of ['', '.', '..', 'a/b', `..${path.sep}x`]) {
+      await assert.rejects(restoreTrash(root, bad), /run must be a directory name under trash\//, JSON.stringify(bad));
+    }
+    await assert.rejects(restoreTrash(root, 'no-such-run'), { message: `restoreTrash: no quarantine run at ${path.join(root, TRASH_DIR, 'no-such-run')}` });
+  });
+
+  it('a writer that publishes a sidecar after the scan, before the move: the body is skipped, not moved, and the run is clean', async () => {
+    const bytes = 'correct archived body';
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    const body = path.join(root, 'cap', digest.slice(0, 2), digest);
+    await fsp.mkdir(path.dirname(body), { recursive: true });
+    await fsp.writeFile(body, bytes); // an unnamed body at inventory time
+    const hooks = {
+      beforeRecheck: async () => {
+        await commitEntry(root, { key: '2020/http://x.example/body', status: 'body', contentType: 'text/plain', body: bytesOf(bytes) });
+      }
+    };
+    const report = await fsck(root, { fix: true, hooks });
+    assert.deepEqual(report.findings.orphanCap, [], 'no longer an orphan');
+    assert.deepEqual(report.reaped.moves, []);
+    assert.deepEqual(report.reaped.skipped, [{ path: body, reason: 'named by a sidecar written after the scan' }]);
+    assert.ok(fs.existsSync(body), 'the body stays live');
+    assert.equal(unresolvedFindings(report), 0);
+    assert.equal(totalFindings(await fsck(root)), 0);
+  });
+
+  it('a writer that publishes a sidecar after the move: the run reports missingBody with the quarantine path, never 0 unresolved', async () => {
+    const bytes = 'correct archived body';
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    const body = path.join(root, 'cap', digest.slice(0, 2), digest);
+    await fsp.mkdir(path.dirname(body), { recursive: true });
+    await fsp.writeFile(body, bytes);
+    const hooks = {
+      // The writer publishes after fsck's re-read and before its move: the
+      // writer's body lands on the same cap/ path, fsck then moves that file
+      // to quarantine, and the writer's sidecar names a body that is gone.
+      beforeMove: async () => {
+        await commitEntry(root, { key: '2020/http://x.example/body', status: 'body', contentType: 'text/plain', body: bytesOf(bytes) });
+      }
+    };
+    const report = await fsck(root, { fix: true, hooks });
+    assert.equal(report.reaped.moves.length, 1, 'the body was moved after the writer published');
+    assert.ok(!fs.existsSync(body), 'the live body is gone');
+    const [{ to }] = report.reaped.moves;
+    assert.equal(report.findings.missingBody.length, 1);
+    assert.equal(report.findings.missingBody[0].quarantined, to);
+    assert.match(report.findings.missingBody[0].error, /names this body, which --fix moved to .*; restore the run/);
+    assert.ok(unresolvedFindings(report) >= 1, 'the same run ends unresolved');
+    // The next run sees the same state, and the restore brings the body back.
+    assert.equal((await fsck(root)).findings.missingBody.length, 1);
+    const restore = await restoreTrash(root, path.basename(report.reaped.trash));
+    assert.deepEqual(restore.restored, [{ from: to, to: body }]);
+    assert.equal(totalFindings(await fsck(root)), 0);
+  });
+
+  it('two --fix runs in the same millisecond get distinct quarantine directories, and both evidences survive', async () => {
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'first orphan evidence');
+    // Pin the clock: both runs observe the same ISO timestamp.
+    const RealDate = Date;
+    globalThis.Date = class extends RealDate {
+      constructor(...args) {
+        super(...(args.length ? args : ['2026-10-19T16:00:00.000Z']));
+      }
+    };
+    let first, second;
+    try {
+      first = await fsck(root, { fix: true });
+      await fsp.writeFile(orphan, 'second orphan evidence'); // the same cap/ path, new bytes
+      second = await fsck(root, { fix: true });
+    } finally {
+      globalThis.Date = RealDate;
+    }
+    assert.notEqual(first.reaped.trash, second.reaped.trash, 'distinct run directories');
+    assert.notEqual(first.reaped.moves[0].to, second.reaped.moves[0].to, 'distinct destinations');
+    assert.equal(fs.readFileSync(first.reaped.moves[0].to, 'utf8'), 'first orphan evidence', 'the first evidence survives');
+    assert.equal(fs.readFileSync(second.reaped.moves[0].to, 'utf8'), 'second orphan evidence');
+    assert.equal((await fsck(root)).counts.trashFiles, 2);
+    assert.ok(fs.existsSync(path.join(root, TRASH_DIR, TRASH_MARKER)), 'the quarantine carries the tool marker');
+  });
+
+  it('moveNoReplace never replaces an existing destination, and leaves the source in place when it refuses', async () => {
+    const from = path.join(root, 'from');
+    const to = path.join(root, 'to');
+    await fsp.writeFile(from, 'source bytes');
+    await fsp.writeFile(to, 'destination bytes');
+    await assert.rejects(moveNoReplace(from, to), { code: 'EEXIST' });
+    assert.equal(fs.readFileSync(from, 'utf8'), 'source bytes');
+    assert.equal(fs.readFileSync(to, 'utf8'), 'destination bytes');
+    await fsp.unlink(to);
+    await moveNoReplace(from, to);
+    assert.ok(!fs.existsSync(from));
+    assert.equal(fs.readFileSync(to, 'utf8'), 'source bytes');
+  });
+
+  it('trash/ is part of the root contract: never a foreignRoot finding', async () => {
+    await fsp.mkdir(path.join(root, TRASH_DIR, 'old-run', 'cap', 'ab'), { recursive: true });
+    await fsp.writeFile(path.join(root, TRASH_DIR, TRASH_MARKER), '{}\n');
+    await fsp.writeFile(path.join(root, TRASH_DIR, 'old-run', 'cap', 'ab', 'abcd'), 'quarantined');
+    const report = await fsck(root);
+    assert.equal(totalFindings(report), 0);
+    assert.equal(report.counts.trashFiles, 1);
   });
 });
 
@@ -193,25 +619,29 @@ describe('fsck — interstitial-as-body (#363, report-only)', () => {
   // cap/ bytes in and re-pinning contentHash so the ONLY finding is the new
   // category — never a hashMismatch.
   async function plantInterstitial(root, key, body) {
-    const { body: capPath, meta } = await commitBody(root, key, '<html><body>benign at commit time</body></html>');
-    await fsp.writeFile(capPath, body);
+    const { body: benign, meta } = await commitBody(root, key, '<html><body>benign at commit time</body></html>');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
     sidecar.contentHash = `sha256-${crypto.createHash('sha256').update(body).digest('base64')}`;
     sidecar.contentLength = Buffer.byteLength(body);
+    // Bodies are content-addressed: the swapped bytes live at their own digest.
+    const capPath = bodyFile(root, sidecar.contentHash);
+    await fsp.mkdir(path.dirname(capPath), { recursive: true });
+    await fsp.writeFile(capPath, body);
+    await fsp.unlink(benign);
     await fsp.writeFile(meta, JSON.stringify(sidecar));
     return { capPath, meta };
   }
 
   it('reports a status:body wrapper stub, with its signature, and never reaps it', async () => {
     const root = await mkroot();
-    await plantInterstitial(root, '2011/http://x.example/', WRAPPER);
+    const { capPath } = await plantInterstitial(root, '2011/http://x.example/', WRAPPER);
 
     const report = await fsck(root, { fix: true });
     only(report, 'interstitialAsBody');
     assert.equal(report.findings.interstitialAsBody[0].signature, 'wrapper-stub');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'remediation is #364, not fsck');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] }, 'the corpus-wide re-commit is a separate sweep, not fsck');
     assert.equal(unresolvedFindings(report), 1);
-    assert.ok(fs.existsSync((await entryPaths(root, '2011/http://x.example/')).body), 'the body is left in place');
+    assert.ok(fs.existsSync(capPath), 'the body is left in place');
   });
 
   it('a clean corpus of real bodies stays clean (no false interstitial findings)', async () => {
@@ -288,14 +718,14 @@ describe('fsck — incomplete requisite closure (store-relative, report-only)', 
 
   /** Commit a body doc that names `children` as its page requisites. */
   async function commitDocWithRequisites(key, children) {
-    await commitEntry(root, {
+    const sidecar = await commitEntry(root, {
       key,
       status: 'body',
       contentType: 'text/html',
       requisites: children,
       body: new TextEncoder().encode(`doc-for-${key}`)
     });
-    return entryPaths(root, key);
+    return { ...(await entryPaths(root, key)), body: bodyFile(root, sidecar.contentHash) };
   }
 
   it('flags a body doc whose requisite child sidecar is absent from the store', async () => {
@@ -340,7 +770,7 @@ describe('fsck — incomplete requisite closure (store-relative, report-only)', 
 
     const report = await fsck(root, { fix: true });
     only(report, 'incompleteClosure');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'a short closure is filled by fetching, never by reaping');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] }, 'a short closure is filled by fetching, never by reaping');
     assert.ok(fs.existsSync(body) && fs.existsSync(meta), 'the doc is left in place');
     assert.equal(unresolvedFindings(report), 1, 'closure gap keeps the store dirty through --fix');
   });
@@ -392,8 +822,8 @@ describe('fsck — committed corpus fixture', () => {
     );
     assert.deepEqual(
       report.findings.orphanCap.map(f => f.hash),
-      ['d325db355e2cab506a0005ff77da83a07099ceaa5521e96985c67a726db70032'],
-      'the synthetic /orphan cap/ file carries no sidecar (README-documented)'
+      ['1258fb5b5b6c0365c1ddf64a4937bed1e4500efbb7fbc83e5bc7abc73e2d2653'],
+      'the synthetic /orphan cap/ file is named by no sidecar contentHash (README-documented)'
     );
   });
 });

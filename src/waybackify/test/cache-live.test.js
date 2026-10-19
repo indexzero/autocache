@@ -8,7 +8,7 @@ import { strict as assert } from 'node:assert';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { cacheCapture, entryPaths, readSidecar } from '../cache.js';
+import { bodyFile, cacheCapture, readSidecar } from '../cache.js';
 
 const skip = !process.env.WAYBACK_LIVE && 'live network — set WAYBACK_LIVE=1 to run';
 
@@ -24,8 +24,7 @@ describe('cacheCapture (live)', { skip }, () => {
     assert.equal(side.v, 1);
     assert.equal(side.key, first.key);
     if (side.status === 'body') {
-      const { body } = await entryPaths(root, first.key);
-      const bytes = await fsp.readFile(body);
+      const bytes = await fsp.readFile(bodyFile(root, side.contentHash));
       assert.equal(bytes.byteLength, side.contentLength);
     }
 

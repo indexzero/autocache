@@ -31,7 +31,9 @@ no sidecar, or vice versa):
 1. **`cap/`** — [`bucket push`](../src/waybackify-cli/src/commands/bucket-push.js)
    lists `meta/` and emits `s5cmd run` `cp` lines (bodies + zero-byte bodiless
    objects), each carrying native `Content-Type` + `x-amz-meta-status`. Piped
-   to `s5cmd run`.
+   to `s5cmd run`. The local body store is content-addressed, so captures with
+   equal bytes share one source file. Each capture still gets its own
+   `cap/<aa>/<hash>` object, which carries that capture's own metadata.
 2. **`meta/`** — `rclone copy <root>/meta remote:<bucket>/meta`. The sidecar
    objects upload verbatim.
 
@@ -81,8 +83,12 @@ Each emitted line is a complete s5cmd `cp` command (the run-file format —
 [source pin](#source-pins)):
 
 ```
-cp --content-type 'text/html; charset=utf-8' --metadata 'status=body' <root>/cap/<aa>/<hash> s3://<bucket>/cap/<aa>/<hash>
+cp --content-type 'text/html; charset=utf-8' --metadata 'status=body' <root>/cap/<dd>/<digest> s3://<bucket>/cap/<aa>/<hash>
 ```
+
+The source is the local body that the sidecar's `contentHash` names
+(`key.js#bodyPath`). The destination is the capture's object key
+(`key.js#capturePath`).
 
 - `--content-type` is the sidecar's `contentType` **verbatim** — and is
   **always** present. When the sidecar's `contentType` is `''` (or absent) the
@@ -103,10 +109,17 @@ cp --content-type 'text/html; charset=utf-8' --metadata 'status=body' <root>/cap
 Pipe the batch straight into `s5cmd run` (`--endpoint-url` per target below):
 
 ```sh
+set -o pipefail
 waybackify bucket push \
   --root <cache-root> --bucket <bucket> --empty-file "$EMPTY" \
   | s5cmd --endpoint-url <endpoint> run
 ```
+
+`bucket push` skips a sidecar whose body file is missing, reports it in the
+summary, and exits 1 **after** it has written the rest of the batch to stdout.
+The pipe above still uploads that partial batch. Set `pipefail` so the shell
+reports the exit 1, then refetch the skipped entries and rerun: the push is
+idempotent, so the rerun completes the projection.
 
 Objects are **immutable** (the key is a content-pinning hash), so re-running is
 overwrite-safe and idempotent. Cap Fastly's per-bucket write rate with

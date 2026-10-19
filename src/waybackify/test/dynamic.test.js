@@ -6,15 +6,15 @@
 // the `requisites ∪ dynamic` frontier. These tests pin: recordDynamic's
 // merge/sort/idempotence + meta-only re-write, the frontier fetch from the
 // STORED flag, fsck's union closure + entry-level malformed detection, the
-// remaster carry-through, and that a plain (v1/v2) capture never invents a
-// `dynamic` field. Zero network — same mock-archive idiom as cache.test.js.
+// remaster carry-through, that a plain capture never invents a `dynamic`
+// field, and that a v1 or v2 sidecar is refused, never upgraded. Zero network — same mock-archive idiom as cache.test.js.
 import { describe, it, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { cacheCapture, canonicalJSON, commitEntry, dynamicEntryError, entryPaths, readSidecar, recordDynamic } from '../cache.js';
+import { bodyFile, cacheCapture, canonicalJSON, commitEntry, dynamicEntryError, entryPaths, readSidecar, recordDynamic } from '../cache.js';
 import { fsck, totalFindings, CATEGORIES } from '../fsck.js';
 import { remaster } from '../remaster.js';
 
@@ -85,9 +85,9 @@ describe('recordDynamic — merge, sort, idempotence', () => {
     await commitDoc(root);
   });
 
-  it('bumps v to 3, sorts dynamic by key, leaves body/contentHash/contentLength untouched', async () => {
+  it('keeps v at 3, sorts dynamic by key, leaves body/contentHash/contentLength untouched', async () => {
     const before = await readSidecar(root, DOC_KEY);
-    const bodyBefore = await fsp.readFile((await entryPaths(root, DOC_KEY)).body);
+    const bodyBefore = await fsp.readFile(bodyFile(root, before.contentHash));
 
     const a = `${TS}/http://example.com/z-last.woff`;
     const b = `${TS}/http://example.com/a-first.woff`;
@@ -99,7 +99,7 @@ describe('recordDynamic — merge, sort, idempotence', () => {
     assert.equal(written.status, 'body');
     assert.equal(written.contentHash, before.contentHash);
     assert.equal(written.contentLength, before.contentLength);
-    const bodyAfter = await fsp.readFile((await entryPaths(root, DOC_KEY)).body);
+    const bodyAfter = await fsp.readFile(bodyFile(root, before.contentHash));
     assert.deepEqual(new Uint8Array(bodyAfter), new Uint8Array(bodyBefore), 'body bytes untouched');
 
     const read = await readSidecar(root, DOC_KEY);
@@ -228,7 +228,7 @@ describe('cacheCapture — the requisites ∪ dynamic frontier', () => {
     const child = await readSidecar(root, FONT_KEY);
     assert.equal(child.status, 'body');
     assert.equal(child.flag, FONT_FLAG);
-    const childBody = await fsp.readFile((await entryPaths(root, FONT_KEY)).body);
+    const childBody = await fsp.readFile(bodyFile(root, child.contentHash));
     assert.deepEqual(new Uint8Array(childBody), bytesOf(FONT_BYTES));
 
     // Second run: child sidecar exists → zero fetches (resume/idempotence).
@@ -407,7 +407,7 @@ describe('fsck — dynamic closure + malformed', () => {
   });
 });
 
-describe('pinning — v1/v2 never grow a dynamic field', () => {
+describe('pinning — no invented dynamic field, no older version', () => {
   /** Write a canonical bodiless sidecar at version `v` (no dynamic). */
   async function writeBodiless(root, key, v) {
     const sidecar = { contentType: 'text/html', fetchedAt: '2026-07-23T00:00:00.000Z', flag: null, key, requisites: [], status: 'redirect', v };
@@ -425,27 +425,29 @@ describe('pinning — v1/v2 never grow a dynamic field', () => {
     assert.doesNotMatch(raw.toString('utf8'), /"dynamic"/);
   });
 
-  it('a v1 and a v2 sidecar (no dynamic) read without inventing dynamic + round-trip byte-identically', async () => {
+  it('a v3 sidecar with no dynamic reads without inventing dynamic + round-trips byte-identically', async () => {
     const root = await mkroot();
-    const K1 = `${TS}/http://example.com/legacy-v1`;
-    const K2 = `${TS}/http://example.com/legacy-v2`;
-    await writeBodiless(root, K1, 1);
-    await writeBodiless(root, K2, 2);
-
-    for (const k of [K1, K2]) {
-      const s = await readSidecar(root, k);
-      assert.ok(!('dynamic' in s), `${k} read without a dynamic field`);
-    }
-
-    const beforeV1 = await metaBytes(root, K1);
-    const beforeV2 = await metaBytes(root, K2);
+    const K = `${TS}/http://example.com/plain`;
+    await writeBodiless(root, K, 3);
+    assert.ok(!('dynamic' in (await readSidecar(root, K))), 'read without a dynamic field');
+    const before = await metaBytes(root, K);
 
     const out = await mkroot();
     await remaster(root, out);
-
-    assert.deepEqual(new Uint8Array(await metaBytes(out, K1)), new Uint8Array(beforeV1), 'v1 byte-identical');
-    assert.deepEqual(new Uint8Array(await metaBytes(out, K2)), new Uint8Array(beforeV2), 'v2 byte-identical');
-    assert.doesNotMatch((await metaBytes(out, K1)).toString('utf8'), /"dynamic"/);
-    assert.doesNotMatch((await metaBytes(out, K2)).toString('utf8'), /"dynamic"/);
+    assert.deepEqual(new Uint8Array(await metaBytes(out, K)), new Uint8Array(before), 'byte-identical');
+    assert.doesNotMatch((await metaBytes(out, K)).toString('utf8'), /"dynamic"/);
   });
+
+  for (const v of [1, 2]) {
+    it(`a v${v} sidecar is refused by readSidecar, recordDynamic, and remaster, and never upgraded (A6)`, async () => {
+      const root = await mkroot();
+      const K = `${TS}/http://example.com/old-v${v}`;
+      const { meta } = await writeBodiless(root, K, v);
+      const before = await fsp.readFile(meta);
+      await assert.rejects(readSidecar(root, K), /unsupported sidecar version/);
+      await assert.rejects(recordDynamic(root, K, []), /unsupported sidecar version/);
+      await assert.rejects(remaster(root, await mkroot()), /unsupported sidecar version/);
+      assert.deepEqual(new Uint8Array(await fsp.readFile(meta)), new Uint8Array(before), 'the old sidecar is left as it was');
+    });
+  }
 });

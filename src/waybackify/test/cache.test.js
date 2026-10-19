@@ -13,7 +13,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cacheCapture, canonicalJSON, commitEntry, entryPaths, readSidecar } from '../cache.js';
+import { bodyFile, cacheCapture, canonicalJSON, commitEntry, entryPaths, readSidecar } from '../cache.js';
 import { captureHash } from '../key.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +68,17 @@ function mockArchive(overrides = {}) {
 
 const mkroot = () => fsp.mkdtemp(path.join(os.tmpdir(), 'waybackify-cache-'));
 const sriOf = bytes => `sha256-${crypto.createHash('sha256').update(bytes).digest('base64')}`;
+const hexOf = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+/** The shared body file a key's sidecar points at (located by contentHash). */
+const bodyOf = async (root, key) => bodyFile(root, (await readSidecar(root, key)).contentHash);
+/** Every file under cap/, as `<aa>/<name>`, sorted. */
+const capFiles = async root => {
+  const base = path.join(root, 'cap');
+  if (!fs.existsSync(base)) return [];
+  const out = [];
+  for (const aa of await fsp.readdir(base)) for (const f of await fsp.readdir(path.join(base, aa))) out.push(`${aa}/${f}`);
+  return out.sort();
+};
 
 describe('cacheCapture — un-mirrorable frontier children are skipped', () => {
   let root;
@@ -135,7 +146,7 @@ describe('cacheCapture — requisites by default', () => {
       assert.equal(side.flag, r.flag);
       assert.deepEqual(side.requisites, []);
       // Verbatim bytes: stored body === exactly what the archive returned.
-      const { body } = await entryPaths(root, r.key);
+      const body = await bodyOf(root, r.key);
       assert.deepEqual(new Uint8Array(await fsp.readFile(body)), new TextEncoder().encode(r.body));
     }
   });
@@ -143,8 +154,7 @@ describe('cacheCapture — requisites by default', () => {
   it('stores VERBATIM document bytes — no toolbar strip, no URL rewriting', async () => {
     const { fetchImpl } = mockArchive();
     await cacheCapture(DOC_URL, { root, fetch: fetchImpl });
-    const { body } = await entryPaths(root, DOC_KEY);
-    const stored = await fsp.readFile(body, 'utf8');
+    const stored = await fsp.readFile(await bodyOf(root, DOC_KEY), 'utf8');
     assert.equal(stored, DOC_HTML);
     assert.ok(stored.includes('BEGIN WAYBACK TOOLBAR INSERT'), 'toolbar must survive store-time');
   });
@@ -164,20 +174,21 @@ describe('cacheCapture — requisites by default', () => {
     await cacheCapture(DOC_URL, { root, fetch: fetchImpl });
     for (const key of [DOC_KEY, ...REQS.map(r => r.key)]) {
       const side = await readSidecar(root, key);
-      const { body } = await entryPaths(root, key);
-      const bytes = await fsp.readFile(body);
+      const bytes = await fsp.readFile(bodyFile(root, side.contentHash));
       assert.match(side.contentHash, /^sha256-[A-Za-z0-9+/]+=*$/);
       assert.equal(side.contentHash, sriOf(bytes), key);
       assert.equal(side.contentLength, bytes.byteLength, key);
     }
   });
 
-  it('layout: cap/<aa>/<hash> + meta/<aa>/<hash>.json, hash = sha256hex(key), aa = hash[0:2]', async () => {
+  it('layout: meta/<aa>/<hash>.json by key hash, cap/<aa>/<digest> by content digest', async () => {
     const { fetchImpl } = mockArchive();
     await cacheCapture(DOC_URL, { root, fetch: fetchImpl });
     const hash = crypto.createHash('sha256').update(DOC_KEY, 'utf8').digest('hex');
-    assert.ok(fs.existsSync(path.join(root, 'cap', hash.slice(0, 2), hash)));
+    const digest = hexOf(new TextEncoder().encode(DOC_HTML));
     assert.ok(fs.existsSync(path.join(root, 'meta', hash.slice(0, 2), `${hash}.json`)));
+    assert.ok(fs.existsSync(path.join(root, 'cap', digest.slice(0, 2), digest)));
+    assert.ok(!fs.existsSync(path.join(root, 'cap', hash.slice(0, 2), hash)), 'no body under the key hash');
   });
 
   it('--no-requisites stores exactly one entry but still records the edges', async () => {
@@ -246,8 +257,7 @@ describe('cacheCapture — resume semantics', () => {
     const side = await readSidecar(root, gone.key);
     assert.equal(side.status, 'error');
     assert.equal(side.contentHash, undefined, 'bodiless: no contentHash');
-    const { body } = await entryPaths(root, gone.key);
-    assert.ok(!fs.existsSync(body), 'bodiless: no cap/ file');
+    assert.equal((await capFiles(root)).length, REQS.length, 'bodiless: the doc + 7 bodies, no cap/ file for the gone child');
 
     const second = mockArchive();
     await cacheCapture(DOC_URL, { root, fetch: second.fetchImpl });
@@ -286,8 +296,9 @@ describe('EC-1: crash atomicity — orphan body is ingest garbage', () => {
     assert.equal(child.signal, 'SIGKILL', `child must die by its own SIGKILL (stderr: ${child.stderr})`);
 
     const key = '20140403040000/http://crash.example/post';
-    const { body, meta } = await entryPaths(root, key);
-    assert.ok(fs.existsSync(body), 'orphan cap/ file exists (crash window was real)');
+    const { meta } = await entryPaths(root, key);
+    const orphan = bodyFile(root, sriOf(new TextEncoder().encode('<html><body>about to crash between renames</body></html>')));
+    assert.ok(fs.existsSync(orphan), 'orphan cap/ file exists (crash window was real)');
     assert.ok(!fs.existsSync(meta), 'sidecar was never published');
     assert.equal(await readSidecar(root, key), null, 'the entry reports ABSENT');
 
@@ -309,7 +320,7 @@ describe('EC-1: crash atomicity — orphan body is ingest garbage', () => {
     assert.equal(summary.fetched, 1);
     const side = await readSidecar(root, key);
     assert.equal(side.status, 'body');
-    assert.equal(await fsp.readFile(body, 'utf8'), '<html><body>recovered</body></html>');
+    assert.equal(await fsp.readFile(await bodyOf(root, key), 'utf8'), '<html><body>recovered</body></html>');
 
     // ...and an orphan is never confused with a LEGITIMATE bodiless entry:
     // a real zero-byte capture commits a sidecar with status 'empty'.
@@ -318,7 +329,7 @@ describe('EC-1: crash atomicity — orphan body is ingest garbage', () => {
     const emptySide = await readSidecar(root, emptyKey);
     assert.equal(emptySide.status, 'empty');
     assert.equal(emptySide.contentHash, undefined);
-    assert.ok(!fs.existsSync((await entryPaths(root, emptyKey)).body), 'empty entries own no cap/ file');
+    assert.equal((await capFiles(root)).length, 2, 'empty entries own no cap/ file (only the orphan + the recovered body)');
   });
 });
 
@@ -358,40 +369,73 @@ describe('EC-2: hostile-key round-trip + cross-target token identity', () => {
 
     // (c) the filename IS the shared identity hash: captureHash === the
     // bucket object key's <hash> === an independent node:crypto digest.
-    const { hash, body, meta } = await entryPaths(root, key);
+    const { hash, meta } = await entryPaths(root, key);
     assert.equal(hash, crypto.createHash('sha256').update(key, 'utf8').digest('hex'));
-    assert.equal(path.basename(body), hash);
+    assert.equal(path.basename(await bodyOf(root, key)), hexOf(new TextEncoder().encode('hostile body')));
     assert.equal(path.basename(meta), `${hash}.json`);
     assert.equal(hash, await captureHash(key));
   });
 });
 
-describe('EC-3: duplicate bodies under concurrency', () => {
-  it('distinct keys with identical bytes store + read independently; concurrent writers race safely', async () => {
+describe('EC-3: byte-identical bodies are stored once (content-addressed cap/)', () => {
+  it('distinct keys with identical bytes share ONE cap/ file; sidecars stay per key; concurrent writers race safely', async () => {
     const root = await mkroot();
     const bytes = new TextEncoder().encode('<html>the interstitial every dead domain shares</html>');
     const keys = ['2011/http://a.example/404', '2012/http://b.example/404', '2013/http://c.example/404'];
 
-    // Three concurrent writers, two of them racing the same content, plus a
-    // same-key double-writer — no locks, last-writer-wins on identical bytes.
+    // Three concurrent writers racing the same content, plus a same-key
+    // double-writer. No locks: every rename publishes identical bytes.
     await Promise.all([
       commitEntry(root, { key: keys[0], status: 'body', contentType: 'text/html', body: bytes }),
-      commitEntry(root, { key: keys[1], status: 'body', contentType: 'text/html', body: bytes }),
-      commitEntry(root, { key: keys[2], status: 'body', contentType: 'text/html', body: bytes }),
-      commitEntry(root, { key: keys[2], status: 'body', contentType: 'text/html', body: bytes })
+      commitEntry(root, { key: keys[1], status: 'body', contentType: 'text/html; charset=utf-8', body: bytes }),
+      commitEntry(root, { key: keys[2], status: 'body', contentType: 'text/plain', body: bytes }),
+      commitEntry(root, { key: keys[2], status: 'body', contentType: 'text/plain', body: bytes })
     ]);
 
     const sides = await Promise.all(keys.map(k => readSidecar(root, k)));
-    const hashes = new Set(sides.map(s => s.contentHash));
-    assert.equal(hashes.size, 1, 'same bytes → same contentHash (the future-GC group key)');
-    for (const [i, k] of keys.entries()) {
-      assert.equal(sides[i].key, k, 'sidecars never merge');
-      const { body } = await entryPaths(root, k);
-      assert.deepEqual(new Uint8Array(await fsp.readFile(body)), bytes, 'each entry serves independently');
+    assert.equal(new Set(sides.map(s => s.contentHash)).size, 1, 'same bytes, same contentHash');
+    assert.deepEqual(sides.map(s => s.key), keys, 'sidecars never merge');
+    assert.deepEqual(sides.map(s => s.contentType), ['text/html', 'text/html; charset=utf-8', 'text/plain'], 'per-capture metadata stays per sidecar');
+    for (const k of keys) {
+      assert.deepEqual(new Uint8Array(await fsp.readFile(await bodyOf(root, k))), bytes, 'each entry replays the exact bytes');
     }
-    const inodes = new Set(await Promise.all(keys.map(async k => (await fsp.stat((await entryPaths(root, k)).body)).ino)));
-    assert.equal(inodes.size, 3, 'no write-time dedupe: three independent bodies (GC hardlinking is out of scope)');
+    assert.deepEqual(await capFiles(root), [`${hexOf(bytes).slice(0, 2)}/${hexOf(bytes)}`], 'one body for three captures');
+    assert.equal((await fsp.readdir(path.join(root, 'meta'), { recursive: true })).filter(f => f.endsWith('.json')).length, 3, 'three sidecars');
     assert.equal((await fsp.readdir(path.join(root, 'tmp'))).length, 0, 'no temp litter after the races');
+  });
+
+  it('bytes that differ keep distinct bodies', async () => {
+    const root = await mkroot();
+    const enc = s => new TextEncoder().encode(s);
+    await commitEntry(root, { key: '2011/http://x.example/logo.png', status: 'body', contentType: 'image/png', body: enc('PNG v1') });
+    await commitEntry(root, { key: '2012/http://x.example/logo.png', status: 'body', contentType: 'image/png', body: enc('PNG v2') });
+    assert.equal((await capFiles(root)).length, 2);
+    assert.equal(await fsp.readFile(await bodyOf(root, '2011/http://x.example/logo.png'), 'utf8'), 'PNG v1');
+    assert.equal(await fsp.readFile(await bodyOf(root, '2012/http://x.example/logo.png'), 'utf8'), 'PNG v2');
+  });
+
+  it('two documents at different timestamps that share page chrome store each chrome body once', async () => {
+    // The observed crawl shape: two github.com documents at two snapshot
+    // timestamps, each with the same sprite + stylesheet bytes.
+    const root = await mkroot();
+    const page = ts => `<html><head><link rel="stylesheet" href="/web/${ts}cs_/http://github.com/s.css"></head>` +
+      `<body><img src="/web/${ts}im_/http://github.com/sprite.png">${ts}</body></html>`;
+    const routes = {};
+    for (const ts of ['20081013100657', '20081024183240']) {
+      routes[`https://web.archive.org/web/${ts}/http://github.com/`] = { status: 200, contentType: 'text/html', body: page(ts) };
+      routes[`https://web.archive.org/web/${ts}cs_/http://github.com/s.css`] = { status: 200, contentType: 'text/css', body: 'body{}' };
+      routes[`https://web.archive.org/web/${ts}im_/http://github.com/sprite.png`] = { status: 200, contentType: 'image/png', body: 'PNG sprite' };
+    }
+    const { fetchImpl } = mockArchive(routes);
+    for (const ts of ['20081013100657', '20081024183240']) {
+      const summary = await cacheCapture(`https://web.archive.org/web/${ts}/http://github.com/`, { root, fetch: fetchImpl });
+      assert.equal(summary.fetched, 3, ts);
+    }
+    assert.equal((await fsp.readdir(path.join(root, 'meta'), { recursive: true })).filter(f => f.endsWith('.json')).length, 6, 'six captures');
+    assert.equal((await capFiles(root)).length, 4, 'two documents + one stylesheet + one sprite');
+    for (const ts of ['20081013100657', '20081024183240']) {
+      assert.equal(await fsp.readFile(await bodyOf(root, `${ts}/http://github.com/sprite.png`), 'utf8'), 'PNG sprite');
+    }
   });
 });
 
@@ -432,16 +476,17 @@ describe('commitEntry — write-time contract enforcement', () => {
     await assert.rejects(() => readSidecar(root, key), /unsupported sidecar version/);
   });
 
-  it('reads a legacy v1 sidecar unchanged (v2 is a backward-compatible superset)', async () => {
+  it('refuses a v1 or v2 sidecar: readers accept only the current version (A6)', async () => {
     const root = await mkroot();
-    const key = '2014/http://legacy.example/';
+    const key = '2014/http://old.example/';
     await commitEntry(root, { key, status: 'body', contentType: 'text/plain', body: new Uint8Array([1]) });
     const { meta } = await entryPaths(root, key);
-    const v2 = JSON.parse(await fsp.readFile(meta, 'utf8'));
-    await fsp.writeFile(meta, JSON.stringify({ ...v2, v: 1 })); // pretend it was written by the v1 writer
-    const side = await readSidecar(root, key);
-    assert.equal(side.v, 1, 'a v1 root — the whole existing corpus — still reads');
-    assert.equal(side.status, 'body');
+    const current = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    assert.equal(current.v, 3);
+    for (const v of [1, 2]) {
+      await fsp.writeFile(meta, JSON.stringify({ ...current, v }));
+      await assert.rejects(() => readSidecar(root, key), /unsupported sidecar version/, `v${v}`);
+    }
   });
 });
 
@@ -461,7 +506,7 @@ describe('commitEntry — interstitial refusal (#363)', () => {
     assert.equal(side.contentHash, undefined, 'bodiless: no contentHash');
     assert.equal(side.contentLength, undefined, 'bodiless: no contentLength');
     assert.equal(side.target, undefined, 'wrapper stubs carry no target');
-    assert.ok(!fs.existsSync((await entryPaths(root, key)).body), 'interstitial owns no cap/ file');
+    assert.deepEqual(await capFiles(root), [], 'interstitial owns no cap/ file');
     assert.equal((await readSidecar(root, key)).status, 'interstitial', 're-reads as interstitial');
   });
 
@@ -473,7 +518,7 @@ describe('commitEntry — interstitial refusal (#363)', () => {
     assert.equal(side.status, 'interstitial');
     assert.equal(side.signature, 'redirect-interstitial');
     assert.deepEqual(side.target, { url: 'http://example.com/moved-here', timestamp: '20140403040000' });
-    assert.ok(!fs.existsSync((await entryPaths(root, key)).body));
+    assert.deepEqual(await capFiles(root), []);
   });
 
   it('refuses a .pdf/.txt stored as text/html even without body markers (extension mismatch)', async () => {
@@ -508,6 +553,19 @@ describe('commitEntry — interstitial refusal (#363)', () => {
     const real = '<!DOCTYPE html><html><head><title>Real Post</title></head><body><h1>Content</h1></body></html>';
     const side = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytes(real) });
     assert.equal(side.status, 'body');
-    assert.ok(fs.existsSync((await entryPaths(root, key)).body));
+    assert.ok(fs.existsSync(await bodyOf(root, key)));
+  });
+});
+
+describe('readSidecar — a sidecar that parses to a non-object is malformed', () => {
+  it('throws a clear error for null, [], "x", and 1 instead of a TypeError', async () => {
+    const root = await mkroot();
+    const key = '2011/http://x.example/';
+    await commitEntry(root, { key, status: 'redirect', contentType: 'text/html' });
+    const { meta } = await entryPaths(root, key);
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      await assert.rejects(readSidecar(root, key), { message: `readSidecar: malformed sidecar at ${meta} (not a JSON object)` }, text);
+    }
   });
 });

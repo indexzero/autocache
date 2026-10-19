@@ -11,17 +11,23 @@ export function captureKey(timestamp: string, originalUrl: string): string;
 
 /**
  * SHA-256 hex of a capture key (64 lowercase hex chars) — the shared
- * identity token: the bucket object key's <hash> and the local cache
- * layout's on-disk filename, one and the same.
+ * identity token: the bucket object key's <hash> and the local sidecar
+ * filename, one and the same.
  */
 export function captureHash(key: string): Promise<string>;
 
 /**
- * Rootless body object key for a capture key: `cap/<aa>/<hash>` (always
- * `/`-joined — an object key, not an OS path; consumers join it under a root
- * themselves). The shared source of truth for the `<aa>`-sharded layout.
+ * Rootless BUCKET body object key for a capture key: `cap/<aa>/<hash>`
+ * (always `/`-joined — an object key, not an OS path). A local cache root
+ * stores bodies at bodyPath() instead.
  */
 export function capturePath(key: string): Promise<string>;
+
+/**
+ * Rootless LOCAL body key for an SRI contentHash: `cap/<dd>/<digest>`, the
+ * SHA-256 hex of the body bytes. Throws on a value that is not a sha256 SRI.
+ */
+export function bodyPath(contentHash: string): string;
 
 /**
  * Rootless sidecar object key for a capture key: `meta/<aa>/<hash>.json`

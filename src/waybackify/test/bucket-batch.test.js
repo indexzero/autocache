@@ -11,8 +11,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commitEntry } from '../cache.js';
-import { capturePath, metaPath } from '../key.js';
+import { commitEntry, readSidecar } from '../cache.js';
+import { bodyPath, capturePath, metaPath } from '../key.js';
 import { emitBucketBatch, emitLine, shellQuote } from '../bucket-batch.js';
 
 // The stdout/stderr + --dry-run behavior formerly smoke-tested through the
@@ -81,8 +81,8 @@ describe('emitBucketBatch', () => {
   it('emits deterministic, hash-sorted cp lines with native metadata', async () => {
     const root = await mkRoot();
     // Distinct hashes; commit in a NON-sorted order to prove the emitter sorts.
-    await commitEntry(root, { key: '2/z', status: 'body', contentType: 'image/jpeg', body: new TextEncoder().encode('jpg') });
-    await commitEntry(root, {
+    const z = await commitEntry(root, { key: '2/z', status: 'body', contentType: 'image/jpeg', body: new TextEncoder().encode('jpg') });
+    const a = await commitEntry(root, {
       key: '1/a',
       status: 'body',
       contentType: 'text/html; charset=utf-8',
@@ -90,19 +90,35 @@ describe('emitBucketBatch', () => {
     });
 
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'mybucket' });
-    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0 });
+    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0, missingBodies: 0 });
 
     // Independently recompute the expected object keys + sorted order.
     const zKey = await capturePath('2/z');
     const aKey = await capturePath('1/a');
     const expected = [
-      { key: zKey, line: `cp --content-type image/jpeg --metadata status=body ${path.join(root, zKey)} s3://mybucket/${zKey}` },
+      { key: zKey, line: `cp --content-type image/jpeg --metadata status=body ${path.join(root, bodyPath(z.contentHash))} s3://mybucket/${zKey}` },
       {
         key: aKey,
-        line: `cp --content-type 'text/html; charset=utf-8' --metadata status=body ${path.join(root, aKey)} s3://mybucket/${aKey}`
+        line: `cp --content-type 'text/html; charset=utf-8' --metadata status=body ${path.join(root, bodyPath(a.contentHash))} s3://mybucket/${aKey}`
       }
     ].sort((x, y) => (x.key < y.key ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));
+  });
+
+  it('byte-identical captures share one local source and keep one bucket object each', async () => {
+    const root = await mkRoot();
+    const bytes = new TextEncoder().encode('PNG sprite');
+    const first = await commitEntry(root, { key: '20081013100657/http://github.com/sprite.png', status: 'body', contentType: 'image/png', body: bytes });
+    await commitEntry(root, { key: '20081024183240/http://github.com/sprite.png', status: 'body', contentType: 'image/x-png', body: bytes });
+
+    const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
+    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0, missingBodies: 0 });
+    const source = path.join(root, bodyPath(first.contentHash));
+    const expected = [
+      `cp --content-type image/png --metadata status=body ${source} s3://b/${await capturePath('20081013100657/http://github.com/sprite.png')}`,
+      `cp --content-type image/x-png --metadata status=body ${source} s3://b/${await capturePath('20081024183240/http://github.com/sprite.png')}`
+    ];
+    assert.deepEqual([...lines].sort(), expected.sort());
   });
 
   it('emits explicit --content-type application/octet-stream for a bodied entry whose contentType is ""', async () => {
@@ -121,7 +137,7 @@ describe('emitBucketBatch', () => {
 
     const emptyFile = path.join(os.tmpdir(), 'zero-byte-scratch');
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'b', emptyFile });
-    assert.deepEqual(summary, { total: 3, bodied: 0, bodiless: 3 });
+    assert.deepEqual(summary, { total: 3, bodied: 0, bodiless: 3, missingBodies: 0 });
 
     // Every line uploads the SAME empty file to a cap/ object; no local cap/ file exists.
     for (const line of lines) assert.ok(line.includes(` ${emptyFile} s3://b/cap/`), line);
@@ -153,20 +169,55 @@ describe('emitBucketBatch', () => {
     const key = '1/huge';
     const rel = await metaPath(key);
     await fsp.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
-    const sidecar = { contentType: `x/${'y'.repeat(1000)}`, fetchedAt: '2026-01-01T00:00:00Z', flag: null, key, requisites: [], status: 'body', v: 1 };
+    const contentHash = 'sha256-LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE=';
+    const sidecar = { contentHash, contentLength: 1, contentType: `x/${'y'.repeat(1000)}`, fetchedAt: '2026-01-01T00:00:00Z', flag: null, key, requisites: [], status: 'body', v: 3 };
     await fsp.writeFile(path.join(root, rel), JSON.stringify(sidecar));
     // Also drop a body so status:body has a source (guard fires before it matters).
-    const cap = await capturePath(key);
+    const cap = bodyPath(contentHash);
     await fsp.mkdir(path.dirname(path.join(root, cap)), { recursive: true });
     await fsp.writeFile(path.join(root, cap), 'x');
     await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), /1000/);
+  });
+
+  it('skips and reports a bodied sidecar whose body file is missing (a pre-dedup root needs a refetch)', async () => {
+    const root = await mkRoot();
+    const kept = await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('<html>') });
+    const lost = await commitEntry(root, { key: '2/z', status: 'body', contentType: 'image/jpeg', body: new TextEncoder().encode('jpg') });
+    const lostBody = path.join(root, bodyPath(lost.contentHash));
+    // The layout of a root written before content-addressed bodies: the bytes
+    // sit under the capture-key hash, where no reader looks.
+    const lostKey = await capturePath('2/z');
+    await fsp.mkdir(path.join(root, path.dirname(lostKey)), { recursive: true });
+    await fsp.rename(lostBody, path.join(root, lostKey));
+    const warnings = [];
+    const logger = { trace() {}, debug() {}, info() {}, warn: (fields, msg) => warnings.push({ fields, msg }), error() {}, fatal() {} };
+
+    const { lines, summary, missing } = await emitBucketBatch(root, { bucket: 'b', logger });
+    assert.deepEqual(summary, { total: 1, bodied: 1, bodiless: 0, missingBodies: 1 });
+    assert.deepEqual(lines, [
+      `cp --content-type text/html --metadata status=body ${path.join(root, bodyPath(kept.contentHash))} s3://b/${await capturePath('1/a')}`
+    ]);
+    assert.deepEqual(missing, [{ key: '2/z', sidecar: path.join(root, await metaPath('2/z')), body: lostBody }]);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].fields.evt, 'bucket-missing-body');
+    assert.match(warnings[0].msg, /names a missing body at .* \(skipped, needs a refetch\)$/);
+  });
+
+  it('refuses a sidecar that parses to a non-object (null, [], "x", 1) with a clear error', async () => {
+    const root = await mkRoot();
+    await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('<html>') });
+    const rel = await metaPath('1/a');
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(path.join(root, rel), text);
+      await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), { message: `emit-bucket-batch: malformed sidecar ${rel} (not a JSON object)` }, text);
+    }
   });
 
   it('emits nothing for an empty / never-populated root', async () => {
     const root = await mkRoot();
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
     assert.deepEqual(lines, []);
-    assert.deepEqual(summary, { total: 0, bodied: 0, bodiless: 0 });
+    assert.deepEqual(summary, { total: 0, bodied: 0, bodiless: 0, missingBodies: 0 });
   });
 });
 
@@ -197,13 +248,13 @@ describe('emitBucketBatch over the committed fixture', () => {
     const expected = [];
     for (const c of cases) {
       const objectKey = await capturePath(c.key);
-      const source = c.status === 'body' ? path.join(FIXTURE_ROOT, objectKey) : emptyFile;
+      const source = c.status === 'body' ? path.join(FIXTURE_ROOT, bodyPath((await readSidecar(FIXTURE_ROOT, c.key)).contentHash)) : emptyFile;
       const ct = c.ct || 'application/octet-stream';
       expected.push({ objectKey, line: `cp --content-type ${shellQuote(ct)} --metadata status=${c.status} ${source} s3://wayback/${objectKey}` });
     }
     expected.sort((a, b) => (a.objectKey < b.objectKey ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));
-    assert.deepEqual(summary, { total: 7, bodied: 4, bodiless: 3 });
+    assert.deepEqual(summary, { total: 7, bodied: 4, bodiless: 3, missingBodies: 0 });
   });
 
   it('pins the cross-package tripwire hash in the example.com line', () => {

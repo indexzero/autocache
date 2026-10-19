@@ -27,7 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { captureHash } from '@autocache/waybackify/key.js';
+import { bodyPath, captureHash } from '@autocache/waybackify/key.js';
 import {
   checkDeterminism,
   classifyUpstream,
@@ -69,9 +69,10 @@ async function writeEntry(root, spec) {
   if (dynamic) sidecar.dynamic = dynamic;
   if (status === 'body') {
     const bytes = bytesOf(body ?? '');
-    await fsp.mkdir(path.join(root, 'cap', aa), { recursive: true });
-    await fsp.writeFile(path.join(root, 'cap', aa, hash), bytes);
     sidecar.contentHash = sri(bytes);
+    const file = path.join(root, bodyPath(sidecar.contentHash));
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    await fsp.writeFile(file, bytes);
     sidecar.contentLength = bytes.length;
   }
   await fsp.mkdir(path.join(root, 'meta', aa), { recursive: true });
@@ -122,10 +123,16 @@ async function buildCleanRoot() {
   return root;
 }
 
-/** Overwrite one remastered body by capture key (a defect injector). */
-async function overwriteBody(root, key, bytes) {
+/** The body file a capture key's sidecar names (content-addressed). */
+async function bodyFileFor(root, key) {
   const hash = await captureHash(key);
-  await fsp.writeFile(path.join(root, 'cap', hash.slice(0, 2), hash), bytes);
+  const sidecar = JSON.parse(await fsp.readFile(path.join(root, 'meta', hash.slice(0, 2), `${hash}.json`), 'utf8'));
+  return path.join(root, bodyPath(sidecar.contentHash));
+}
+
+/** Overwrite one remastered body by capture key in place (a defect injector). */
+async function overwriteBody(root, key, bytes) {
+  await fsp.writeFile(await bodyFileFor(root, key), bytes);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -760,6 +767,19 @@ describe('remaster verify — the tree reader takes sidecar v3 only', () => {
   });
 });
 
+describe('remaster verify — the tree reader refuses a non-object sidecar', () => {
+  it('enumerateRemastered rejects null, [], "x", and 1 with a clear error', async () => {
+    const root = await mkroot('wb-verify-nonobject-');
+    await writeEntry(root, { key: DOC_KEY, contentType: 'text/html', body: '<html>x</html>' });
+    const hash = await captureHash(DOC_KEY);
+    const meta = path.join(root, 'meta', hash.slice(0, 2), `${hash}.json`);
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      await assert.rejects(enumerateRemastered(root), { message: `remaster verify: malformed sidecar at ${meta} (not a JSON object)` }, text);
+    }
+  });
+});
+
 describe('remaster verify static — determinism (build-record integrity + rebuild)', () => {
   let hermetic;
 
@@ -842,8 +862,7 @@ describe('remaster verify static — the committed fixture stands alone under ru
     // findmail.com (a capture the corpus does not hold) via an ABSOLUTE
     // https://web.archive.org/web/… href. After remaster it is the host-relative
     // mirror form, and no absolute archive origin survives in the served bytes.
-    const hash = await captureHash('19981202230410/http://www.google.com/');
-    const googleBody = await fsp.readFile(path.join(out, 'cap', hash.slice(0, 2), hash), 'utf8');
+    const googleBody = await fsp.readFile(await bodyFileFor(out, '19981202230410/http://www.google.com/'), 'utf8');
     assert.ok(
       googleBody.includes('/web/19981202230410/http://www.findmail.com/list/google-friends/'),
       'the uncaptured navigational link is localized to the mirror form'

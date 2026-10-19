@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { dynamicEntryError } from '@autocache/waybackify/cache.js';
 import { RULE_VERSION } from '@autocache/waybackify/rewrite.js';
-import { crawl, CapReachedError } from '../src/crawl.js';
+import { crawl, CapReachedError, enumerateHtmlDocKeys } from '../src/crawl.js';
 import { compilePolicy } from '../src/policy.js';
 import { readJsonl, verifiedKeys } from '../src/ledger.js';
 
@@ -580,4 +580,32 @@ test('static-only: closes recorded dynamic frontier without a probe (no render, 
   assert.equal(counters.renders, 0);
   assert.ok(store.sidecars.has(a)); // the recorded dynamic child was fetched
   await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('enumerateHtmlDocKeys reads v3 sidecars only: an HTML body doc is listed, another version is refused', async () => {
+  const root = await tmpRoot();
+  const metaDir = path.join(root, 'meta', 'aa');
+  await fsp.mkdir(metaDir, { recursive: true });
+  const doc = { v: 3, key: '20140403040000/http://example.com/', status: 'body', contentType: 'text/html' };
+  await fsp.writeFile(path.join(metaDir, 'doc.json'), JSON.stringify(doc));
+  await fsp.writeFile(path.join(metaDir, 'css.json'), JSON.stringify({ ...doc, key: '20140403040000/http://example.com/a.css', contentType: 'text/css' }));
+  await fsp.writeFile(path.join(metaDir, 'torn.json'), '{ not json');
+  assert.deepEqual(await enumerateHtmlDocKeys(root), ['20140403040000/http://example.com/']);
+
+  for (const v of [1, 2, 99]) {
+    const old = path.join(metaDir, 'old.json');
+    await fsp.writeFile(old, JSON.stringify({ ...doc, v, key: '20140403040000/http://example.com/old' }));
+    await assert.rejects(enumerateHtmlDocKeys(root), { message: `enumerateHtmlDocKeys: unsupported sidecar version ${v} at ${old}` });
+  }
+});
+
+test('enumerateHtmlDocKeys skips a sidecar that parses to a non-object (null, [], "x", 1) and never throws', async () => {
+  const root = await tmpRoot();
+  const metaDir = path.join(root, 'meta', 'aa');
+  await fsp.mkdir(metaDir, { recursive: true });
+  await fsp.writeFile(path.join(metaDir, 'doc.json'), JSON.stringify({ v: 3, key: '20140403040000/http://example.com/', status: 'body', contentType: 'text/html' }));
+  for (const text of ['null', '[]', '"x"', '1']) {
+    await fsp.writeFile(path.join(metaDir, 'bad.json'), text);
+    assert.deepEqual(await enumerateHtmlDocKeys(root), ['20140403040000/http://example.com/'], text);
+  }
 });

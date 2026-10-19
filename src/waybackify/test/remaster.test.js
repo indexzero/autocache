@@ -15,7 +15,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureHash } from '../key.js';
+import { bodyPath, captureHash } from '../key.js';
 import { RULE_VERSION } from '../rewrite.js';
 import { BUILD_NAME, ENGINE_VERSION, remaster } from '../remaster.js';
 
@@ -46,12 +46,13 @@ function canonicalJSON(value) {
 async function writeEntry(root, { key, status = 'body', contentType = '', flag = null, body = null }) {
   const hash = await captureHash(key);
   const aa = hash.slice(0, 2);
-  const sidecar = { contentType, fetchedAt: '2026-07-23T00:00:00.000Z', flag, key, requisites: [], status, v: 1 };
+  const sidecar = { contentType, fetchedAt: '2026-07-23T00:00:00.000Z', flag, key, requisites: [], status, v: 3 };
   if (status === 'body') {
     const bytes = bytesOf(body ?? '');
-    await fsp.mkdir(path.join(root, 'cap', aa), { recursive: true });
-    await fsp.writeFile(path.join(root, 'cap', aa, hash), bytes);
     sidecar.contentHash = sri(bytes);
+    const file = path.join(root, bodyPath(sidecar.contentHash));
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    await fsp.writeFile(file, bytes);
     sidecar.contentLength = bytes.length;
   }
   await fsp.mkdir(path.join(root, 'meta', aa), { recursive: true });
@@ -65,12 +66,8 @@ async function readOut(root, key) {
   const aa = hash.slice(0, 2);
   const metaRaw = await fsp.readFile(path.join(root, 'meta', aa, `${hash}.json`), 'utf8');
   const sidecar = JSON.parse(metaRaw);
-  let body = null;
-  try {
-    body = await fsp.readFile(path.join(root, 'cap', aa, hash));
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-  }
+  // Bodies are content-addressed: only a sidecar with a contentHash has one.
+  const body = sidecar.contentHash === undefined ? null : await fsp.readFile(path.join(root, bodyPath(sidecar.contentHash)));
   return { sidecar, body, metaRaw };
 }
 
@@ -198,12 +195,9 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
   });
 
   it('a binary body is copied byte-identical, sidecar unchanged', async () => {
-    const inHash = await captureHash(IMG_KEY);
-    const inAa = inHash.slice(0, 2);
-    const inBytes = await fsp.readFile(path.join(root, 'cap', inAa, inHash));
+    const { body: inBytes, metaRaw: origMeta } = await readOut(root, IMG_KEY);
     const { body, metaRaw } = await readOut(out, IMG_KEY);
     assert.deepEqual(body, inBytes); // byte-for-byte
-    const origMeta = await fsp.readFile(path.join(root, 'meta', inAa, `${inHash}.json`), 'utf8');
     assert.equal(metaRaw, origMeta); // sidecar byte-identical
   });
 
@@ -212,7 +206,7 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
       const hash = await captureHash(key);
       const aa = hash.slice(0, 2);
       const { body, metaRaw } = await readOut(out, key);
-      assert.equal(body, null); // no cap/ body written
+      assert.equal(body, null); // no contentHash, so no cap/ body
       const origMeta = await fsp.readFile(path.join(root, 'meta', aa, `${hash}.json`), 'utf8');
       assert.equal(metaRaw, origMeta);
     }
@@ -234,6 +228,59 @@ describe('remaster — synthetic root (mechanism coverage)', () => {
     const empty = build.entries.find(e => e.key.endsWith('/empty'));
     assert.equal(empty.inputHash, null);
     assert.equal(empty.outputHash, null);
+  });
+});
+
+describe('remaster — shared bodies', () => {
+  it('two captures with equal bytes share one hermetic body and one remastered body', async () => {
+    const root = await mkroot('rm-shared-');
+    const out = await mkroot('rm-shared-out-');
+    const chrome = 'var sprite = "https://web.archive.org/web/20081013100657im_/http://github.com/sprite.png";';
+    await writeEntry(root, { key: '20081013100657/http://github.com/app.js', contentType: 'application/javascript', flag: 'js_', body: chrome });
+    await writeEntry(root, { key: '20081024183240/http://github.com/app.js', contentType: 'application/javascript', flag: 'js_', body: chrome });
+    const report = await remaster(root, out);
+    assert.equal(report.bodies, 2);
+    const caps = (await treeDigest(out)).names.filter(n => n.startsWith('cap/'));
+    assert.equal(caps.length, 1, 'one rewritten body for both captures');
+    const a = await readOut(out, '20081013100657/http://github.com/app.js');
+    const b = await readOut(out, '20081024183240/http://github.com/app.js');
+    assert.equal(a.sidecar.contentHash, b.sidecar.contentHash);
+    assert.deepEqual(a.body, b.body);
+    assert.equal(a.sidecar.contentHash, sri(a.body));
+  });
+});
+
+describe('remaster — a sidecar whose body is missing', () => {
+  it('fails with an error that names the sidecar and the expected body path (a pre-dedup root needs a refetch)', async () => {
+    const root = await mkroot('wb-remaster-missing-');
+    const out = await mkroot('wb-remaster-missing-out-');
+    const key = `${TS}/http://example.com/`;
+    const { hash, aa } = await writeEntry(root, { key, contentType: 'text/html', body: '<html>x</html>' });
+    const sidecar = JSON.parse(await fsp.readFile(path.join(root, 'meta', aa, `${hash}.json`), 'utf8'));
+    const body = path.join(root, bodyPath(sidecar.contentHash));
+    // The layout of a root written before content-addressed bodies: the
+    // bytes sit under the capture-key hash, where no reader looks.
+    await fsp.mkdir(path.join(root, 'cap', aa), { recursive: true });
+    await fsp.rename(body, path.join(root, 'cap', aa, hash));
+
+    await assert.rejects(remaster(root, out), {
+      message:
+        `remaster: sidecar at ${path.join(root, 'meta', aa, `${hash}.json`)} names a missing body at ${body} ` +
+        `(contentHash ${sidecar.contentHash}). A root written before content-addressed bodies needs a refetch.`
+    });
+  });
+});
+
+describe('remaster — a sidecar that parses to a non-object is malformed', () => {
+  it('fails with a clear error for null, [], "x", and 1', async () => {
+    const root = await mkroot('wb-remaster-nonobject-');
+    const key = `${TS}/http://example.com/`;
+    const { hash, aa } = await writeEntry(root, { key, contentType: 'text/html', body: '<html>x</html>' });
+    const meta = path.join(root, 'meta', aa, `${hash}.json`);
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      await assert.rejects(remaster(root, await mkroot('wb-remaster-nonobject-out-')), { message: `remaster: malformed sidecar at ${meta} (not a JSON object)` }, text);
+    }
   });
 });
 
@@ -264,8 +311,8 @@ describe('remaster — committed 7-entry fixture', () => {
     const names = (await treeDigest(out)).names;
     const caps = names.filter(n => n.startsWith('cap/'));
     assert.equal(caps.length, 4);
-    // the fixture's orphan body (key .../orphan, hash d325db35…) has no sidecar → never carried.
-    assert.ok(!caps.some(n => n.includes('d325db35')));
+    // the fixture's orphan body (digest 1258fb5b…) has no sidecar → never carried.
+    assert.ok(!caps.some(n => n.includes('1258fb5b')));
   });
 
   it('every bodied entry is FsStore-servable: sidecar contentLength + contentHash match the bytes', async () => {
@@ -274,8 +321,7 @@ describe('remaster — committed 7-entry fixture', () => {
       for (const file of await fsp.readdir(path.join(metaDir, aa))) {
         const sidecar = JSON.parse(await fsp.readFile(path.join(metaDir, aa, file), 'utf8'));
         if (sidecar.status !== 'body') continue;
-        const hash = file.slice(0, -'.json'.length);
-        const body = await fsp.readFile(path.join(out, 'cap', aa, hash));
+        const body = await fsp.readFile(path.join(out, bodyPath(sidecar.contentHash)));
         assert.equal(sidecar.contentLength, body.length, `${sidecar.key} length`);
         assert.equal(sidecar.contentHash, sri(body), `${sidecar.key} hash`);
       }

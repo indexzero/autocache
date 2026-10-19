@@ -5,10 +5,10 @@
  * remote-serving) and Fastly Compute (where Object Storage has no SDK binding —
  * every read is a SigV4-signed origin fetch).
  *
- * The layout is the local layout verbatim (src/key.ts): the object key is
- * `cap/<aa>/<hash>` (derived by capturePath), so a bucket is a byte-for-byte
- * projection of a `waybackify cache` root and `s3 ls` reads like the serving
- * path. Metadata is HYBRID and this store reads only the SERVING half:
+ * The object key is `cap/<aa>/<hash>` (derived by capturePath): one body
+ * object per capture. A `waybackify cache` root stores equal bodies once
+ * (content-addressed), and the bucket sync copies that shared body to each
+ * capture's object. Metadata is HYBRID and this store reads only the SERVING half:
  *
  *   - Content-Type   the object's native Content-Type response header,
  *                    normalized (`''`/absent → application/octet-stream) exactly

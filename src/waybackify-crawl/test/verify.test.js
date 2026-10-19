@@ -347,6 +347,25 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     assert.equal(finding.resource, true);
   });
 
+  it('a ref in an attribute the browser never loads, or in a comment, is advisory even when its key is in the store', () => {
+    const ref = `https://web.archive.org/web/${TS}/http://example.com/endpoint?a=1&amp;b=2`;
+    const key = `${TS}/http://example.com/endpoint?a=1&b=2`;
+    const store = new Set([key]);
+    const classOf = body => {
+      const { residual, findings } = classifyUpstream(scanBody('k', body, { html: true }), store, new Set());
+      return { id: Object.entries(residual.classes).find(([, c]) => c.count > 0)[0], failing: findings.length };
+    };
+    for (const body of [`<img alt="${ref}" src="x.png">`, `<p title=${ref}>x</p>`, `<div data-note="${ref}"></div>`, `<!-- ${ref} -->`]) {
+      assert.deepEqual(classOf(body), { id: 'novelPage', failing: 0 }, body);
+    }
+    // A URL attribute is a load or a follow: cite, src, and href keep their positions.
+    assert.deepEqual(classOf(`<blockquote cite="${ref}">x</blockquote>`), { id: 'inStore', failing: 1 });
+    assert.deepEqual(classOf(`<img alt="${ref}" src="${ref}">`), { id: 'inStore', failing: 1 }, 'one loaded occurrence counts');
+    assert.deepEqual(classOf(`<a href="${ref}">x</a>`), { id: 'inStore', failing: 1 });
+    assert.equal(scanBody('k', `<img alt="${ref}">`, { html: true })[0].inert, true);
+    assert.equal(scanBody('k', `<img src="${ref}">`, { html: true })[0].inert, false);
+  });
+
   it('scanBody keeps byte offsets across CRLF line ends and unquoted values', () => {
     const decoded = `${TS}/http://example.com/?a=1&b=2`;
     const html = `<html>\r\n<body>\r\n<img\r\n  alt=logo\r\n  src=https://web.archive.org/web/${TS}/http://example.com/?a=1&amp;b=2\r\n>\r\n</body></html>`;

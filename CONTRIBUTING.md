@@ -8,7 +8,7 @@ Please read the [Code of Conduct](CODE_OF_CONDUCT.md) before you take part.
 
 ## Project layout
 
-autocache is a pnpm monorepo. Four packages live under `src/*`.
+autocache is a pnpm monorepo. Five packages live under `src/*`.
 
 | package | what it does |
 |---|---|
@@ -16,6 +16,7 @@ autocache is a pnpm monorepo. Four packages live under `src/*`.
 | `@autocache/waybackify-cli` | the CLI — `manifest`, `rewrite`, `cache`, `remaster`, `bucket` |
 | `@autocache/waybackify-crawl` | the crawl engine and remaster-verify |
 | `@autocache/waybackify-serve` | the edge server — Node, Cloudflare Workers, and Fastly Compute |
+| `@autocache/waybackify-verify` | the bucket verifier — the four-layer parity check behind `bucket verify` |
 
 The project requires Node 24 or later and pnpm 10.
 

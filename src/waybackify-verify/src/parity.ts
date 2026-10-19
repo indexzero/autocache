@@ -25,7 +25,8 @@
  *            both under strict serving; #361).
  *
  * Node-only ON PURPOSE (node:fs walking, node:crypto streaming digest, and the
- * @hono/node-server boot in Layer 4) — it lives here, never in the edge graph.
+ * @hono/node-server boot in Layer 4). It lives in waybackify-verify, never in
+ * the edge graph of waybackify-serve.
  * It reads through the SAME S3Store the server serves from (Layers 2–4), so a
  * parity pass is a serving guarantee, not a parallel re-implementation. The one
  * capability the read-only Store lacks — enumerating a prefix — is the small
@@ -40,11 +41,11 @@
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import { capturePath, metaPath } from '@autocache/waybackify/key.js';
-import { isSidecarObject, SIDECAR_VERSION } from './fsstore.ts';
-import { S3Store } from './s3store.ts';
-import { serveBucket, serveCacheRoot, type RunningServer } from './node.ts';
-import { signRequest, type SigV4Credentials } from './sigv4.ts';
-import type { Capture, CaptureStatus } from './store.ts';
+import { isSidecarObject } from '@autocache/waybackify-serve/fsstore';
+import { S3Store } from '@autocache/waybackify-serve/s3store';
+import { serveBucket, serveCacheRoot, type RunningServer } from '@autocache/waybackify-serve/node';
+import { signRequest, type SigV4Credentials } from '@autocache/waybackify-serve/sigv4';
+import type { Capture, CaptureStatus } from '@autocache/waybackify-serve/store';
 import {
   checkpointWriter,
   positiveInteger,

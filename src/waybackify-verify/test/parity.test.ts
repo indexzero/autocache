@@ -1,8 +1,8 @@
 /**
  * The four-layer root ↔ bucket PARITY gate (src/parity.ts, #292), driven
  * against the committed cache-root fixture PROJECTED to bucket shape
- * (test/s3-fixture.ts — the same projection the serve router's remote-mode test
- * uses) over an offline stub S3 endpoint that answers HEAD/GET and ListObjectsV2.
+ * (waybackify-serve/test/s3-fixture.ts — the same projection the serve router's
+ * remote-mode test uses) over an offline stub S3 endpoint that answers HEAD/GET and ListObjectsV2.
  *
  * The all-green case proves a faithful projection passes every layer (including
  * the empty-contentType normalization — a `''` sidecar's correct native value
@@ -38,9 +38,9 @@ import {
   runParityCheck,
   type ParityConfig
 } from '../src/parity.ts';
-import { projectFixtureToBucket, startS3Stub, type S3Object } from './s3-fixture.ts';
+import { projectFixtureToBucket, startS3Stub, type S3Object } from '../../waybackify-serve/test/s3-fixture.ts';
 
-const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
+const FIXTURE_ROOT = fileURLToPath(new URL('../../waybackify-serve/test/fixtures/cache-root', import.meta.url));
 const BUCKET = 'wayback-captures';
 /** Any non-empty pair — the stub verifies no signature; signing just needs values. */
 const CREDENTIALS = { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY' };

@@ -73,24 +73,6 @@
         "types": "./dist/esm/fastly.d.ts",
         "default": "./dist/esm/fastly.js"
       }
-    },
-    "./parity": {
-      "import": {
-        "types": "./dist/esm/parity.d.ts",
-        "default": "./dist/esm/parity.js"
-      }
-    },
-    "./retry": {
-      "import": {
-        "types": "./dist/esm/retry.d.ts",
-        "default": "./dist/esm/retry.js"
-      }
-    },
-    "./verify-checkpoint": {
-      "import": {
-        "types": "./dist/esm/verify-checkpoint.d.ts",
-        "default": "./dist/esm/verify-checkpoint.js"
-      }
     }
   },
   "scripts": {
@@ -120,10 +102,7 @@
       "./html": "./src/html.ts",
       "./corpus": "./src/corpus.ts",
       "./cloudflare": "./src/cloudflare.ts",
-      "./fastly": "./src/fastly.ts",
-      "./parity": "./src/parity.ts",
-      "./retry": "./src/retry.ts",
-      "./verify-checkpoint": "./src/verify-checkpoint.ts"
+      "./fastly": "./src/fastly.ts"
     }
   },
   "author": "Charlie Robbins <npm@charlie.dev>",
@@ -136,8 +115,7 @@
   "dependencies": {
     "@autocache/waybackify": "workspace:*",
     "@hono/node-server": "^2.0.8",
-    "hono": "^4.12.29",
-    "undici": "^7.28.0"
+    "hono": "^4.12.29"
   },
   "devDependencies": {
     "@fastly/js-compute": "^3.43.1",

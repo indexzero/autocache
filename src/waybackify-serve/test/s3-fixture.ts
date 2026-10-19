@@ -2,8 +2,8 @@
  * Shared test rig: project the committed cache-root fixture into the bucket
  * layout the S3Store / parity check read, and stand up a tiny offline
  * path-style S3 endpoint over it. Extracted so node.test.ts (serving) and
- * parity.test.ts (the four-layer gate) drive ONE projection + ONE stub, never
- * two subtly-diverging copies.
+ * waybackify-verify/test/parity.test.ts (the four-layer gate) drive ONE
+ * projection + ONE stub, never two subtly-diverging copies.
  *
  * The projection is the batch-emitter's model made concrete: for every meta
  * sidecar the bucket carries BOTH objects the sync uploads —

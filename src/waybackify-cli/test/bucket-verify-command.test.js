@@ -1,5 +1,5 @@
 // `waybackify bucket verify` handler — thin-wrapper wiring test. The parity
-// engine (waybackify-serve/parity) is covered by its own suite; here we prove
+// engine (waybackify-verify) is covered by its own suite; here we prove
 // the surface's required flags, the AWS-creds-from-env usage guard, and the
 // verdict → exit-code mapping — all OFFLINE (an injected parity module, no
 // network, no dispatcher install).
@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { checkpointPath } from '@autocache/waybackify-serve/verify-checkpoint';
+import { checkpointPath } from '@autocache/waybackify-verify/verify-checkpoint';
 import { EXIT, run } from '../src/cli.js';
 import { bucketVerifyHandler } from '../src/commands/bucket-verify.js';
 
@@ -27,6 +27,22 @@ function fakeParity(report, calls = []) {
     DEFAULT_CONCURRENCY: 16
   };
 }
+
+// ---- where the engine loads from ------------------------------------------
+
+test('the engine, the dispatcher, and the checkpoint store load from @autocache/waybackify-verify', () => {
+  const engine = {
+    '@autocache/waybackify-verify': 'parity.js',
+    '@autocache/waybackify-verify/retry': 'retry.js',
+    '@autocache/waybackify-verify/verify-checkpoint': 'verify-checkpoint.js'
+  };
+  for (const [specifier, file] of Object.entries(engine)) {
+    assert.ok(import.meta.resolve(specifier).endsWith(`/waybackify-verify/dist/esm/${file}`), specifier);
+  }
+  const source = fs.readFileSync(new URL('../src/commands/bucket-verify.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /waybackify-serve/);
+  for (const specifier of Object.keys(engine)) assert.ok(source.includes(`import('${specifier}')`), specifier);
+});
 
 // ---- required flags (validate() at parse time; handler never runs) ----------
 

@@ -1,9 +1,9 @@
 // `waybackify bucket verify` handler — thin wiring over the parity engine, per
 // the CLI's hard thin-wrapper rule: the load-bearing four-layer verifier (count
 // parity, metadata sweep, body verification, serving parity) is
-// waybackify-serve/parity; this file translates the parsed argv payload into a
+// waybackify-verify; this file translates the parsed argv payload into a
 // runParityCheck() call, installs the retrying global dispatcher at the process
-// edge (waybackify-serve/retry — so ~22k signed reads self-heal a transient
+// edge (waybackify-verify/retry — so ~22k signed reads self-heal a transient
 // flap), reads AWS creds from the environment, and maps the verdict to an exit
 // code. Ports the run + error logic of the retired bucket-parity fsck bin
 // (§G `bucket verify`).
@@ -19,7 +19,7 @@
 //
 // The run is resumable. Without --layer, the handler stores the
 // checkpoint of the engine at <root>/.verify/<target>.json
-// (waybackify-serve/verify-checkpoint) as the run works. A passing run removes
+// (waybackify-verify/verify-checkpoint) as the run works. A passing run removes
 // it. A later --resume run hands it back to the engine, which then skips the
 // layers that passed and the Layer 3 bodies that verified. A default run
 // removes an old checkpoint before its first bucket read. An explicit --layer
@@ -50,9 +50,9 @@ function parseCount(raw, flag, fail) {
  * wires the default.
  *
  * @param {Object} [deps]
- * @param {Object}   [deps.parity] - the waybackify-serve/parity module (injected → no library load, no dispatcher)
+ * @param {Object}   [deps.parity] - the waybackify-verify parity module (injected → no library load, no dispatcher)
  * @param {Function} [deps.setGlobalDispatcher] - undici sink (injected → no global install)
- * @param {Function} [deps.createRetryAgent] - waybackify-serve/retry factory
+ * @param {Function} [deps.createRetryAgent] - waybackify-verify/retry factory
  * @param {Object}   [deps.env] - environment for AWS creds (default process.env)
  * @returns {Function} paparam runner: ({ flags }) => Promise<void>
  */
@@ -82,7 +82,7 @@ export function bucketVerifyHandler(deps = {}) {
     const credentials = sessionToken ? { accessKeyId, secretAccessKey, sessionToken } : { accessKeyId, secretAccessKey };
 
     // Load the engine (injected or lazy).
-    const parity = deps.parity ?? (await import('@autocache/waybackify-serve/parity'));
+    const parity = deps.parity ?? (await import('@autocache/waybackify-verify'));
     const { runParityCheck, formatReport, formatLayerVerdict, diagnoseFailure, DEFAULT_CONCURRENCY } = parity;
     const concurrency = currentConcurrency ?? DEFAULT_CONCURRENCY;
 
@@ -92,7 +92,7 @@ export function bucketVerifyHandler(deps = {}) {
     // Skipped when the engine is injected (offline wiring test).
     if (!deps.parity) {
       const setGlobalDispatcher = deps.setGlobalDispatcher ?? (await import('undici')).setGlobalDispatcher;
-      const createRetryAgent = deps.createRetryAgent ?? (await import('@autocache/waybackify-serve/retry')).createRetryAgent;
+      const createRetryAgent = deps.createRetryAgent ?? (await import('@autocache/waybackify-verify/retry')).createRetryAgent;
       setGlobalDispatcher(createRetryAgent());
     }
 
@@ -101,7 +101,7 @@ export function bucketVerifyHandler(deps = {}) {
     let checkpoints;
     let prior;
     if (!layers) {
-      checkpoints = deps.checkpoint ?? (await import('@autocache/waybackify-serve/verify-checkpoint'));
+      checkpoints = deps.checkpoint ?? (await import('@autocache/waybackify-verify/verify-checkpoint'));
       checkpointFile = checkpoints.checkpointPath(flags.root, { endpoint: flags.endpoint, bucket: flags.bucket, prefix: flags.prefix });
       if (resume) {
         try {

@@ -1,0 +1,78 @@
+{
+  "name": "@autocache/waybackify-verify",
+  "version": "0.0.0",
+  "description": "The wayback mirror verifier — the four-layer root to bucket parity check, its retrying undici dispatcher, and its resumable checkpoint store. Node-only audit code over the serving core of waybackify-serve. The waybackify CLI runs it as `bucket verify`.",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/esm/parity.d.ts",
+        "default": "./dist/esm/parity.js"
+      }
+    },
+    "./parity": {
+      "import": {
+        "types": "./dist/esm/parity.d.ts",
+        "default": "./dist/esm/parity.js"
+      }
+    },
+    "./retry": {
+      "import": {
+        "types": "./dist/esm/retry.d.ts",
+        "default": "./dist/esm/retry.js"
+      }
+    },
+    "./verify-checkpoint": {
+      "import": {
+        "types": "./dist/esm/verify-checkpoint.d.ts",
+        "default": "./dist/esm/verify-checkpoint.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tshy",
+    "prepare": "tshy",
+    "pretest": "tshy",
+    "test": "node --test ./test/*.test.ts",
+    "pretypecheck": "tshy",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "tshy": {
+    "project": "tsconfig.build.json",
+    "dialects": [
+      "esm"
+    ],
+    "exports": {
+      "./package.json": "./package.json",
+      ".": "./src/parity.ts",
+      "./parity": "./src/parity.ts",
+      "./retry": "./src/retry.ts",
+      "./verify-checkpoint": "./src/verify-checkpoint.ts"
+    }
+  },
+  "keywords": [
+    "wayback",
+    "internet-archive",
+    "s3",
+    "verify"
+  ],
+  "author": "Charlie Robbins <npm@charlie.dev>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indexzero/autocache.git",
+    "directory": "src/waybackify-verify"
+  },
+  "dependencies": {
+    "@autocache/waybackify": "workspace:*",
+    "@autocache/waybackify-serve": "workspace:*",
+    "undici": "^7.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "tshy": "^4.1.3",
+    "typescript": "^6.0.2"
+  },
+  "module": "./dist/esm/parity.js"
+}

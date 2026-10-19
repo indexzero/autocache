@@ -398,7 +398,7 @@ export async function fsck(root, options = {}) {
   //   remaster.build.json  `remaster build`'s build record (remaster.js
   //                        BUILD_NAME) at a remastered root.
   //   .verify/             `bucket verify`'s checkpoint, one file per bucket
-  //                        target (waybackify-serve verify-checkpoint.ts),
+  //                        target (waybackify-verify verify-checkpoint.ts),
   //                        so that an interrupted verification can resume.
   // fsck must not flag its own sibling commands' state as foreign — else
   // `cache fill`/`cache crawl`/`remaster build`/`bucket verify` then `cache verify` on that

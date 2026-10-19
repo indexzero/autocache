@@ -5,7 +5,8 @@
  * different root entry set or a different bucket target is void, and the run
  * reads every requested layer in full.
  *
- * Offline: the stub S3 endpoint from s3-fixture.ts records every request, so
+ * Offline: the stub S3 endpoint from waybackify-serve/test/s3-fixture.ts
+ * records every request, so
  * each test counts exactly which reads a resumed run made.
  */
 
@@ -21,9 +22,9 @@ import {
   type ParityLogger
 } from '../src/parity.ts';
 import { rootSignature, type VerifyCheckpoint } from '../src/verify-checkpoint.ts';
-import { projectFixtureToBucket, startS3Stub, type S3Object, type S3Stub, type StubOverride } from './s3-fixture.ts';
+import { projectFixtureToBucket, startS3Stub, type S3Object, type S3Stub, type StubOverride } from '../../waybackify-serve/test/s3-fixture.ts';
 
-const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
+const FIXTURE_ROOT = fileURLToPath(new URL('../../waybackify-serve/test/fixtures/cache-root', import.meta.url));
 const BUCKET = 'wayback-captures';
 const CREDENTIALS = { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY' };
 

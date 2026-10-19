@@ -36,7 +36,7 @@ const ORIGIN = 'https://parity.mock.test';
 const BUCKET = 'wayback-captures';
 const CREDENTIALS = { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY' };
 const CONFIG: ParityConfig = { root: '/unused', endpoint: ORIGIN, bucket: BUCKET, region: 'auto', credentials: CREDENTIALS };
-const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
+const FIXTURE_ROOT = fileURLToPath(new URL('../../waybackify-serve/test/fixtures/cache-root', import.meta.url));
 
 /** Match any request to the bucket, regardless of the ListObjectsV2 query string. */
 const ANY_BUCKET_PATH = new RegExp(`^/${BUCKET}`);

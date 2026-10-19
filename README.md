@@ -126,6 +126,7 @@ The server also runs on Cloudflare Workers and Fastly Compute.
 | [`@autocache/waybackify-cli`](src/waybackify-cli) | The `waybackify` CLI: manifest, rewrite, ledger, check, search, audit, cache, remaster, bucket. |
 | [`@autocache/waybackify-crawl`](src/waybackify-crawl) | The completeness crawler that drives documents to a dynamic-requisite fixpoint. |
 | [`@autocache/waybackify-serve`](src/waybackify-serve) | The edge server for Node, Cloudflare Workers, and Fastly Compute. |
+| [`@autocache/waybackify-verify`](src/waybackify-verify) | The bucket verifier: the four-layer parity check behind `bucket verify`, resumable from a checkpoint. |
 
 ## Deep dives
 

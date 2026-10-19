@@ -552,7 +552,13 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         '\n' +
         'Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the\n' +
         'environment, never flags. Output: a per-layer report on stdout (--json\n' +
-        'for the raw report). Exit 0 all layers pass, 1 on any mismatch.'
+        'for the raw report). Exit 0 all layers pass, 1 on any mismatch.\n' +
+        '\n' +
+        'A run over all layers stores its progress in <root>/.verify/ and\n' +
+        'removes it when the run passes. After an interrupted run, --resume\n' +
+        'skips the layers that passed and the bodies that verified. A resume\n' +
+        'trusts that the bucket did not change since the interrupted run.\n' +
+        'Without --resume, every layer runs in full.'
     ),
     flag('--root|-r <root>', 'local cache root — the archive of record — required'),
     flag('--bucket <name>', 'target bucket name — required'),
@@ -562,6 +568,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     flag('--sample <n>', 'Layer 4 sample size per status class (default 3)'),
     flag('--layer <list>', 'comma list of layers 1–4 to run (default all)'),
     flag('--concurrency <n>', 'in-flight HEAD/GET cap for Layers 2–3 (default 16)'),
+    flag('--resume', 'resume from the checkpoint of an interrupted run (not with --layer)'),
     flag('--json', 'emit the raw report as JSON'),
     flag('--out <path>', 'also write the report to this file'),
     validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),

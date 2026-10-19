@@ -1,0 +1,24 @@
+{
+  // Node-flavored typecheck for the verifier and its tests. Everything here is
+  // Node-only (fs walking, a streaming digest, the Layer 4 server boot), so
+  // nothing joins the edge graph of waybackify-serve. The serving core arrives
+  // through its package exports (dist/, built by pretypecheck), and the tests
+  // reach the shared cache-root fixture and S3 stub of waybackify-serve by
+  // relative path.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // Sources import each other with explicit .ts extensions. noEmit makes
+    // them legal under the type stripping of Node.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}

@@ -231,6 +231,22 @@ shasum -a 256 "<cache-root>/$KEY"
 s5cmd --endpoint-url <endpoint> ls "s3://<bucket>/cap/77/77c4b856…"   # HEAD-level listing
 ```
 
+`waybackify bucket verify` is the full four-layer gate. A store that throttles
+(Fastly Object Storage, about 100 req/s per bucket) can stop Layer 3 with HTTP
+429. The run keeps its progress in `<root>/.verify/`. To continue, run the same
+command again with `--resume` and a lower `--concurrency`:
+
+```sh
+waybackify bucket verify -r <cache-root> --endpoint <endpoint> --bucket <bucket>
+# layer 3 fails with HTTP 429 at --concurrency 16
+waybackify bucket verify -r <cache-root> --endpoint <endpoint> --bucket <bucket> --resume --concurrency 4
+# layers 1 and 2 come from the checkpoint, and layer 3 reads only the bodies it did not verify
+```
+
+A resume trusts that the bucket did not change after the interrupted run. If
+you pushed to the bucket since then, run without `--resume`. A checkpoint is
+void when the root entries or the target change. A passing run removes it.
+
 ## Cost
 
 Full population is ≈ **23.7k Class A (write) operations per target** (≈ 11.8k

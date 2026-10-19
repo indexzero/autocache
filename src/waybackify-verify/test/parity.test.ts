@@ -1,8 +1,8 @@
 /**
  * The four-layer root ↔ bucket PARITY gate (src/parity.ts, #292), driven
  * against the committed cache-root fixture PROJECTED to bucket shape
- * (test/s3-fixture.ts — the same projection the serve router's remote-mode test
- * uses) over an offline stub S3 endpoint that answers HEAD/GET and ListObjectsV2.
+ * (waybackify-serve/test/s3-fixture.ts — the same projection the serve router's
+ * remote-mode test uses) over an offline stub S3 endpoint that answers HEAD/GET and ListObjectsV2.
  *
  * The all-green case proves a faithful projection passes every layer (including
  * the empty-contentType normalization — a `''` sidecar's correct native value
@@ -18,6 +18,7 @@
 
 import fsp from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net, { type AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
@@ -31,14 +32,15 @@ import {
   checkMetadata,
   checkServing,
   enumerateRoot,
+  formatReport,
   listPrefix,
   ParityTaskError,
   runParityCheck,
   type ParityConfig
 } from '../src/parity.ts';
-import { projectFixtureToBucket, startS3Stub, type S3Object } from './s3-fixture.ts';
+import { projectFixtureToBucket, startS3Stub, type S3Object } from '../../waybackify-serve/test/s3-fixture.ts';
 
-const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
+const FIXTURE_ROOT = fileURLToPath(new URL('../../waybackify-serve/test/fixtures/cache-root', import.meta.url));
 const BUCKET = 'wayback-captures';
 /** Any non-empty pair — the stub verifies no signature; signing just needs values. */
 const CREDENTIALS = { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY' };
@@ -479,6 +481,51 @@ describe('parity — LAYER 3 re-fetches a THROWN body READ, and ONLY the body re
     } finally {
       await stub.close();
     }
+  });
+
+  it('HEAL ACCOUNTING: a healed object counts on the report, and a heal rate above the threshold is PASS-DEGRADED', async () => {
+    const objects = await projectFixtureToBucket(FIXTURE_ROOT);
+    const entries = await enumerateRoot(FIXTURE_ROOT);
+    const bodied = entries.filter(e => e.status === 'body');
+    const stub = await startBreakableStub(objects, bodied[0].capKey, 1);
+    try {
+      const config: ParityConfig = { root: FIXTURE_ROOT, endpoint: stub.url, bucket: BUCKET, region: 'auto', credentials: CREDENTIALS };
+      const bodyRetry = { attempts: 3, minTimeout: 1, maxTimeout: 1 };
+      const report = await runParityCheck({ ...config, layers: [3], concurrency: 1, bodyRetry, degradedRate: 0.2 });
+      assert.equal(report.pass, true, 'the data is faithful');
+      assert.equal(report.verdict, 'PASS-DEGRADED', 'and the transport was noisy');
+      assert.equal(report.healed, 1);
+      assert.equal(report.healRate, 1 / bodied.length);
+      assert.equal(report.layers[0].healed, 1);
+      assert.match(formatReport(report), /PASS-DEGRADED \(healed 1, rate 25\.00%\)/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('HEAL ACCOUNTING: a heal rate at or under the threshold stays a clean PASS and still states the heal count', async () => {
+    const objects = await projectFixtureToBucket(FIXTURE_ROOT);
+    const entries = await enumerateRoot(FIXTURE_ROOT);
+    const bodied = entries.filter(e => e.status === 'body');
+    const stub = await startBreakableStub(objects, bodied[0].capKey, 1);
+    try {
+      const config: ParityConfig = { root: FIXTURE_ROOT, endpoint: stub.url, bucket: BUCKET, region: 'auto', credentials: CREDENTIALS };
+      const bodyRetry = { attempts: 3, minTimeout: 1, maxTimeout: 1 };
+      const report = await runParityCheck({ ...config, layers: [3], concurrency: 1, bodyRetry, degradedRate: 0.5 });
+      assert.equal(report.verdict, 'PASS');
+      assert.equal(report.healed, 1);
+      assert.match(formatReport(report), / PASS \(healed 1, rate 25\.00%\)/);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('a run with no heal is a clean PASS with a zero heal count', async () => {
+    const objects = await projectFixtureToBucket(FIXTURE_ROOT);
+    const report = await withBucket(objects, config => runParityCheck({ ...config, layers: [3] }));
+    assert.equal(report.verdict, 'PASS');
+    assert.equal(report.healed, 0);
+    assert.equal(report.healRate, 0);
   });
 });
 

@@ -12,6 +12,12 @@ Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the
 environment, never flags. Output: a per-layer report on stdout (--json
 for the raw report). Exit 0 all layers pass, 1 on any mismatch.
 
+A run over all layers stores its progress in <root>/.verify/ and
+removes it when the run passes. After an interrupted run, --resume
+skips the layers that passed and the bodies that verified. A resume
+trusts that the bucket did not change since the interrupted run.
+Without --resume, every layer runs in full.
+
 Flags:
   --root|-r <root>    local cache root — the archive of record — required
   --bucket <name>     target bucket name — required
@@ -21,6 +27,7 @@ Flags:
   --sample <n>        Layer 4 sample size per status class (default 3)
   --layer <list>      comma list of layers 1–4 to run (default all)
   --concurrency <n>   in-flight HEAD/GET cap for Layers 2–3 (default 16)
+  --resume            resume from the checkpoint of an interrupted run (not with --layer)
   --json              emit the raw report as JSON
   --out <path>        also write the report to this file
   --help|-h           Show help

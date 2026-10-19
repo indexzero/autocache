@@ -2,8 +2,8 @@
  * Shared test rig: project the committed cache-root fixture into the bucket
  * layout the S3Store / parity check read, and stand up a tiny offline
  * path-style S3 endpoint over it. Extracted so node.test.ts (serving) and
- * parity.test.ts (the four-layer gate) drive ONE projection + ONE stub, never
- * two subtly-diverging copies.
+ * waybackify-verify/test/parity.test.ts (the four-layer gate) drive ONE
+ * projection + ONE stub, never two subtly-diverging copies.
  *
  * The projection is the batch-emitter's model made concrete: for every meta
  * sidecar the bucket carries BOTH objects the sync uploads —
@@ -70,8 +70,23 @@ export async function projectFixtureToBucket(root: string, bucketPrefix = ''): P
 
 export interface S3Stub {
   url: string;
+  /** Every request the stub answered, in arrival order. */
+  requests: StubRequest[];
   close: () => Promise<void>;
 }
+
+/** One answered request. `key` is the object key, or `null` for a list request. */
+export interface StubRequest {
+  method: string;
+  key: string | null;
+}
+
+/**
+ * An optional per-request override. It returns an HTTP status to answer in
+ * place of the object, or `undefined` to answer normally. It can return a
+ * promise, so that a test can delay one answer.
+ */
+export type StubOverride = (request: StubRequest) => number | undefined | Promise<number | undefined>;
 
 /**
  * A path-style S3 endpoint over recorded objects. Object HEAD/GET answer the
@@ -79,11 +94,23 @@ export interface S3Stub {
  * `?list-type=2` request answers ListObjectsV2 XML, paginated at `pageSize`
  * (default 1000, S3's own cap) so the continuation-token loop is exercisable.
  */
-export function startS3Stub(objects: Map<string, S3Object>, bucket: string, pageSize = 1000): Promise<S3Stub> {
+export function startS3Stub(objects: Map<string, S3Object>, bucket: string, pageSize = 1000, override?: StubOverride): Promise<S3Stub> {
   const bucketPath = `/${bucket}`;
-  const server = http.createServer((req, res) => {
+  const requests: StubRequest[] = [];
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '', 'http://stub');
-    if (url.pathname === bucketPath && url.searchParams.get('list-type') === '2') {
+    const isList = url.pathname === bucketPath && url.searchParams.get('list-type') === '2';
+    const request: StubRequest = {
+      method: req.method ?? 'GET',
+      key: isList ? null : decodeURIComponent(url.pathname.slice(`${bucketPath}/`.length))
+    };
+    requests.push(request);
+    const status = await override?.(request);
+    if (status !== undefined) {
+      res.writeHead(status).end();
+      return;
+    }
+    if (isList) {
       res.writeHead(200, { 'Content-Type': 'application/xml' }).end(listXml(objects, url, pageSize));
       return;
     }
@@ -108,6 +135,7 @@ export function startS3Stub(objects: Map<string, S3Object>, bucket: string, page
       const { port } = server.address() as AddressInfo;
       resolve({
         url: `http://127.0.0.1:${port}`,
+        requests,
         close: () => new Promise<void>(done => server.close(() => done()))
       });
     });

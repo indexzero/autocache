@@ -521,6 +521,19 @@ waybackify cache verify --root <root> --empty-trash
 The library exposes the same action as `fsck.js#emptyTrash(root)`, which
 returns the path, file count, and byte total it removed.
 
+### `--fix` and concurrent writers
+
+`--fix` assumes that no writer runs against the root at the same time. The
+store has no write lock (`cache.js` is lockless by design), so there is nothing
+for `fsck` to hold or check. The window between the scan and a move is
+narrowed, not closed. Just before each move, `fsck` re-reads the sidecars, and
+a body that one now names is skipped and reported (`reaped.skipped`). After the
+moves it re-reads them once more. A moved body that a sidecar names by then is
+reported as `missingBody` with its quarantine path, so the run ends unresolved
+and `--restore <run>` brings the body back. A sidecar written after that last
+re-read shows up as `missingBody` on the next run. Stop writers before you run
+`--fix`.
+
 ## Recorded dissents (design notes, not implemented)
 
 Preserved verbatim from the debate so future work starts from the residue,

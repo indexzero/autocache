@@ -104,6 +104,17 @@
 // `cache verify --empty-trash` (emptyTrash below). Stale tmp/ files are still deleted: a
 // tmp file was never renamed into place, so nothing can name it.
 //
+// CONCURRENT WRITERS: --fix assumes that no writer runs against the root at
+// the same time. The store has no write lock (cache.js is lockless by
+// design), so there is nothing for fsck to hold or check. The window between
+// the scan and a move is narrowed, not closed: just before each move the
+// sidecars are re-read, and a body that one now names is skipped (reported
+// in reaped.skipped). After the moves the sidecars are re-read once more, and
+// a moved body that one names by then is reported as missingBody with its
+// quarantine path, so the run ends unresolved and `--restore <run>` brings
+// the body back. A sidecar written after that last re-read shows up as
+// missingBody on the next run, with the same quarantine path.
+//
 // --fix acts ONLY on the two reapable classes — orphanCap (moved) + staleTmp
 // (deleted). Neither is reachable by any reader: an orphan has no completion
 // token, a tmp file was never published. It NEVER touches a valid entry and
@@ -198,6 +209,38 @@ async function walkFiles(dir) {
 }
 
 /**
+ * The rootless cap/ keys that the sidecars on disk name RIGHT NOW: a cheap
+ * re-read (parse only, no hashing) of every sidecar, for the re-checks around
+ * a quarantine move. Any sidecar that cannot be read or parsed could name any
+ * body, so `unreadable` is set and the caller treats every body as named.
+ * @param {string} root
+ * @returns {Promise<{ keys: Set<string>, unreadable: boolean }>}
+ */
+async function namedCapKeys(root) {
+  const keys = new Set();
+  let unreadable = false;
+  for (const { path: metaPath } of (await walkShards(root, 'meta')).filter(f => f.name.endsWith('.json'))) {
+    let sidecar;
+    try {
+      sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+    } catch {
+      unreadable = true;
+      continue;
+    }
+    if (!isSidecarObject(sidecar)) {
+      unreadable = true;
+      continue;
+    }
+    try {
+      keys.add(bodyPath(sidecar.contentHash));
+    } catch {
+      // No usable digest names nothing.
+    }
+  }
+  return { keys, unreadable };
+}
+
+/**
  * Move a file without ever replacing an existing destination. A hard link
  * fails with EEXIST when the destination exists, and an unlink of the source
  * completes the move. A filesystem without hard links gets a copy with
@@ -273,13 +316,21 @@ async function walkShards(root, sub) {
  * @param {string} root - store root (contains cap/, meta/, tmp/, and the trash/ quarantine)
  * @param {Object} [options]
  * @param {boolean} [options.fix=false] - move orphan cap/ files to trash/, delete stale tmp/
+ * @param {Object} [options.hooks] - test seams around the moves: `beforeRecheck(finding)` runs
+ *   before each move's sidecar re-read, `beforeMove(finding)` runs after that re-read and right
+ *   before the move, `afterMoves()` runs after the last move and before the post-move re-read.
+ *   Production passes none.
  * @returns {Promise<{
  *   root: string,
  *   schemaVersion: number,
  *   counts: { sidecars: number, bodies: number, capFiles: number, tmpFiles: number, trashFiles: number },
  *   findings: Record<string, Array<object>>,
  *   reapSuspended: boolean,
- *   reaped: { orphanCap: string[], staleTmp: string[], trash: string | null, moves: Array<{ from: string, to: string }> } | null
+ *   reaped: {
+ *     orphanCap: string[], staleTmp: string[], trash: string | null,
+ *     moves: Array<{ from: string, to: string }>,
+ *     skipped: Array<{ path: string, reason: string }>
+ *   } | null
  * }>}
  * `reapSuspended` is true when a finding broke the ownership proof, so no
  * cap/ file was classified as an orphan on this run. `reaped.orphanCap` lists
@@ -288,7 +339,7 @@ async function walkShards(root, sub) {
  * pairs each source with its destination.
  */
 export async function fsck(root, options = {}) {
-  const { fix = false } = options;
+  const { fix = false, hooks = {} } = options;
   // Silent-loop progress (design §6): re-hashing every body over a 12k-entry
   // corpus ran dark. A counter + throttled aggregate every N (0 = off).
   const logger = options.logger ?? NOOP_LOGGER;
@@ -543,7 +594,7 @@ export async function fsck(root, options = {}) {
   // stale tmp/ file is deleted. See QUARANTINE, NOT DELETION in the header.
   let reaped = null;
   if (fix) {
-    reaped = { orphanCap: [], staleTmp: [], trash: null, moves: [] };
+    reaped = { orphanCap: [], staleTmp: [], trash: null, moves: [], skipped: [] };
     let runDir = null;
     if (findings.orphanCap.length > 0) {
       try {
@@ -554,7 +605,22 @@ export async function fsck(root, options = {}) {
       }
     }
     for (const f of runDir === null ? [] : findings.orphanCap) {
+      if (hooks.beforeRecheck) await hooks.beforeRecheck(f);
+      // CONCURRENT WRITERS (header): re-read the sidecars just before the move.
+      // A writer that published a sidecar for these bytes since the scan now
+      // names the body, so it is no orphan and the move is skipped.
+      const now = await namedCapKeys(root);
+      if (now.unreadable) {
+        f.reapError = 'a sidecar changed during the run and could not be read, so the move was skipped';
+        continue;
+      }
+      if (now.keys.has(`cap/${f.aa}/${f.hash}`)) {
+        f.skipped = 'named by a sidecar written after the scan';
+        reaped.skipped.push({ path: f.path, reason: f.skipped });
+        continue;
+      }
       const to = path.join(runDir, 'cap', f.aa, f.hash);
+      if (hooks.beforeMove) await hooks.beforeMove(f);
       try {
         await fsp.mkdir(path.dirname(to), { recursive: true });
         await moveNoReplace(f.path, to);
@@ -565,6 +631,33 @@ export async function fsck(root, options = {}) {
         // A move that fails (permissions, an existing destination) stays a
         // finding — surface it. Nothing was replaced.
         f.reapError = error.message;
+      }
+    }
+    // A body a writer named in time is not an orphan: drop it from the findings.
+    findings.orphanCap = findings.orphanCap.filter(f => !f.skipped);
+    if (hooks.afterMoves) await hooks.afterMoves(reaped);
+    // Post-move re-check: a writer that published between the last re-read and
+    // the move named a body that is now ONLY in quarantine. Report it as
+    // missingBody with the quarantine path, so this run ends unresolved (never
+    // 0) and the operator restores the run. A writer that also re-wrote the
+    // body lost nothing: the live file is back, and the quarantined copy is a
+    // duplicate, so there is no finding.
+    if (reaped.moves.length > 0) {
+      const after = await namedCapKeys(root);
+      for (const move of reaped.moves) {
+        const aa = path.basename(path.dirname(move.from));
+        const digest = path.basename(move.from);
+        if (fs.existsSync(move.from)) continue;
+        if (after.unreadable || after.keys.has(`cap/${aa}/${digest}`)) {
+          findings.missingBody.push({
+            hash: null,
+            aa,
+            key: null,
+            contentHash: null,
+            quarantined: move.to,
+            error: `a sidecar written during the run names this body, which --fix moved to ${move.to}; restore the run`
+          });
+        }
       }
     }
     for (const f of findings.staleTmp) {

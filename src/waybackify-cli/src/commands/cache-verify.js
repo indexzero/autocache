@@ -10,6 +10,7 @@
 // private and in-repo) and lazily, inside the runner, so merely loading the
 // CLI surface never pays for the fetch stack fsck.js pulls in transitively.
 
+import path from 'node:path';
 import { EXIT } from '../cli.js';
 
 /** One human line per finding — enough to locate and explain it on disk. */
@@ -22,7 +23,7 @@ function describe(category, f) {
     case 'keyMismatch':
       return `${f.aa}/${f.hash}  key hashes to ${f.derived}  (key: ${f.key})`;
     case 'missingBody':
-      return `${f.aa}/${f.hash}  (key: ${f.key})`;
+      return f.quarantined ? `${f.aa}/${path.basename(f.quarantined)}  in quarantine: ${f.quarantined}  ${f.error ?? ''}`.trimEnd() : `${f.aa}/${f.hash}  (key: ${f.key})`;
     case 'incompleteClosure':
       return `${f.aa}/${f.hash}  (key: ${f.key})  → requisite absent: ${f.child}`;
     case 'interstitialAsBody':

@@ -21,7 +21,7 @@ import {
   type ParityConfig,
   type ParityLogger
 } from '../src/parity.ts';
-import { rootSignature, type VerifyCheckpoint } from '../src/verify-checkpoint.ts';
+import { checkpointTarget, normalizePrefix, rootSignature, type VerifyCheckpoint } from '../src/verify-checkpoint.ts';
 import { projectFixtureToBucket, startS3Stub, type S3Object, type S3Stub, type StubOverride } from '../../waybackify-serve/test/s3-fixture.ts';
 
 const FIXTURE_ROOT = fileURLToPath(new URL('../../waybackify-serve/test/fixtures/cache-root', import.meta.url));
@@ -321,5 +321,87 @@ describe('parity resume — a failed run', () => {
       assert.ok(error instanceof ParityTaskError);
       assert.deepEqual(calls.filter(c => c.afterReject).map(c => c.checkpoint.bodies.verified.length), []);
     });
+  });
+});
+
+describe('parity resume — the prefix identity matches the reads', () => {
+  /** Each raw prefix, and the one normal form that both the reads and the checkpoint use. */
+  const FORMS: Array<[string | undefined, string | undefined]> = [
+    [undefined, undefined],
+    ['', undefined],
+    ['/', undefined],
+    ['a', 'a'],
+    ['a/', 'a'],
+    ['/a', 'a']
+  ];
+
+  it('normalizes "", "/", "a", "a/", and "/a" to one form for the checkpoint target', () => {
+    for (const [raw, normal] of FORMS) {
+      assert.equal(normalizePrefix(raw), normal, JSON.stringify(raw));
+      assert.equal(checkpointTarget({ endpoint: 'http://x', bucket: 'b', prefix: raw }).prefix, normal ?? '', JSON.stringify(raw));
+    }
+  });
+
+  it('a prefix of "/" reads the same keys as no prefix, so the shared checkpoint is sound', async () => {
+    await withBucket(async bucket => {
+      const saved: VerifyCheckpoint[] = [];
+      const plain = await runParityCheck({ ...bucket.config, layers: [1, 2, 3], onCheckpoint: c => { saved.push(c); } });
+      assert.equal(plain.verdict, 'PASS');
+      const checkpoint = saved[saved.length - 1];
+
+      // A fresh run under "/" passes on its own: every object key it read is
+      // rootless, and the report carries the normal form of the prefix.
+      bucket.fresh();
+      const slash = await runParityCheck({ ...bucket.config, prefix: '/', layers: [1, 2, 3] });
+      assert.equal(slash.verdict, 'PASS');
+      assert.equal(slash.target.prefix, undefined);
+      const read = bucket.stub.requests.filter(r => r.key !== null).map(r => r.key as string);
+      assert.ok(read.length > 0);
+      assert.ok(read.every(key => /^(cap|meta)\//.test(key)), `every key is rootless: ${read.slice(0, 3).join(', ')}`);
+
+      // The checkpoint of the plain run is therefore valid under "/".
+      bucket.fresh();
+      const resumed = await runParityCheck({ ...bucket.config, prefix: '/', layers: [1, 2, 3], resume: checkpoint });
+      assert.equal(resumed.verdict, 'PASS');
+      assert.ok(resumed.layers.every(l => l.fromCheckpoint === true));
+      assert.equal(bucket.stub.requests.length, 0);
+    });
+  });
+
+  it('"a", "a/", and "/a" read the same prefixed keys and share one checkpoint, which "" never borrows', async () => {
+    const objects = await projectFixtureToBucket(FIXTURE_ROOT, 'a');
+    const stub = await startS3Stub(objects, BUCKET);
+    try {
+      const base: ParityConfig = { root: FIXTURE_ROOT, endpoint: stub.url, bucket: BUCKET, region: 'auto', credentials: CREDENTIALS };
+      const saved: VerifyCheckpoint[] = [];
+      const first = await runParityCheck({ ...base, prefix: 'a', layers: [1, 2, 3], onCheckpoint: c => { saved.push(c); } });
+      assert.equal(first.verdict, 'PASS');
+      const checkpoint = saved[saved.length - 1];
+      assert.equal(checkpoint.target.prefix, 'a');
+
+      for (const prefix of ['a/', '/a']) {
+        stub.requests.length = 0;
+        const fresh = await runParityCheck({ ...base, prefix, layers: [1, 2, 3] });
+        assert.equal(fresh.verdict, 'PASS', prefix);
+        assert.equal(fresh.target.prefix, 'a', prefix);
+        const read = stub.requests.filter(r => r.key !== null).map(r => r.key as string);
+        assert.ok(read.every(key => key.startsWith('a/')), `${prefix}: every key is under a/`);
+
+        stub.requests.length = 0;
+        const resumed = await runParityCheck({ ...base, prefix, layers: [1, 2, 3], resume: checkpoint });
+        assert.ok(resumed.layers.every(l => l.fromCheckpoint === true), prefix);
+        assert.equal(stub.requests.length, 0, prefix);
+      }
+
+      // No prefix addresses other keys. The checkpoint for "a" is void there.
+      const logger = recordingLogger();
+      stub.requests.length = 0;
+      const naked = await runParityCheck({ ...base, layers: [1], resume: checkpoint, logger });
+      assert.equal(naked.layers[0].fromCheckpoint, undefined);
+      assert.ok(logger.warnings.some(w => (w as { evt?: string }).evt === 'parity-checkpoint-void'));
+      assert.ok(stub.requests.length > 0);
+    } finally {
+      await stub.close();
+    }
   });
 });

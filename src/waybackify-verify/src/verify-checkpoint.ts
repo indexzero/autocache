@@ -74,12 +74,24 @@ export function rootSignature(entries: Entry[]): string {
   return `sha256-${hash.digest('hex')}`;
 }
 
+/**
+ * The one normal form of a bucket key prefix: no leading or trailing slash,
+ * and `undefined` when nothing is left. The engine applies it once, before
+ * every bucket read, and the checkpoint identity applies the same function.
+ * Two prefixes that fold to one value therefore address the same keys, and
+ * two prefixes that address different keys never share a checkpoint.
+ */
+export function normalizePrefix(prefix: string | undefined): string | undefined {
+  const trimmed = (prefix ?? '').replace(/^\/+|\/+$/g, '');
+  return trimmed || undefined;
+}
+
 /** Normalize a target, so that equal targets compare equal. */
 export function checkpointTarget(target: { endpoint: string; bucket: string; prefix?: string }): CheckpointTarget {
   return {
     endpoint: target.endpoint.replace(/\/+$/, ''),
     bucket: target.bucket,
-    prefix: (target.prefix ?? '').replace(/^\/+|\/+$/g, '')
+    prefix: normalizePrefix(target.prefix) ?? ''
   };
 }
 

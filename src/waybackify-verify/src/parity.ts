@@ -48,6 +48,7 @@ import { signRequest, type SigV4Credentials } from '@autocache/waybackify-serve/
 import type { Capture, CaptureStatus } from '@autocache/waybackify-serve/store';
 import {
   checkpointWriter,
+  normalizePrefix,
   positiveInteger,
   snapshotProgress,
   startProgress,
@@ -333,7 +334,7 @@ async function readdirOrEmpty(dir: string): Promise<string[]> {
  * tests that need to intercept compose that same dispatcher over a MockAgent.
  */
 export async function listPrefix(config: ParityConfig, prefix: string): Promise<string[]> {
-  const bucketPrefix = config.prefix ? `${trimSlashes(config.prefix)}/` : '';
+  const bucketPrefix = bucketPrefixOf(config);
   const listPrefixValue = `${bucketPrefix}${prefix}`;
   const keys: string[] = [];
   let token: string | undefined;
@@ -402,8 +403,14 @@ function decodeXml(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
-function trimSlashes(value: string): string {
-  return value.replace(/^\/+|\/+$/g, '');
+/**
+ * The key prefix that every bucket read uses, as `<prefix>/` or `''`. It comes
+ * from the same normal form as the checkpoint identity, so a prefix of `/` or
+ * `a/` reads exactly the keys that its checkpoint describes.
+ */
+function bucketPrefixOf(config: ParityConfig): string {
+  const prefix = normalizePrefix(config.prefix);
+  return prefix ? `${prefix}/` : '';
 }
 
 /* ------------------------------------------------------------------------ *
@@ -784,8 +791,11 @@ const LAYER_RUNNERS: Record<number, (config: ParityConfig, entries: Entry[], opt
 export async function runParityCheck(options: ParityOptions): Promise<ParityReport> {
   const logger = options.logger ?? NOOP_PARITY_LOGGER;
   const layers = (options.layers ?? [1, 2, 3, 4]).slice().sort((a, b) => a - b);
-  const entries = await enumerateRoot(options.root);
-  const progress = startProgress(options, entries, options.sample ?? DEFAULT_SAMPLE, logger);
+  // One normal form of the prefix for every read, the checkpoint identity, and
+  // the report. `/`, `a/`, and `/a` therefore mean what `''` and `a` mean.
+  const config: ParityOptions = { ...options, prefix: normalizePrefix(options.prefix) };
+  const entries = await enumerateRoot(config.root);
+  const progress = startProgress(config, entries, config.sample ?? DEFAULT_SAMPLE, logger);
   const writer = checkpointWriter(options.onCheckpoint, () => snapshotProgress(progress), logger);
   const every = positiveInteger(options.checkpointEvery, 500);
   let sinceSave = 0;
@@ -815,7 +825,7 @@ export async function runParityCheck(options: ParityOptions): Promise<ParityRepo
       continue;
     }
     try {
-      const report = await run(options, entries, options, bodies);
+      const report = await run(config, entries, config, bodies);
       reports.push(report);
       if (report.pass) progress.passed.set(layer, report);
       writer.save();
@@ -858,8 +868,8 @@ export async function runParityCheck(options: ParityOptions): Promise<ParityRepo
   const verdict: ParityVerdict = !pass ? 'FAIL' : healRate > ceiling ? 'PASS-DEGRADED' : 'PASS';
 
   return {
-    target: { endpoint: options.endpoint, bucket: options.bucket, region: options.region, prefix: options.prefix },
-    root: options.root,
+    target: { endpoint: config.endpoint, bucket: config.bucket, region: config.region, prefix: config.prefix },
+    root: config.root,
     entries: entries.length,
     pass,
     verdict,

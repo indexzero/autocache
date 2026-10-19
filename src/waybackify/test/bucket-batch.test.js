@@ -90,7 +90,7 @@ describe('emitBucketBatch', () => {
     });
 
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'mybucket' });
-    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0 });
+    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0, missingBodies: 0 });
 
     // Independently recompute the expected object keys + sorted order.
     const zKey = await capturePath('2/z');
@@ -112,7 +112,7 @@ describe('emitBucketBatch', () => {
     await commitEntry(root, { key: '20081024183240/http://github.com/sprite.png', status: 'body', contentType: 'image/x-png', body: bytes });
 
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
-    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0 });
+    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0, missingBodies: 0 });
     const source = path.join(root, bodyPath(first.contentHash));
     const expected = [
       `cp --content-type image/png --metadata status=body ${source} s3://b/${await capturePath('20081013100657/http://github.com/sprite.png')}`,
@@ -137,7 +137,7 @@ describe('emitBucketBatch', () => {
 
     const emptyFile = path.join(os.tmpdir(), 'zero-byte-scratch');
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'b', emptyFile });
-    assert.deepEqual(summary, { total: 3, bodied: 0, bodiless: 3 });
+    assert.deepEqual(summary, { total: 3, bodied: 0, bodiless: 3, missingBodies: 0 });
 
     // Every line uploads the SAME empty file to a cap/ object; no local cap/ file exists.
     for (const line of lines) assert.ok(line.includes(` ${emptyFile} s3://b/cap/`), line);
@@ -179,11 +179,35 @@ describe('emitBucketBatch', () => {
     await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), /1000/);
   });
 
+  it('skips and reports a bodied sidecar whose body file is missing (a pre-dedup root needs a refetch)', async () => {
+    const root = await mkRoot();
+    const kept = await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('<html>') });
+    const lost = await commitEntry(root, { key: '2/z', status: 'body', contentType: 'image/jpeg', body: new TextEncoder().encode('jpg') });
+    const lostBody = path.join(root, bodyPath(lost.contentHash));
+    // The layout of a root written before content-addressed bodies: the bytes
+    // sit under the capture-key hash, where no reader looks.
+    const lostKey = await capturePath('2/z');
+    await fsp.mkdir(path.join(root, path.dirname(lostKey)), { recursive: true });
+    await fsp.rename(lostBody, path.join(root, lostKey));
+    const warnings = [];
+    const logger = { trace() {}, debug() {}, info() {}, warn: (fields, msg) => warnings.push({ fields, msg }), error() {}, fatal() {} };
+
+    const { lines, summary, missing } = await emitBucketBatch(root, { bucket: 'b', logger });
+    assert.deepEqual(summary, { total: 1, bodied: 1, bodiless: 0, missingBodies: 1 });
+    assert.deepEqual(lines, [
+      `cp --content-type text/html --metadata status=body ${path.join(root, bodyPath(kept.contentHash))} s3://b/${await capturePath('1/a')}`
+    ]);
+    assert.deepEqual(missing, [{ key: '2/z', sidecar: path.join(root, await metaPath('2/z')), body: lostBody }]);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].fields.evt, 'bucket-missing-body');
+    assert.match(warnings[0].msg, /names a missing body at .* \(skipped, needs a refetch\)$/);
+  });
+
   it('emits nothing for an empty / never-populated root', async () => {
     const root = await mkRoot();
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
     assert.deepEqual(lines, []);
-    assert.deepEqual(summary, { total: 0, bodied: 0, bodiless: 0 });
+    assert.deepEqual(summary, { total: 0, bodied: 0, bodiless: 0, missingBodies: 0 });
   });
 });
 
@@ -220,7 +244,7 @@ describe('emitBucketBatch over the committed fixture', () => {
     }
     expected.sort((a, b) => (a.objectKey < b.objectKey ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));
-    assert.deepEqual(summary, { total: 7, bodied: 4, bodiless: 3 });
+    assert.deepEqual(summary, { total: 7, bodied: 4, bodiless: 3, missingBodies: 0 });
   });
 
   it('pins the cross-package tripwire hash in the example.com line', () => {

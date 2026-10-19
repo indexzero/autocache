@@ -41,7 +41,6 @@
  * (src/node.ts) is this store's only runtime consumer.
  */
 
-import { createReadStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { Readable } from 'node:stream';
 // Always derive names through the shared key module — never hand-roll the
@@ -150,16 +149,31 @@ export class FsStore implements Store {
     // The body lives at the digest its contentHash records. A contentHash
     // that is not a sha256 SRI throws here: rot is loud, never a miss.
     const body = `${this.#root}/${bodyPath(sidecar.contentHash as string)}`;
+    // Open before streaming so a missing cap/ file is an explicit error that
+    // names the sidecar and the body path it expected. Sidecar present,
+    // status "body", body gone is a torn store or a root written before
+    // bodies were content-addressed (its bodies sit under the capture-key
+    // hash, which no reader consults). Either way it is never a silent miss.
+    let handle: fsp.FileHandle;
+    try {
+      handle = await fsp.open(body, 'r');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(
+          `FsStore: sidecar at ${await this.#metaFile(key)} names a missing body at ${body} (contentHash ${sidecar.contentHash}). ` +
+            'A root written before content-addressed bodies needs a refetch.'
+        );
+      }
+      throw error;
+    }
     // Stream, don't buffer: bodies can be large and captures are immutable
     // (a same-key rewrite replaces bytes with identical bytes, and an open
     // handle across a concurrent rename still reads the old inode coherently
-    // — SERVE.md, "Reading a root that is being written"). A missing cap/
-    // file HERE — sidecar present, status "body", body gone — is disk rot
-    // and surfaces as a loud stream error, never a silent miss.
+    // — SERVE.md, "Reading a root that is being written").
     // Readable.toWeb: https://nodejs.org/api/stream.html#streamreadabletowebstreamreadable-options
     return {
       ...meta,
-      body: Readable.toWeb(createReadStream(body)) as ReadableStream<Uint8Array>
+      body: Readable.toWeb(handle.createReadStream()) as ReadableStream<Uint8Array>
     };
   }
 }

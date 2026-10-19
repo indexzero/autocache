@@ -144,7 +144,15 @@ async function* walkMeta(root) {
  * @param {string} options.bucket - target bucket ('name' or 's3://name[/prefix]')
  * @param {string|null} [options.emptyFile] - zero-byte scratch file path for
  *   bodiless entries; REQUIRED iff the root has any bodiless entry
- * @returns {Promise<{ lines: string[], summary: { total: number, bodied: number, bodiless: number } }>}
+ * @returns {Promise<{
+ *   lines: string[],
+ *   summary: { total: number, bodied: number, bodiless: number, missingBodies: number },
+ *   missing: Array<{ key: string, sidecar: string, body: string }>
+ * }>}
+ *   `missing` lists every bodied sidecar whose body file is absent. Such an
+ *   entry gets NO cp line (s5cmd fails the whole run on a missing source), and
+ *   the logger reports it. A root written before bodies were content-addressed
+ *   shows up here for every bodied entry: it needs a refetch.
  */
 export async function emitBucketBatch(root, options = {}) {
   const { bucket, emptyFile = null } = options;
@@ -158,6 +166,7 @@ export async function emitBucketBatch(root, options = {}) {
   const progressEvery = coerceEvery(options.progressEvery);
 
   const rows = [];
+  const missing = [];
   let bodied = 0;
   let bodiless = 0;
   let scanned = 0;
@@ -197,6 +206,16 @@ export async function emitBucketBatch(root, options = {}) {
     let source;
     if (BODIED.has(sidecar.status)) {
       source = path.join(root, bodyPath(sidecar.contentHash));
+      if (!(await exists(source))) {
+        // Skip, never emit: a cp for a missing source fails the s5cmd run.
+        // Report it so the operator learns which sidecars need a refetch.
+        missing.push({ key: probe.key, sidecar: path.join(root, rel), body: source });
+        logger.warn(
+          { evt: 'bucket-missing-body', key: probe.key, sidecar: path.join(root, rel), body: source },
+          `bucket push: sidecar ${rel} names a missing body at ${source} (skipped, needs a refetch)`
+        );
+        continue;
+      }
       bodied++;
     } else {
       if (emptyFile === null) {
@@ -215,5 +234,16 @@ export async function emitBucketBatch(root, options = {}) {
   // readdir order on any filesystem.
   rows.sort((a, b) => (a.objectKey < b.objectKey ? -1 : a.objectKey > b.objectKey ? 1 : 0));
 
-  return { lines: rows.map(r => r.line), summary: { total: rows.length, bodied, bodiless } };
+  return { lines: rows.map(r => r.line), summary: { total: rows.length, bodied, bodiless, missingBodies: missing.length }, missing };
+}
+
+/** Whether a file exists (ENOENT is the only "no"). */
+async function exists(file) {
+  try {
+    await fsp.access(file);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
 }

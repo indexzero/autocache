@@ -27,7 +27,7 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FsStore } from '../src/fsstore.ts';
 import { dirname } from 'node:path';
-import { bodyPath as bodyPathOf, captureHash } from '@autocache/waybackify/key.js';
+import { bodyPath as bodyPathOf, captureHash, metaPath } from '@autocache/waybackify/key.js';
 import type { Capture } from '../src/store.ts';
 import { runStoreConformance, type Seed } from './store-conformance.ts';
 
@@ -196,9 +196,11 @@ describe('FsStore', () => {
 
       // Sidecar present + status "body" + cap/ absent is a torn store —
       // the opposite parity of both legitimate states. It must surface as
-      // an error the app turns into a 500, never as null/miss.
-      const capture = await new FsStore(root).get(KEY);
-      await assert.rejects(bodyText(capture as Capture));
+      // an error the app turns into a 500, never as null/miss. The error
+      // names the sidecar and the body path it expected.
+      await assert.rejects(new FsStore(root).get(KEY), {
+        message: `FsStore: sidecar at ${root}/${await metaPath(KEY)} names a missing body at ${bodyPath} (contentHash ${bodiedSidecar('<html>x</html>').contentHash}). A root written before content-addressed bodies needs a refetch.`
+      });
     });
   });
 

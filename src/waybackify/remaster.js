@@ -175,7 +175,19 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
     if (sidecar.status === 'body') {
       bodies++;
       const inBody = path.join(hermeticRoot, bodyPath(sidecar.contentHash));
-      const inBytes = await fsp.readFile(inBody);
+      let inBytes;
+      try {
+        inBytes = await fsp.readFile(inBody);
+      } catch (error) {
+        // A sidecar that names a body the root lacks: a torn store, or a root
+        // written before bodies were content-addressed (its bodies sit under
+        // the capture-key hash, which no reader consults). Name both paths.
+        if (error.code !== 'ENOENT') throw error;
+        throw new Error(
+          `remaster: sidecar at ${path.join(hermeticRoot, 'meta', aa, `${hash}.json`)} names a missing body at ${inBody} ` +
+            `(contentHash ${sidecar.contentHash}). A root written before content-addressed bodies needs a refetch.`
+        );
+      }
       inputHash = sri(inBytes);
 
       let outBytes = inBytes;

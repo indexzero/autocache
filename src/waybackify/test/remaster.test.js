@@ -250,6 +250,27 @@ describe('remaster — shared bodies', () => {
   });
 });
 
+describe('remaster — a sidecar whose body is missing', () => {
+  it('fails with an error that names the sidecar and the expected body path (a pre-dedup root needs a refetch)', async () => {
+    const root = await mkroot('wb-remaster-missing-');
+    const out = await mkroot('wb-remaster-missing-out-');
+    const key = `${TS}/http://example.com/`;
+    const { hash, aa } = await writeEntry(root, { key, contentType: 'text/html', body: '<html>x</html>' });
+    const sidecar = JSON.parse(await fsp.readFile(path.join(root, 'meta', aa, `${hash}.json`), 'utf8'));
+    const body = path.join(root, bodyPath(sidecar.contentHash));
+    // The layout of a root written before content-addressed bodies: the
+    // bytes sit under the capture-key hash, where no reader looks.
+    await fsp.mkdir(path.join(root, 'cap', aa), { recursive: true });
+    await fsp.rename(body, path.join(root, 'cap', aa, hash));
+
+    await assert.rejects(remaster(root, out), {
+      message:
+        `remaster: sidecar at ${path.join(root, 'meta', aa, `${hash}.json`)} names a missing body at ${body} ` +
+        `(contentHash ${sidecar.contentHash}). A root written before content-addressed bodies needs a refetch.`
+    });
+  });
+});
+
 describe('remaster — determinism (hard requirement)', () => {
   it('same hermetic tree → byte-identical remastered tree + build record, twice', async () => {
     const a = await mkroot('rm-det-a-');

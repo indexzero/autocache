@@ -52,9 +52,11 @@ export function bucketPushHandler(deps = {}) {
         total: summary.total,
         bodied: summary.bodied,
         bodiless: summary.bodiless,
+        missingBodies: summary.missingBodies ?? 0,
         dryRun: Boolean(flags.dryRun)
       },
       `bucket push: ${summary.total} objects (${summary.bodied} bodied, ${summary.bodiless} bodiless)` +
+        `${summary.missingBodies ? `, ${summary.missingBodies} skipped for a missing body (refetch them)` : ''}` +
         `${flags.dryRun ? ' — dry-run, nothing written to stdout' : ''}`
     );
   };

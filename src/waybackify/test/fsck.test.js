@@ -432,7 +432,7 @@ describe('fsck — interstitial-as-body (#363, report-only)', () => {
     const report = await fsck(root, { fix: true });
     only(report, 'interstitialAsBody');
     assert.equal(report.findings.interstitialAsBody[0].signature, 'wrapper-stub');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] }, 'remediation is #364, not fsck');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] }, 'the corpus-wide re-commit is a separate sweep, not fsck');
     assert.equal(unresolvedFindings(report), 1);
     assert.ok(fs.existsSync(capPath), 'the body is left in place');
   });

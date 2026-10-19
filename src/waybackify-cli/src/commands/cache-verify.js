@@ -1,7 +1,7 @@
 // `waybackify cache verify` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing store fsck (walk meta/,
 // re-hash bodies, re-derive paths, check requisite closure, quarantine orphan
-// cap/ + delete stale tmp/ under --fix) is the library's fsck.js; this file translates the
+// cap/ + delete stale tmp/ under --fix) is the library's fsck.js. This file translates the
 // parsed argv payload into an fsck() call, formats the per-category report on
 // stdout (--json for the raw record), and maps an unresolved store to a
 // domain-failure exit (1). Report-only unless --fix is passed.
@@ -118,7 +118,7 @@ export function cacheVerifyHandler(deps = {}) {
     }
 
     // --root|-r is canonical (cli.js). --fix moves orphan cap/ files to the
-    // trash/ quarantine and deletes stale tmp/; corruption and a short closure
+    // trash/ quarantine and deletes stale tmp/. Corruption and a short closure
     // are never touched. Silent-loop progress (§6): the re-hash sweep speaks
     // every --progress-every.
     const report = await fsck(flags.root, { fix: Boolean(flags.fix), logger, progressEvery });

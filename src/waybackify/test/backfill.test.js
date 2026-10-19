@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { backfill, selectWorklist, classifyFailure } from '../backfill.js';
+import { githubRepo, probeGithub } from '../github.js';
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'backfill-'));
 const item = (key, state) => ({ key, state, waybackUrl: `https://web.archive.org/web/${key}` });
@@ -165,4 +166,130 @@ describe('backfill — durable worklist + outcomes', () => {
     assert.equal(r.stats.deferred, 1);
     assert.equal(r.stats.fetched, 0);
   });
+});
+
+describe('backfill: a GitHub deep-link 404 probes the repo root first', () => {
+  const ORIG = 'https://github.com/old-owner/old-repo/commit/0123456789abcdef0123456789abcdef01234567';
+  const GH = `https://web.archive.org/web/20160312105649/${ORIG}`;
+  const TO = 'https://github.com/new-owner/new-repo/commit/0123456789abcdef0123456789abcdef01234567';
+  const missing = () => new Error('replay returned HTTP 404 — capture missing');
+  const probeWith = reply => {
+    const calls = [];
+    const probe = async url => {
+      calls.push(url);
+      if (reply instanceof Error) throw reply;
+      return reply;
+    };
+    probe.calls = calls;
+    return probe;
+  };
+
+  it('a renamed repo is a rewrite candidate, never a gone verdict', async () => {
+    const root = tmpRoot();
+    const probe = probeWith({ renamed: true, from: ORIG, to: TO });
+    const { deps } = depsFor([GH], fakeCacheCapture({ [GH]: missing() }));
+    const events = [];
+    const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe }, onProgress: ev => events.push(ev) });
+    assert.deepEqual(probe.calls, [ORIG], 'the probe receives the original URL, not the replay URL');
+    assert.equal(r.stats.gone, 0);
+    assert.equal(fs.existsSync(path.join(root, '.refetch', 'gone.jsonl')), false, 'nothing is terminal');
+    assert.deepEqual(r.renames, [{ waybackUrl: GH, from: ORIG, to: TO }]);
+    const ledger = fs.readFileSync(path.join(root, '.refetch', 'renamed.jsonl'), 'utf8');
+    assert.deepEqual(JSON.parse(ledger), { waybackUrl: GH, from: ORIG, to: TO });
+    assert.ok(events.some(ev => ev.type === 'rename' && ev.to === TO), 'the rename is surfaced as a progress event');
+    assert.ok(events.some(ev => ev.type === 'entry' && ev.outcome === 'renamed'));
+  });
+
+  it('a recorded rename is not probed again on the next run', async () => {
+    const root = tmpRoot();
+    const probe = probeWith({ renamed: true, from: ORIG, to: TO });
+    const cc = fakeCacheCapture({ [GH]: missing() });
+    const { deps } = depsFor([GH], cc);
+    await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+    const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+    assert.equal(r.pending, 0);
+    assert.equal(cc.calls.length, 1);
+    assert.equal(probe.calls.length, 1);
+  });
+
+  it('only a 404 that survives the root probe is recorded as gone', async () => {
+    const root = tmpRoot();
+    const probe = probeWith({ renamed: false });
+    const { deps } = depsFor([GH], fakeCacheCapture({ [GH]: missing() }));
+    const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+    assert.equal(r.stats.gone, 1);
+    assert.match(fs.readFileSync(path.join(root, '.refetch', 'gone.jsonl'), 'utf8'), /old-owner/);
+    assert.deepEqual(r.renames, []);
+  });
+
+  it('a probe that cannot answer defers the capture', async () => {
+    const root = tmpRoot();
+    const probe = probeWith(new Error('github probe: root returned HTTP 503'));
+    const { deps } = depsFor([GH], fakeCacheCapture({ [GH]: missing() }));
+    const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+    assert.equal(r.stats.deferred, 1);
+    assert.equal(r.stats.gone, 0);
+    assert.equal(fs.existsSync(path.join(root, '.refetch', 'gone.jsonl')), false);
+  });
+});
+
+describe('backfill: a GitHub original with an explicit default port is probed', () => {
+  for (const orig of [
+    'http://github.com:80/example/legacy-settings/tree/master',
+    'http://github.com:80/example/legacy-templates/tree/master'
+  ]) {
+    it(`probes the root of ${orig}`, async () => {
+      const root = tmpRoot();
+      const replay = `https://web.archive.org/web/20081024183240/${orig}`;
+      const { owner, repo } = githubRepo(orig);
+      const fetched = [];
+      const fetch = async url => {
+        fetched.push(url);
+        if (url === `https://github.com/${owner}/${repo}`) {
+          return { status: 301, ok: false, headers: new Headers({ location: `https://github.com/new/${repo}` }) };
+        }
+        return { status: 200, ok: true, headers: new Headers() };
+      };
+      const probe = url => probeGithub(url, { fetch, sleep: async () => {} });
+      const { deps } = depsFor([replay], fakeCacheCapture({ [replay]: new Error('replay returned HTTP 404 — capture missing') }));
+      const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+      assert.deepEqual(fetched, [`https://github.com/${owner}/${repo}`, `https://github.com/new/${repo}/tree/master`]);
+      assert.equal(r.stats.gone, 0);
+      assert.deepEqual(r.renames, [{ waybackUrl: replay, from: orig, to: `https://github.com/new/${repo}/tree/master` }]);
+    });
+  }
+});
+
+describe('backfill: an inconclusive GitHub reply keeps the capture eligible', () => {
+  const ORIG = 'https://github.com/old-owner/old-repo/issues/1';
+  const GH = `https://web.archive.org/web/20160312105649/${ORIG}`;
+  const ROOT = 'https://github.com/old-owner/old-repo';
+  const GRAFT = 'https://github.com/new-owner/new-repo/issues/1';
+  const reply = (status, location) => ({ status, ok: status >= 200 && status < 300, headers: new Headers(location ? { location } : {}) });
+  const cases = [
+    ['denied at the root', { [ROOT]: reply(403) }],
+    ['timed out at the root', { [ROOT]: reply(408) }],
+    ['denied at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(403) }],
+    ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }]
+  ];
+  for (const [name, script] of cases) {
+    it(`${name}: deferred, not gone, and probed again on the next run`, async () => {
+      const root = tmpRoot();
+      const fetched = [];
+      const fetch = async url => {
+        fetched.push(url);
+        return script[url];
+      };
+      const probe = url => probeGithub(url, { fetch, sleep: async () => {} });
+      const { deps } = depsFor([GH], fakeCacheCapture({ [GH]: new Error('replay returned HTTP 404 — capture missing') }));
+      const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+      assert.equal(r.stats.deferred, 1);
+      assert.equal(r.stats.gone, 0);
+      assert.equal(fs.existsSync(path.join(root, '.refetch', 'gone.jsonl')), false);
+      const before = fetched.length;
+      const again = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
+      assert.equal(again.pending, 1, 'the capture stays eligible for retry');
+      assert.ok(fetched.length > before, 'the next run probes again');
+    });
+  }
 });

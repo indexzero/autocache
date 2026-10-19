@@ -41,6 +41,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseWaybackUrl } from './audit.js';
+import { probeGithub } from './github.js';
 import { WaybackMachine, extractLinks } from './index.js';
 import { emptyUniverse, isExcluded, subset } from './universe.js';
 
@@ -351,6 +352,11 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *      or any other — answers from step 2. A resolver THROW records the url
  *      in `deferred` and keeps going: transient archive trouble defers work
  *      to a later run, it never fabricates a verdict.
+ *   4. The GitHub root probe (github.js), for a not-archived github.com
+ *      deep link only. A renamed repo becomes a `rewrites` entry, grafted
+ *      onto the new owner/name, in the manifest and in seen. A probe that
+ *      cannot answer defers the url. Only a link that survives the probe is
+ *      `exclude`d.
  *
  * `seen` is Manifest-shaped and READ-WRITE: pass the parsed union file
  * (bootstrap it with ledger.js#flatten), and write the RETURNED `seen` — a
@@ -366,6 +372,8 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  * @param {Function} [options.resolve] - async (url, { near }) →
  *   { url: waybackUrl, timestamp } | null; injectable for offline use/tests
  * @param {WaybackMachine} [options.wayback] - client backing the default resolver
+ * @param {Function} [options.probe] - async (url) → { renamed, to? } | null;
+ *   the GitHub root probe (github.js#probeGithub), injectable for tests
  * @returns {Promise<{ manifest: object, seen: object,
  *   deferred: Array<{ url: string, error: string }>,
  *   stats: { urls: number, fromUniverse: number, fromSeen: number, resolved: number } }>}
@@ -376,6 +384,7 @@ export async function generate(source, universe, seen, options = {}) {
     options.resolve ??
     ((url, opts) => (options.wayback ?? (generate._wayback ??= new WaybackMachine({ logger }))).getSnapshot(url, opts));
 
+  const probe = options.probe ?? probeGithub;
   const uni = universe ?? emptyUniverse();
   const manifest = emptyManifest();
   seen = seen ? validateManifest(seen, 'seen') : emptyManifest();
@@ -420,8 +429,11 @@ export async function generate(source, universe, seen, options = {}) {
 
     // Step 3 — the archive. Only never-seen urls cost a round-trip.
     let snapshot;
+    let verdict = null;
     try {
       snapshot = await resolve(url, { near });
+      // Step 4 — not archived: a GitHub deep link must survive the root probe.
+      if (!snapshot) verdict = await probe(url);
     } catch (error) {
       deferred.push({ url, error: error?.message ?? String(error) });
       continue;
@@ -432,6 +444,10 @@ export async function generate(source, universe, seen, options = {}) {
       manifest.entries[url] = entry;
       seen.entries[url] = entry;
       seenEntries.set(key, entry);
+    } else if (verdict?.renamed) {
+      manifest.rewrites[url] = verdict.to;
+      seen.rewrites[url] = verdict.to;
+      seenRewrites.set(key, verdict.to);
     } else {
       // Authoritatively not archived — v2 spells that `exclude`.
       manifest.exclude.push(url);

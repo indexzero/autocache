@@ -1,7 +1,7 @@
 // `waybackify bucket verify` handler — thin wiring over the parity engine, per
 // the CLI's hard thin-wrapper rule: the load-bearing four-layer verifier (count
 // parity, metadata sweep, body verification, serving parity) is
-// waybackify-verify; this file translates the parsed argv payload into a
+// waybackify-verify. This file translates the parsed argv payload into a
 // runParityCheck() call, installs the retrying global dispatcher at the process
 // edge (waybackify-verify/retry — so ~22k signed reads self-heal a transient
 // flap), reads AWS creds from the environment, and maps the verdict to an exit

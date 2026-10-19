@@ -1,5 +1,5 @@
 // `waybackify bucket verify` handler — thin-wrapper wiring test. The parity
-// engine (waybackify-verify) is covered by its own suite; here we prove
+// engine (waybackify-verify) is covered by its own suite. Here we prove
 // the surface's required flags, the AWS-creds-from-env usage guard, and the
 // verdict → exit-code mapping — all OFFLINE (an injected parity module, no
 // network, no dispatcher install).

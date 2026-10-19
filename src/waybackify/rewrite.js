@@ -95,8 +95,9 @@ export function classifyContentType(contentType) {
 // A wayback reference: an OPTIONAL archive.org host (absolute or protocol-
 // relative), then `/web/<ts><flag?>/<original>`. The original is captured
 // liberally ([^"'\s<>\\]+) and trimmed/repaired below — the same tempered
-// scan requisites.js and manifest.js#extractArchiveUrls apply.
-const WAYBACK_REF_RE = /((?:https?:)?\/\/web\.archive\.org)?\/web\/(\d{4,14})([a-z]{1,3}_)?\/([^"'\s<>\\]+)/g;
+// scan requisites.js and manifest.js#extractArchiveUrls apply. remaster verify
+// scans with this same pattern, so an upstream ref resolves to the same key here.
+export const WAYBACK_REF_RE = /((?:https?:)?\/\/web\.archive\.org)?\/web\/(\d{4,14})([a-z]{1,3}_)?\/([^"'\s<>\\]+)/g;
 
 /**
  * Truncate an original-URL token at its first UNBALANCED ')' — the
@@ -156,6 +157,22 @@ function repairOriginalUrl(rest) {
 }
 
 /**
+ * Derive the capture key that one wayback reference resolves to. `rawOriginal`
+ * is the liberal `<original>` group of WAYBACK_REF_RE. `trimmed` is the token
+ * after the unbalanced-paren trim. `key` is null when the original is not a URL
+ * with a host.
+ * @param {string} ts
+ * @param {string} rawOriginal
+ * @param {{ decodeEntities?: boolean }} [options]
+ * @returns {{ trimmed: string, original: string|null, key: string|null }}
+ */
+export function refCaptureKey(ts, rawOriginal, { decodeEntities = false } = {}) {
+  const trimmed = trimUnbalanced(rawOriginal);
+  const original = repairOriginalUrl(decodeEntities ? decodeAttrEntities(trimmed) : trimmed) || null;
+  return { trimmed, original, key: original ? `${ts}/${original}` : null };
+}
+
+/**
  * Localize every wayback reference in a text region. Absolute refs shed their
  * host; host-relative refs are emitted unchanged (already the target form).
  *
@@ -185,14 +202,12 @@ function repairOriginalUrl(rest) {
 function localizeRefs(text, corpus, { decodeEntities = false, navigational = false } = {}) {
   let count = 0;
   const out = text.replace(WAYBACK_REF_RE, (full, _host, ts, flag, rawOriginal) => {
-    const trimmed = trimUnbalanced(rawOriginal);
+    const { trimmed, key } = refCaptureKey(ts, rawOriginal, { decodeEntities });
     const suffix = rawOriginal.slice(trimmed.length); // e.g. a trailing ')' — kept as literal text
-    const candidate = decodeEntities ? decodeAttrEntities(trimmed) : trimmed;
-    const original = repairOriginalUrl(candidate);
-    if (original === null || original === '') return full; // not a satisfiable URL shape → foreign
+    if (key === null) return full; // not a satisfiable URL shape → foreign
     // Subresource: capture absent → stays foreign. Navigational: rewrite anyway
     // (uncaptured links must funnel to our miss page, never escape the origin).
-    if (!navigational && !corpus.has(`${ts}/${original}`)) return full;
+    if (!navigational && !corpus.has(key)) return full;
     const replacement = `/web/${ts}${flag || ''}/${trimmed}${suffix}`;
     if (replacement !== full) count++;
     return replacement;

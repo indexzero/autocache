@@ -9,6 +9,8 @@
 //   - reads <source.md> (the pristine, live-link form), -u/--universe
 //     (required), and -s/--seen when given AND present on disk (a missing
 //     seen file is an empty union — the bootstrap case);
+//   - reads the previous manifest at -o/--output when it exists, and carries
+//     its authored `noRewrite` set into the new manifest;
 //   - writes the canonical manifest to -o/--output and, when -s was given,
 //     writes the extended seen union BACK to the same path (read-write);
 //   - prints ONE JSON stats line on stdout
@@ -33,7 +35,7 @@ import fs from 'node:fs';
  *
  * @param {Object} [deps]
  * @param {Function} [deps.generate] - the library entry point (manifest.js#generate)
- * @param {Function} [deps.readManifest] - seen-file reader
+ * @param {Function} [deps.readManifest] - seen-file and prior-manifest reader
  * @param {Function} [deps.writeManifest] - canonical writer (manifest + seen)
  * @param {Function} [deps.readUniverse] - universe-file reader
  * @param {Function} [deps.resolve] - archive resolver override (offline tests)
@@ -53,7 +55,10 @@ export function manifestHandler(deps = {}) {
     // (generate() treats null as empty) so the very first run bootstraps it.
     const seen = flags.seen && fs.existsSync(flags.seen) ? readManifest(flags.seen) : null;
 
-    const options = { logger };
+    // The author's never-rewrite set lives in the post's own manifest, so a
+    // regeneration reads it back from -o before it writes over that file.
+    const prior = fs.existsSync(flags.output) ? readManifest(flags.output) : null;
+    const options = { logger, noRewrite: prior?.noRewrite ?? [] };
     // --near passes straight through to generate → resolve(url, { near }):
     // the library picks the archive capture closest to this timestamp for
     // never-seen urls (covered/seen urls are answered offline, unaffected).

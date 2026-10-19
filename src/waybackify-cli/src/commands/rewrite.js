@@ -9,7 +9,7 @@
 //
 // Contract (pinned by --help and the command tests):
 //   - reads <source.md> (pristine, live-link form) and -m/--manifest
-//     (versions {1, 2}; v1 nulls read as exclude);
+//     (the current version only);
 //   - writes apply()'s output to -o/--output, ALWAYS — even when some urls
 //     had no verdict (they pass through untouched, so the artifact is still
 //     the best available published form);

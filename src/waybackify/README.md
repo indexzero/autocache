@@ -222,7 +222,8 @@ anywhere (file paths are identity):
 - a **Manifest** (`manifest.js`) is one source file's `wayback.json` — a
   standalone rewrite program;
 - a **Universe** (`universe.js`) is compile-time policy — global rewrites +
-  excludes, consulted only while GENERATING manifests, never at rewrite time;
+  excludes, plus per-host behaviors under `fqdns`, consulted only
+  while GENERATING manifests, never at rewrite time;
 - the **Ledger** (`ledger.js`) is the COLLECTION — every manifest discovered
   under a tree.
 
@@ -231,6 +232,7 @@ anywhere (file paths are identity):
 ```json
 {
   "version": 2,
+  "noRewrite": ["<url>"],
   "rewrites": { "<url>": "<replacement-url>" },
   "entries": {
     "<url>": {
@@ -243,18 +245,38 @@ anywhere (file paths are identity):
 }
 ```
 
+- `noRewrite` (optional): urls the author forbids rewriting. Each one
+  stays byte-for-byte as written, whatever the archive or the Universe knows.
+  It is authored intent, kept apart from `exclude`, which records what the
+  pipeline concluded. `generate` copies it forward (`options.noRewrite`).
 - `entries` — archive resolutions: rewrite each url to its `wayback` replay
   URL. Every `wayback` is non-null and parseable.
 - `rewrites` (optional) — unconditional url → url substitutions, baked from
   the Universe subset whose URLs appear in THIS source.
 - `exclude` (optional) — urls deliberately left untouched: policy-live links
-  and confirmed-not-archived links alike. Replaces schema v1's
-  `wayback: null` convention outright.
+  and confirmed-not-archived links alike.
 
-Readers (`readManifest`/`validateManifest`) accept versions **{1, 2}**: a v1
-file's `wayback: null` entries read as `exclude` (the legacy-exclude
-migration rule); any other version fails loud. `writeManifest` always emits
-canonical v2 (sorted keys, empty optional sections omitted).
+Readers (`readManifest`/`validateManifest`) accept version **2** only. Any
+other version fails loud. An entry without a `wayback` URL fails loud too, and
+a reader never converts an entry into an exclusion. `writeManifest` always
+emits canonical v2 (sorted keys, empty optional sections omitted).
+
+### Universe `fqdns`
+
+```json
+{
+  "fqdns": {
+    "github.com": { "on404": "probe-repo-root-follow-rename" }
+  }
+}
+```
+
+One place to say that the urls on a host get special handling. Keys are bare
+lowercase FQDNs. Behavior names and values come from the closed
+`FQDN_BEHAVIORS` table, so an unknown name or value fails validation.
+`fqdnBehavior(universe, url)` returns the behaviors for the exact host of a
+url, or `null`. `subset` never bakes `fqdns` into a manifest, and no
+rewrite-time engine reads it, so the remaster `ruleVersion` does not change.
 
 ### Operations
 
@@ -274,7 +296,7 @@ import { discover, flatten, against } from '@autocache/waybackify/ledger.js';
 const { manifest, seen } = await generate(markdown, universe, previousSeen);
 
 // APPLY: source + manifest → published form. Precedence per url:
-// exclude → rewrites → entries → untouched + warn. Fenced code and link
+// noRewrite → exclude → rewrites → entries → untouched + warn. Fenced code and link
 // TEXT are never rewritten; the url matching is scheme/slash/port-
 // insensitive (the importer-proven equation: index ≡ apply(readme, manifest)).
 const { content, warnings } = apply(markdown, manifest);

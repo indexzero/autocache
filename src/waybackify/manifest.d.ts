@@ -16,6 +16,8 @@ export interface ManifestEntry {
 /** The in-memory Manifest (normalized schema v2; see manifest.js header). */
 export interface Manifest {
   version: number;
+  /** Urls the author forbids rewriting. Apply leaves them as written. */
+  noRewrite: string[];
   rewrites: Record<string, string>;
   entries: Record<string, ManifestEntry>;
   exclude: string[];
@@ -49,16 +51,13 @@ export const DEFAULT_CHROME_HOST: string;
 /** Swap a web.archive.org replay URL's host to the chrome host (#453). */
 export function toChromeHost(waybackUrl: string, chromeHost: string): string;
 
-/** Versions readers understand ({1, 2}). */
-export const SUPPORTED_MANIFEST_VERSIONS: ReadonlySet<number>;
-
 /** An empty manifest — the in-memory canonical shape. */
 export function emptyManifest(): Manifest;
 
-/** Validate + normalize a parsed manifest (v1 or v2; v1 nulls → exclude). */
+/** Validate + normalize a parsed manifest (the current version only). */
 export function validateManifest(raw: unknown, context?: string): Manifest;
 
-/** Read + validate a manifest file (versions {1, 2} accepted). */
+/** Read + validate a manifest file (the current version only). */
 export function readManifest(file: string): Manifest;
 
 /** Normalize a manifest into its canonical schema-v2 JSON shape. */
@@ -73,7 +72,7 @@ export function extractArchiveUrls(markdown: string): string[];
 /** Enumerate one markdown file's wayback references (deduped, ordered). */
 export function sourceRefs(filePath: string, options?: { manifest?: boolean }): SourceRef[];
 
-/** Apply a manifest to a source (exclude → rewrites → entries → warn). */
+/** Apply a manifest (noRewrite → exclude → rewrites → entries → warn). */
 export function apply(
   source: string,
   manifest: Manifest,

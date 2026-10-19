@@ -1,8 +1,8 @@
 // `waybackify ledger` (surface v2: the COLLECTION) — offline, real library.
 //
 // Discovery/union/join semantics are tested where they live:
-// spv/waybackify/test/ledger.test.js. This file pins the CLI contract over
-// the committed fixture tree (one v2 manifest, one v1 with a null entry):
+// src/waybackify/test/ledger.test.js. This file pins the CLI contract over
+// the committed fixture tree (two v2 manifests):
 // JSONL survey rows by default, ONE canonical union manifest under
 // --flatten, key-sorted worklist rows under --against, and a loud domain
 // failure for a typo'd <dir>.
@@ -29,9 +29,8 @@ test('discovery: one JSONL survey row per manifest, path-sorted, file paths as i
   const { code, stdout } = await ledger([TREE]);
   assert.equal(code, EXIT.OK);
   assert.deepEqual(stdout.map(l => JSON.parse(l)), [
-    // v2 manifest: sections counted as written.
+    // Sections counted as written.
     { file: 'a/wayback.json', entries: 1, rewrites: 1, exclude: 1 },
-    // v1 manifest: the null entry reads as exclude (2 entries + 1 exclude).
     { file: 'b/nested/wayback.json', entries: 2, rewrites: 0, exclude: 1 }
   ]);
 });

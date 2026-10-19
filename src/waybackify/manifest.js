@@ -7,6 +7,7 @@
 //
 //   {
 //     "version": 2,
+//     "noRewrite": [ "<url>", ... ],                          // optional
 //     "rewrites": { "<url>": "<replacement-url>", ... },     // optional
 //     "entries":  { "<url>": { "wayback": "<replay-url>",
 //                              "timestamp": "<YYYYMMDDHHMMSS>",
@@ -14,28 +15,31 @@
 //     "exclude":  [ "<url>", ... ]                            // optional
 //   }
 //
+//   - `noRewrite`: urls the AUTHOR forbids rewriting. Each stays
+//     byte-for-byte as written, whatever the archive or the Universe knows.
+//     It is authored intent, so it never mixes with `exclude`, which records
+//     what the pipeline concluded. `generate` carries it forward unchanged.
 //   - `entries`:  archive resolutions — rewrite each url to its `wayback`
-//     replay URL. Every `wayback` is non-null and parseable; "checked, not
-//     archived" is NOT an entry state in v2 (see `exclude`).
+//     replay URL. Every `wayback` is non-null and parseable. "Checked, not
+//     archived" is not an entry state (see `exclude`).
 //   - `rewrites`: unconditional url → url substitutions, baked from the
 //     Universe subset whose URLs appear in THIS source (universe.js).
 //   - `exclude`:  urls deliberately left untouched — policy-live links AND
-//     confirmed-not-archived links. This replaces schema v1's
-//     `wayback: null` convention outright.
+//     confirmed-not-archived links.
 //
-// Readers accept versions {1, 2}: a v1 file ({ version: 1, entries } with
-// possible `wayback: null` entries) reads as a v2 manifest whose null
-// entries became `exclude` — the legacy-exclude migration rule. A version
-// outside {1, 2} fails loud, never silently treated as understood.
+// Readers accept the current version (MANIFEST_VERSION) only. Any other
+// version fails loud. An entry without a `wayback` URL fails loud too. A
+// reader never converts an entry into an exclusion.
 //
-// Rewrite precedence (apply): exclude → rewrites → entries → untouched+warn.
+// Rewrite precedence (apply):
+//   noRewrite → exclude → rewrites → entries → untouched+warn.
 // A URL claimed by two sections fails safe (the earlier, more conservative
 // section wins); a URL claimed by none is surfaced, never guessed at.
 //
 // Provenance: `apply` generalizes the importer's proven normalize equation
 // (post.md ≡ apply(README.md, wayback.json)) — same delimiter-bounded URL
 // matching, same scheme/slash/port-insensitive match key, same fenced-code
-// and link-text guards — so applying a v1-read manifest reproduces the old
+// and link-text guards. Applying a manifest therefore reproduces the old
 // pipeline's output byte-for-byte.
 
 import fs from 'node:fs';
@@ -90,23 +94,21 @@ export function toChromeHost(waybackUrl, chromeHost) {
   return waybackUrl.replace(WAYBACK_ORIGIN_RE, `https://${chromeHost}`);
 }
 
-/** Versions readers understand. Anything else is unknown → loud failure. */
-export const SUPPORTED_MANIFEST_VERSIONS = Object.freeze(new Set([1, 2]));
-
 /** An empty manifest — the in-memory canonical shape. */
 export function emptyManifest() {
-  return { version: MANIFEST_VERSION, rewrites: {}, entries: {}, exclude: [] };
+  return { version: MANIFEST_VERSION, noRewrite: [], rewrites: {}, entries: {}, exclude: [] };
 }
 
 /**
- * Structurally validate a parsed manifest (schema v1 OR v2) and return the
- * normalized in-memory shape: `{ version: 2, rewrites, entries, exclude }`,
- * all sections present, no `wayback: null` entries (v1 nulls become
- * `exclude`). Throws with `context` in the message on the first violation.
+ * Structurally validate a parsed manifest (the current version only) and
+ * return the normalized in-memory shape:
+ * `{ version: 2, noRewrite, rewrites, entries, exclude }`, with all
+ * sections present. Throws with `context` in the message on the first
+ * violation.
  *
  * @param {unknown} raw
  * @param {string} [context] - label for error messages (usually a file path)
- * @returns {{ version: number, rewrites: Record<string,string>,
+ * @returns {{ version: number, noRewrite: string[], rewrites: Record<string,string>,
  *   entries: Record<string,{wayback:string,timestamp:string,checkedAt?:string}>,
  *   exclude: string[] }}
  */
@@ -116,10 +118,13 @@ export function validateManifest(raw, context = 'manifest') {
     throw bad('not an object');
   }
   const version = raw.version;
-  if (!SUPPORTED_MANIFEST_VERSIONS.has(version)) {
-    throw bad(`unsupported version ${JSON.stringify(version)} (supported: 1, 2)`);
+  if (version !== MANIFEST_VERSION) {
+    throw bad(`unsupported version ${JSON.stringify(version)} (supported: ${MANIFEST_VERSION})`);
   }
-  const { rewrites = {}, entries = {}, exclude = [] } = raw;
+  const { noRewrite = [], rewrites = {}, entries = {}, exclude = [] } = raw;
+  if (!Array.isArray(noRewrite) || noRewrite.some(u => typeof u !== 'string' || u.length === 0)) {
+    throw bad('`noRewrite` must be an array of non-empty strings');
+  }
   if (rewrites === null || typeof rewrites !== 'object' || Array.isArray(rewrites)) {
     throw bad('`rewrites` must be an object of url → replacement-url');
   }
@@ -136,18 +141,12 @@ export function validateManifest(raw, context = 'manifest') {
   }
 
   const out = emptyManifest();
+  out.noRewrite = [...noRewrite];
   out.rewrites = { ...rewrites };
   out.exclude = [...exclude];
   for (const [url, entry] of Object.entries(entries)) {
     if (entry === null || typeof entry !== 'object') {
       throw bad(`entry for ${url} must be an object`);
-    }
-    if (entry.wayback == null) {
-      // v1's "checked, not archived" state — the legacy-exclude migration
-      // rule. (Tolerated in a v2 file too: the meaning is unambiguous, and
-      // refusing it would strand any hand-edited manifest.)
-      out.exclude.push(url);
-      continue;
     }
     if (typeof entry.wayback !== 'string' || parseWaybackUrl(entry.wayback) === null) {
       // An unparseable replay URL is a capture no mirror could ever serve —
@@ -160,8 +159,8 @@ export function validateManifest(raw, context = 'manifest') {
 }
 
 /**
- * Read + validate a manifest file (versions {1, 2} accepted; v1 nulls read
- * as `exclude`). Returns the normalized in-memory shape.
+ * Read + validate a manifest file (the current version only). Returns the
+ * normalized in-memory shape.
  *
  * @param {string} file
  * @returns {ReturnType<typeof validateManifest>}
@@ -172,8 +171,9 @@ export function readManifest(file) {
 
 /**
  * Normalize a manifest into its canonical schema-v2 JSON shape: `version`
- * first, then (only when non-empty) `rewrites`, then `entries`, then (only
- * when non-empty) `exclude`; url keys sorted, `exclude` deduped. This is THE
+ * first, then (only when non-empty) `noRewrite`, then (only when non-empty)
+ * `rewrites`, then `entries`, then (only when non-empty) `exclude`. Url keys
+ * are sorted. `noRewrite` and `exclude` are deduped and sorted. This is THE
  * serialization order — writeManifest stringifies exactly this object, and
  * anything else that prints a manifest (e.g. `ledger --flatten` on stdout)
  * goes through it too, so there is one canonical form, not two.
@@ -186,6 +186,7 @@ export function canonicalize(manifest, context = 'manifest') {
   const m = validateManifest(manifest, context);
   const sortKeys = obj => Object.fromEntries(Object.keys(obj).sort().map(k => [k, obj[k]]));
   const out = { version: MANIFEST_VERSION };
+  if (m.noRewrite.length > 0) out.noRewrite = [...new Set(m.noRewrite)].sort();
   if (Object.keys(m.rewrites).length > 0) out.rewrites = sortKeys(m.rewrites);
   out.entries = sortKeys(m.entries);
   if (m.exclude.length > 0) out.exclude = [...new Set(m.exclude)].sort();
@@ -339,6 +340,10 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *
  * Classification per extracted live URL, in order:
  *
+ *   0. The author's `noRewrite` set (options.noRewrite): a listed url
+ *      is never classified. It gets no universe bake, no seen verdict, and
+ *      no archive call. The whole set is copied into the manifest as is,
+ *      so the authored intent travels with the post across regeneration.
  *   1. Universe policy (no network): an excluded url is baked into
  *      `exclude`; a rewritten url is baked into `rewrites` — the subset
  *      rule: only THIS source's urls carry policy into the manifest.
@@ -361,14 +366,15 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  * `seen` is Manifest-shaped and READ-WRITE: pass the parsed union file
  * (bootstrap it with ledger.js#flatten), and write the RETURNED `seen` — a
  * normalized copy extended with this run's verdicts — back to disk after
- * the run. (A normalized copy, not in-place mutation: validation may have
- * rewritten sections, e.g. a v1-shaped seen's nulls into `exclude`.)
+ * the run. (A normalized copy, not in-place mutation.)
  *
  * @param {string} source - markdown text (the pristine, live-link form)
  * @param {{ rewrites: Record<string,string>, exclude: string[] } | null} universe
  * @param {object | null} seen - Manifest-shaped resolution union (mutated)
  * @param {Object} [options]
  * @param {string} [options.near] - preferred capture timestamp (YYYYMMDD[HHMMSS])
+ * @param {string[]} [options.noRewrite] - the author's never-rewrite set,
+ *   read from the post's previous manifest by the caller
  * @param {Function} [options.resolve] - async (url, { near }) →
  *   { url: waybackUrl, timestamp } | null; injectable for offline use/tests
  * @param {WaybackMachine} [options.wayback] - client backing the default resolver
@@ -386,7 +392,8 @@ export async function generate(source, universe, seen, options = {}) {
 
   const probe = options.probe ?? probeGithub;
   const uni = universe ?? emptyUniverse();
-  const manifest = emptyManifest();
+  const manifest = validateManifest({ version: MANIFEST_VERSION, noRewrite: options.noRewrite ?? [] }, 'noRewrite');
+  const forbidden = new Set(manifest.noRewrite.map(matchKey));
   seen = seen ? validateManifest(seen, 'seen') : emptyManifest();
   const deferred = [];
   const stats = { urls: 0, fromUniverse: 0, fromSeen: 0, resolved: 0 };
@@ -396,8 +403,10 @@ export async function generate(source, universe, seen, options = {}) {
   const seenEntries = new Map(Object.entries(seen.entries).map(([u, e]) => [matchKey(u), e]));
   const seenRewrites = new Map(Object.entries(seen.rewrites).map(([u, t]) => [matchKey(u), t]));
 
-  const urls = extractLinks(source);
-  stats.urls = urls.length;
+  const links = extractLinks(source);
+  stats.urls = links.length;
+  // Step 0: the author's never-rewrite set. These urls skip every step.
+  const urls = links.filter(url => !forbidden.has(matchKey(url)));
 
   // Step 1 — universe classification + subset baking (offline).
   const baked = subset(uni, urls);
@@ -465,7 +474,9 @@ export async function generate(source, universe, seen, options = {}) {
 
 /**
  * Apply a manifest to a markdown source: rewrite each live URL per the
- * manifest, precedence `exclude → rewrites → entries → untouched + warn`.
+ * manifest, precedence
+ * `noRewrite → exclude → rewrites → entries → untouched + warn`. A
+ * `noRewrite` url is the author's: it stays byte-for-byte and never warns.
  *
  * The scan is the importer-proven one, generalized: one delimiter-bounded
  * pass over prose (fenced code blocks are never touched — a URL in a code
@@ -486,8 +497,7 @@ export async function generate(source, universe, seen, options = {}) {
  * mirror.
  *
  * @param {string} source - markdown text
- * @param {object} manifest - in-memory manifest (normalized on entry, so a
- *   freshly parsed v1 file works too)
+ * @param {object} manifest - in-memory manifest (validated on entry)
  * @param {Object} [options]
  * @param {string} [options.chromeHost=DEFAULT_CHROME_HOST] - the chrome FQDN
  *   (no scheme) archived links point at; threaded from the CLI's --chrome-host
@@ -496,6 +506,7 @@ export async function generate(source, universe, seen, options = {}) {
  */
 export function apply(source, manifest, { chromeHost = DEFAULT_CHROME_HOST } = {}) {
   const m = validateManifest(manifest, 'apply');
+  const noRewriteKeys = new Set(m.noRewrite.map(matchKey));
   const excludeKeys = new Set(m.exclude.map(matchKey));
   const rewriteByKey = new Map(Object.entries(m.rewrites).map(([u, t]) => [matchKey(u), t]));
   const entryByKey = new Map(Object.entries(m.entries).map(([u, e]) => [matchKey(u), e.wayback]));
@@ -508,6 +519,7 @@ export function apply(source, manifest, { chromeHost = DEFAULT_CHROME_HOST } = {
       // the chrome host — both pass through, keeping apply idempotent.
       if (url.includes('web.archive.org/web/') || url.includes(`${chromeHost}/web/`)) return url;
       const key = matchKey(url);
+      if (noRewriteKeys.has(key)) return url;
       if (excludeKeys.has(key)) return url;
       if (rewriteByKey.has(key)) return rewriteByKey.get(key);
       if (entryByKey.has(key)) return toChromeHost(entryByKey.get(key), chromeHost);

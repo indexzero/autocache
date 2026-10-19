@@ -179,6 +179,17 @@ describe('emitBucketBatch', () => {
     await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), /1000/);
   });
 
+  it('never projects the .verify/ checkpoint of `bucket verify`', async () => {
+    const root = await mkRoot();
+    await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/plain', body: new TextEncoder().encode('a') });
+    await fsp.mkdir(path.join(root, '.verify'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.verify', 'acct-bucket.0123456789ab.json'), '{}');
+
+    const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
+    assert.deepEqual(summary, { total: 1, bodied: 1, bodiless: 0, missingBodies: 0 });
+    assert.ok(lines.every(line => !line.includes('.verify')), 'no batch line names the checkpoint');
+  });
+
   it('skips and reports a bodied sidecar whose body file is missing (a pre-dedup root needs a refetch)', async () => {
     const root = await mkRoot();
     const kept = await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('<html>') });
@@ -211,16 +222,6 @@ describe('emitBucketBatch', () => {
       await fsp.writeFile(path.join(root, rel), text);
       await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), { message: `emit-bucket-batch: malformed sidecar ${rel} (not a JSON object)` }, text);
     }
-
-  it('never projects the .verify/ checkpoint of `bucket verify`', async () => {
-    const root = await mkRoot();
-    await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/plain', body: new TextEncoder().encode('a') });
-    await fsp.mkdir(path.join(root, '.verify'), { recursive: true });
-    await fsp.writeFile(path.join(root, '.verify', 'acct-bucket.0123456789ab.json'), '{}');
-
-    const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
-    assert.deepEqual(summary, { total: 1, bodied: 1, bodiless: 0 });
-    assert.ok(lines.every(line => !line.includes('.verify')), 'no batch line names the checkpoint');
   });
 
   it('emits nothing for an empty / never-populated root', async () => {

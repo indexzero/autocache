@@ -67,3 +67,15 @@ test('a bad root/sidecar throw → domain exit 1', async () => {
   const noopLogger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
   assert.equal(await run(['bucket', 'push', '-r', '/c', '--bucket', 'b'], { handlers: { bucketPush: handler }, out: () => {}, logger: noopLogger, error: () => {} }), EXIT.DOMAIN);
 });
+
+test('a skipped missing body: the batch and the summary still go out, then domain exit 1 (a partial push is not a success)', async () => {
+  const { handler, out, err, logger } = handlerFor(resultOf(BATCH, { total: 1, bodied: 1, bodiless: 0, missingBodies: 2 }));
+  const errors = [];
+  assert.equal(
+    await run(['bucket', 'push', '-r', '/c', '--bucket', 'b'], { handlers: { bucketPush: handler }, out: l => out.push(l), logger, error: e => errors.push(String(e)) }),
+    EXIT.DOMAIN
+  );
+  assert.deepEqual(out, BATCH, 'the rest of the batch is still emitted');
+  assert.ok(err.some(l => l.includes('1 objects (1 bodied, 0 bodiless), 2 skipped for a missing body (refetch them)')), 'the summary reports the skips');
+  assert.ok(errors.some(e => e.includes('bucket push incomplete: 2 sidecar(s) name a missing body')), 'the bail names the cause');
+});

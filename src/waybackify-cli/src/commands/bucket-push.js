@@ -4,7 +4,10 @@
 // spv/waybackify/bucket-batch.js; this file translates the parsed argv payload
 // into an emitBucketBatch() call, streams the batch to stdout (ready to pipe
 // into `s5cmd run`) and the summary to stderr. A bad root/sidecar throws →
-// domain-failure exit (1).
+// domain-failure exit (1). A sidecar whose body file is missing is skipped by
+// the emitter and reported in the summary. The handler then exits 1 as well,
+// after the rest of the batch and the summary are out: a partial push is not
+// a success, and the operator refetches the skipped entries.
 //
 // The library is imported by workspace-relative specifier (both packages are
 // private and in-repo) and lazily, inside the runner, so merely loading the
@@ -59,5 +62,11 @@ export function bucketPushHandler(deps = {}) {
         `${summary.missingBodies ? `, ${summary.missingBodies} skipped for a missing body (refetch them)` : ''}` +
         `${flags.dryRun ? ' — dry-run, nothing written to stdout' : ''}`
     );
+
+    // A partial push is not a success. The batch and the summary are already
+    // out, so the thrown error routes through run()'s bail handler → exit 1.
+    if (summary.missingBodies) {
+      throw new Error(`bucket push incomplete: ${summary.missingBodies} sidecar(s) name a missing body — refetch them and rerun`);
+    }
   };
 }

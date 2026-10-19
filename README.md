@@ -7,7 +7,7 @@ A Wayback capture renders only while archive.org serves its chrome and assets. a
 ## Requirements
 
 - Node >= 24 (the server runs TypeScript directly through type-stripping).
-- pnpm 10.
+- pnpm 12.
 - For edge deployment: `s5cmd` and `rclone` on PATH (see [docs/SYNC.md](docs/SYNC.md)).
 
 ## Install

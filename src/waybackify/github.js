@@ -60,15 +60,21 @@ export function graftGithub(url, owner, repo) {
   return `${ORIGIN}/${owner}/${repo}${githubRepo(url).rest}`;
 }
 
-/** The owner/repo a root redirect names, or null when it names no repo. */
-function redirectRepo(location, root) {
+/** The URL a redirect names when it stays on github.com, else null. */
+function onGithub(location, from) {
   let target;
   try {
-    target = new URL(location, root);
+    target = new URL(location, from);
   } catch {
     return null;
   }
-  if (!/^(?:www\.)?github\.com$/i.test(target.hostname)) return null;
+  return /^(?:www\.)?github\.com$/i.test(target.hostname) ? target : null;
+}
+
+/** The owner/repo a root redirect names, or null when it names no repo. */
+function redirectRepo(location, root) {
+  const target = onGithub(location, root);
+  if (!target) return null;
   const [, owner, repo] = target.pathname.split('/');
   return owner && repo ? { owner, repo } : null;
 }
@@ -81,6 +87,35 @@ function missing(status) {
 /** An inconclusive reply: throw, so that the caller records nothing. */
 function inconclusive(what, status, url) {
   return new Error(`github probe: inconclusive, ${what} returned HTTP ${status}: ${url}`);
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_GRAFT_HOPS = 5;
+
+/**
+ * Fetch the grafted URL and walk its redirects by hand, one hop at a time.
+ * Every hop must stay on github.com. A `redirect: 'follow'` fetch hides the
+ * chain, so a login page on another host that answers 200 or 404 looks like
+ * a verdict about the graft. The walk keeps the final reply attributable to
+ * GitHub. A hop off GitHub, a hop with no Location, or a chain longer than
+ * MAX_GRAFT_HOPS is inconclusive.
+ * @returns {Promise<boolean>} true when the grafted link answers 2xx
+ * @throws on an inconclusive reply
+ */
+async function verifyGraft(fetch, to) {
+  let url = to;
+  for (let hop = 0; hop <= MAX_GRAFT_HOPS; hop++) {
+    const res = await fetch(url, { redirect: 'manual' });
+    if (res.status >= 200 && res.status < 300) return true;
+    if (missing(res.status)) return false;
+    if (!REDIRECT_STATUSES.has(res.status)) throw inconclusive('grafted URL', res.status, url);
+    const location = res.headers.get('location');
+    if (!location) throw inconclusive('grafted URL redirect without a Location', res.status, url);
+    const next = onGithub(location, url);
+    if (!next) throw inconclusive('grafted URL redirect off GitHub', res.status, url);
+    url = next.href;
+  }
+  throw new Error(`github probe: inconclusive, grafted URL redirected more than ${MAX_GRAFT_HOPS} times: ${to}`);
 }
 
 /**
@@ -117,8 +152,5 @@ export async function probeGithub(url, options = {}) {
   }
 
   const to = graftGithub(url, target.owner, target.repo);
-  const check = await fetch(to, { redirect: 'follow' });
-  if (check.ok) return { renamed: true, from: url, to };
-  if (missing(check.status)) return { renamed: false };
-  throw inconclusive('grafted URL', check.status, to);
+  return (await verifyGraft(fetch, to)) ? { renamed: true, from: url, to } : { renamed: false };
 }

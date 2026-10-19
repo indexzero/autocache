@@ -569,23 +569,29 @@ describe('generate: an inconclusive GitHub reply defers the url', () => {
   const OLD = 'https://github.com/old-owner/old-repo/issues/1';
   const ROOT = 'https://github.com/old-owner/old-repo';
   const GRAFT = 'https://github.com/new-owner/new-repo/issues/1';
+  const LOGIN = 'https://elsewhere.example/login';
   const SOURCE = `See [the issue](${OLD}).`;
   const reply = (status, location) => ({ status, ok: status >= 200 && status < 300, headers: new Headers(location ? { location } : {}) });
   const cases = [
     ['denied at the root', { [ROOT]: reply(403) }],
     ['timed out at the root', { [ROOT]: reply(408) }],
     ['denied at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(403) }],
-    ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }]
+    ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }],
+    ['redirected off GitHub at the graft, other host answers 200', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(200) }],
+    ['redirected off GitHub at the graft, other host answers 404', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(404) }]
   ];
   for (const [name, script] of cases) {
-    it(`${name}: no exclude in the manifest or in seen`, async () => {
-      const probe = url => probeGithub(url, { fetch: async u => script[u], sleep: async () => {} });
+    it(`${name}: no exclude or rewrite in the manifest or in seen`, async () => {
+      const fetched = [];
+      const probe = url => probeGithub(url, { fetch: async u => (fetched.push(u), script[u]), sleep: async () => {} });
       const { manifest, seen, deferred } = await generate(SOURCE, null, null, { resolve: async () => null, probe });
       assert.equal(deferred.length, 1);
       assert.equal(deferred[0].url, OLD);
       assert.deepEqual(manifest.exclude, []);
+      assert.deepEqual(manifest.rewrites, {});
       assert.deepEqual(seen.exclude, []);
       assert.deepEqual(seen.rewrites, {});
+      assert.ok(!fetched.includes(LOGIN), 'the probe never leaves github.com');
     });
   }
 });

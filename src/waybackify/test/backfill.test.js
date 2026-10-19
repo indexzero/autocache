@@ -265,12 +265,15 @@ describe('backfill: an inconclusive GitHub reply keeps the capture eligible', ()
   const GH = `https://web.archive.org/web/20160312105649/${ORIG}`;
   const ROOT = 'https://github.com/old-owner/old-repo';
   const GRAFT = 'https://github.com/new-owner/new-repo/issues/1';
+  const LOGIN = 'https://elsewhere.example/login';
   const reply = (status, location) => ({ status, ok: status >= 200 && status < 300, headers: new Headers(location ? { location } : {}) });
   const cases = [
     ['denied at the root', { [ROOT]: reply(403) }],
     ['timed out at the root', { [ROOT]: reply(408) }],
     ['denied at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(403) }],
-    ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }]
+    ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }],
+    ['redirected off GitHub at the graft, other host answers 200', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(200) }],
+    ['redirected off GitHub at the graft, other host answers 404', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(404) }]
   ];
   for (const [name, script] of cases) {
     it(`${name}: deferred, not gone, and probed again on the next run`, async () => {
@@ -285,7 +288,10 @@ describe('backfill: an inconclusive GitHub reply keeps the capture eligible', ()
       const r = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
       assert.equal(r.stats.deferred, 1);
       assert.equal(r.stats.gone, 0);
+      assert.deepEqual(r.renames, []);
       assert.equal(fs.existsSync(path.join(root, '.refetch', 'gone.jsonl')), false);
+      assert.equal(fs.existsSync(path.join(root, '.refetch', 'renamed.jsonl')), false);
+      assert.ok(!fetched.includes(LOGIN), 'the probe never leaves github.com');
       const before = fetched.length;
       const again = await backfill({ ledgerDir: 'x', root, delayMs: 0, deps: { ...deps, probe } });
       assert.equal(again.pending, 1, 'the capture stays eligible for retry');

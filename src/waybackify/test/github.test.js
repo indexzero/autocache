@@ -110,6 +110,37 @@ describe('probeGithub: the repo-root probe', () => {
     await assert.rejects(() => probeGithub(DEEP, { fetch: away, sleep: noSleep }), /inconclusive/);
   });
 
+  for (const status of [200, 404]) {
+    it(`a grafted URL that redirects off GitHub is inconclusive, even when the other host answers ${status}`, async () => {
+      const login = 'https://elsewhere.example/login';
+      const fetch = scriptedFetch({
+        [OLD]: { status: 301, location: NEW },
+        [GRAFTED]: { status: 302, location: login },
+        [login]: { status }
+      });
+      await assert.rejects(() => probeGithub(DEEP, { fetch, sleep: noSleep }), /grafted URL redirect off GitHub/);
+      assert.ok(!fetch.calls.some(c => c.url === login), 'the probe never leaves github.com');
+      assert.equal(fetch.calls.at(-1).redirect, 'manual', 'the graft walk reads each redirect itself');
+    });
+  }
+
+  it('a grafted URL that redirects within GitHub is followed, and the rename keeps the grafted URL', async () => {
+    const moved = `${NEW}/commit/0123456789abcdef0123456789abcdef01234567?moved=1`;
+    const fetch = scriptedFetch({
+      [OLD]: { status: 301, location: NEW },
+      [GRAFTED]: { status: 301, location: moved },
+      [moved]: { status: 200 }
+    });
+    assert.deepEqual(await probeGithub(DEEP, { fetch, sleep: noSleep }), { renamed: true, from: DEEP, to: GRAFTED });
+  });
+
+  it('a grafted URL redirect without a Location, or a redirect loop, is inconclusive', async () => {
+    const bare = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 302 } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: bare, sleep: noSleep }), /without a Location/);
+    const loop = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 302, location: GRAFTED } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: loop, sleep: noSleep }), /redirected more than/);
+  });
+
   for (const status of [403, 408]) {
     it(`a ${status} at the root or at the graft is inconclusive, so it throws`, async () => {
       const root = scriptedFetch({ [OLD]: { status } });

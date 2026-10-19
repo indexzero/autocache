@@ -267,9 +267,10 @@ import { discover, flatten, against } from '@autocache/waybackify/ledger.js';
 // classified offline; previously seen urls are copied offline; only
 // never-seen urls cost an archive round-trip (CDX, injectable). The
 // returned `seen` — Manifest-shaped, read-write — carries every verdict
-// forward, so re-generation is idempotent (zero network). A github.com deep
-// link that is not archived must survive the GitHub root probe (github.js)
-// before it is excluded: a renamed repo becomes a `rewrites` entry instead.
+// forward, so re-generation is idempotent (zero network). The GitHub root
+// probe (github.js) guards a github.com deep link that the archive lacks.
+// A renamed repo becomes a `rewrites` entry. Only a link that survives the
+// probe is excluded.
 const { manifest, seen } = await generate(markdown, universe, previousSeen);
 
 // APPLY: source + manifest → published form. Precedence per url:

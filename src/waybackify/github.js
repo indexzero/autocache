@@ -16,9 +16,10 @@
 //      to the same repo. Only then can a caller record a terminal verdict.
 //
 // Every other reply is inconclusive and THROWS: a 403, a 408, a 429, a 5xx, a
-// redirect off GitHub, or a network error. Thus no caller records a verdict
-// on a guess, and the caller defers the link. Backfill (gone.jsonl) and manifest generation
-// (the `exclude` verdict) share this one helper.
+// redirect off GitHub or without a Location, a 3xx that is not a redirect, or
+// a network error. Thus no caller records a verdict on a guess, and the
+// caller defers the link. Backfill (gone.jsonl) and manifest generation (the
+// `exclude` verdict) share this one helper.
 
 const ORIGIN = 'https://github.com';
 const HOST_RE = /^(?:www\.)?github\.com$/;

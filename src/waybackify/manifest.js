@@ -372,7 +372,7 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  * @param {Function} [options.resolve] - async (url, { near }) →
  *   { url: waybackUrl, timestamp } | null; injectable for offline use/tests
  * @param {WaybackMachine} [options.wayback] - client backing the default resolver
- * @param {Function} [options.probe] - async (url) → { renamed, to? } | null;
+ * @param {Function} [options.probe] - async (url) → { renamed, to? } | null,
  *   the GitHub root probe (github.js#probeGithub), injectable for tests
  * @returns {Promise<{ manifest: object, seen: object,
  *   deferred: Array<{ url: string, error: string }>,

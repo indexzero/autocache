@@ -8,4 +8,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 🆕 Added
-- **GitHub repo-root probe before a deep-link 404 counts as gone**: `backfill` and `generate` probe the repo root of a `github.com` deep link that the archive lacks, and a renamed repo becomes a rewrite candidate (`.refetch/renamed.jsonl`, `manifest.rewrites`). A default port (`github.com:80`) still matches, and an inconclusive reply (403, 408, 429, 5xx) defers instead of writing a terminal record. (#13)
+- **GitHub repo-root probe before a deep-link 404 counts as gone**: `backfill` and `generate` probe the repo root of a `github.com` deep link that the archive lacks. A renamed repo becomes a rewrite candidate (`.refetch/renamed.jsonl`, `manifest.rewrites`), and a default port (`github.com:80`) still matches. An inconclusive reply defers the link instead of writing a terminal record. Inconclusive replies are a 403, 408, 429, or 5xx, a redirect off GitHub or without a Location, and a network error. (#13)

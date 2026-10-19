@@ -95,9 +95,14 @@ describe('githubRepo: which URLs the probe applies to', () => {
 
   it('returns null for an owner or repo outside GitHub naming', () => {
     assert.equal(githubRepo('https://github.com/old%20owner/old-repo/issues/1'), null);
-    assert.equal(githubRepo('https://github.com/old_owner/old-repo/issues/1'), null);
+    assert.equal(githubRepo('https://github.com/old.owner/old-repo/issues/1'), null);
     assert.equal(githubRepo('https://github.com/old-owner/old%2Frepo/issues/1'), null);
     assert.equal(githubRepo('https://github.com/old-owner/old_repo/issues/1').repo, 'old_repo');
+  });
+
+  it('accepts the underscore of an Enterprise Managed User owner', () => {
+    assert.equal(githubRepo('https://github.com/old_shortcode/old-repo/issues/1').owner, 'old_shortcode');
+    assert.equal(graftGithub('https://github.com/a/b/x', 'new_shortcode', 'c'), 'https://github.com/new_shortcode/c/x');
   });
 });
 

@@ -25,9 +25,10 @@
 const ORIGIN = 'https://github.com';
 const HOST_RE = /^(?:www\.)?github\.com$/;
 const AUTHORITY_RE = /^https?:\/\/[^/?#]*/i;
-// GitHub's own naming rules: an owner is alphanumerics and hyphens, a repo
-// adds underscores and periods. Neither is ever `.` or `..`.
-const OWNER_RE = /^[A-Za-z0-9-]+$/;
+// GitHub's own naming rules: an owner is alphanumerics, hyphens, and the
+// underscore of an Enterprise Managed User (`name_shortcode`), a repo adds
+// periods. Neither is ever `.` or `..`.
+const OWNER_RE = /^[A-Za-z0-9_-]+$/;
 const REPO_RE = /^[A-Za-z0-9_.-]+$/;
 
 /** True when `owner` and `repo` are names GitHub can issue. */

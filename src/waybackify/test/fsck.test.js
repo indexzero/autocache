@@ -460,6 +460,50 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     assert.equal((await fsck(root)).counts.trashFiles, 1);
   });
 
+  it('a pre-existing trash/ that this tool did not create (no marker) is foreignRoot and is left alone', async () => {
+    await fsp.mkdir(path.join(root, TRASH_DIR, 'operator-stuff'), { recursive: true });
+    await fsp.writeFile(path.join(root, TRASH_DIR, 'operator-stuff', 'notes.txt'), 'precious');
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'garbage');
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'foreignRoot', 'orphanCap');
+    assert.match(report.findings.foreignRoot[0].reason, /no \.fsck-quarantine marker/);
+    assert.equal(report.counts.trashFiles, 0, 'a foreign trash/ is not inventoried');
+    assert.deepEqual(report.reaped.moves, [], 'nothing is moved into a foreign trash/');
+    assert.match(report.findings.orphanCap[0].reapError, /exists without the \.fsck-quarantine marker/);
+    assert.ok(fs.existsSync(orphan), 'the orphan stays in cap/');
+    assert.equal(fs.readFileSync(path.join(root, TRASH_DIR, 'operator-stuff', 'notes.txt'), 'utf8'), 'precious');
+    await assert.rejects(emptyTrash(root), /exists without the \.fsck-quarantine marker/);
+    await assert.rejects(restoreTrash(root, 'operator-stuff'), /exists without the \.fsck-quarantine marker/);
+    assert.equal(fs.readFileSync(path.join(root, TRASH_DIR, 'operator-stuff', 'notes.txt'), 'utf8'), 'precious', 'still left alone');
+  });
+
+  it('a symlinked trash/ is never followed: foreignRoot, not inventoried, no moves, no emptying, target untouched', async () => {
+    const outside = await mkroot();
+    await fsp.mkdir(path.join(outside, 'cap', 'ab'), { recursive: true });
+    await fsp.writeFile(path.join(outside, 'cap', 'ab', 'abcd'), 'outside the root');
+    await fsp.writeFile(path.join(outside, TRASH_MARKER), '{}\n'); // even with a marker at the target
+    await fsp.symlink(outside, path.join(root, TRASH_DIR));
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'garbage');
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'foreignRoot', 'orphanCap');
+    assert.equal(report.findings.foreignRoot[0].reason, 'trash/ is a symlink, never followed');
+    assert.equal(report.counts.trashFiles, 0);
+    assert.deepEqual(report.reaped.moves, []);
+    assert.match(report.findings.orphanCap[0].reapError, /is a symlink/);
+    await assert.rejects(emptyTrash(root), /is a symlink/);
+    await assert.rejects(restoreTrash(root, 'cap'), /is a symlink/);
+    assert.equal(fs.readFileSync(path.join(outside, 'cap', 'ab', 'abcd'), 'utf8'), 'outside the root', 'the target is untouched');
+    assert.ok(fs.existsSync(orphan));
+  });
+
   it('restoreTrash takes a run directory name, never a path, and names a missing run', async () => {
     for (const bad of ['', '.', '..', 'a/b', `..${path.sep}x`]) {
       await assert.rejects(restoreTrash(root, bad), /run must be a directory name under trash\//, JSON.stringify(bad));

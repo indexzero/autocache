@@ -31,7 +31,7 @@ function describe(category, f) {
     case 'schemaVersion':
       return `${f.aa}/${f.hash}  v=${f.v}  (key: ${f.key})`;
     case 'foreignRoot':
-      return `${f.name}${f.isDir ? '/' : ''}`;
+      return `${f.name}${f.isDir ? '/' : ''}${f.reason ? `  (${f.reason})` : ''}`;
     case 'orphanCap':
       return `${f.aa}/${f.hash}`;
     case 'staleTmp':

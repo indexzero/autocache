@@ -97,7 +97,10 @@
 // an exclusive mkdir, so two runs never share a directory, and the move is a
 // hard link plus an unlink, so it never replaces an existing file. A move that
 // fails stays a finding. trash/ carries a marker file (TRASH_MARKER) that says
-// this tool created it. A later run never scans trash/ as live content. An
+// this tool created it. A trash/ without the marker, or a trash/ that is a
+// symlink, is not this tool's quarantine: fsck reports it as foreignRoot,
+// never inventories it, never moves into it, never follows it, and refuses to
+// empty or restore it. A later run never scans trash/ as live content. An
 // operator restores a run with `cache verify --restore <run>` (restoreTrash
 // below), which moves a body back only when no live file exists at its path
 // and otherwise skips it with a report, and empties the quarantine with
@@ -148,7 +151,7 @@ export const CATEGORIES = [
   { key: 'incompleteClosure', label: "status 'body' requisite whose sidecar is absent (closure short)", severity: 'incomplete' },
   { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial (#363)", severity: 'advisory' },
   { key: 'schemaVersion', label: 'sidecar schema version is not the current version', severity: 'advisory' },
-  { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/', severity: 'advisory' },
+  { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/ trash/ (or a trash/ that is not this tool\'s quarantine)', severity: 'advisory' },
   { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage; --fix moves it to trash/)', severity: 'reapable' },
   { key: 'staleTmp', label: 'leftover tmp/ scratch file', severity: 'reapable' }
 ];
@@ -259,6 +262,40 @@ export async function moveNoReplace(from, to) {
 }
 
 /**
+ * What `<root>/trash` is: absent, this tool's quarantine (a real directory
+ * with the marker), a symlink (never followed), or a foreign directory (no
+ * marker: an operator's own trash/, not ours).
+ * @param {string} root
+ * @returns {Promise<'absent'|'quarantine'|'symlink'|'foreign'>}
+ */
+async function quarantineState(root) {
+  const dir = path.join(root, TRASH_DIR);
+  let stat;
+  try {
+    stat = await fsp.lstat(dir);
+  } catch (error) {
+    if (error.code === 'ENOENT') return 'absent';
+    throw error;
+  }
+  if (stat.isSymbolicLink()) return 'symlink';
+  if (!stat.isDirectory()) return 'foreign';
+  try {
+    await fsp.access(path.join(dir, TRASH_MARKER));
+    return 'quarantine';
+  } catch {
+    return 'foreign';
+  }
+}
+
+/** Throw unless `<root>/trash` is absent or this tool's quarantine. */
+async function assertQuarantineUsable(root, what) {
+  const state = await quarantineState(root);
+  if (state === 'symlink') throw new Error(`${what}: ${path.join(root, TRASH_DIR)} is a symlink, not this tool's quarantine; it is never followed`);
+  if (state === 'foreign') throw new Error(`${what}: ${path.join(root, TRASH_DIR)} exists without the ${TRASH_MARKER} marker, so this tool did not create it and leaves it alone`);
+  return state;
+}
+
+/**
  * Create this run's quarantine directory, `trash/<ISO timestamp>-<pid>-<random>`,
  * with an exclusive mkdir, so two runs (even in the same millisecond) never
  * share one. Writes the quarantine marker when trash/ is new. Refuses a
@@ -267,6 +304,7 @@ export async function moveNoReplace(from, to) {
  * @returns {Promise<string>} the run directory
  */
 async function createRunDir(root) {
+  await assertQuarantineUsable(root, 'fsck --fix');
   const trash = path.join(root, TRASH_DIR);
   await fsp.mkdir(trash, { recursive: true });
   const marker = path.join(trash, TRASH_MARKER);
@@ -372,6 +410,18 @@ export async function fsck(root, options = {}) {
       findings.foreignRoot.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, ent.name) });
     }
   }
+  // trash/ is ours only when it is a real directory with the marker. A symlink
+  // is never followed, and a directory without the marker belongs to someone
+  // else: both are foreign, left alone, and never inventoried.
+  const trashState = await quarantineState(root);
+  if (trashState === 'symlink' || trashState === 'foreign') {
+    findings.foreignRoot.push({
+      name: TRASH_DIR,
+      isDir: trashState === 'foreign',
+      path: path.join(root, TRASH_DIR),
+      reason: trashState === 'symlink' ? 'trash/ is a symlink, never followed' : `trash/ has no ${TRASH_MARKER} marker, so this tool did not create it`
+    });
+  }
 
   // ---- inventory: cap/ bodies + tmp/ scratch --------------------------------
   const capFiles = await walkShards(root, 'cap');
@@ -388,7 +438,7 @@ export async function fsck(root, options = {}) {
   // missingBody finding say where the body went (the restore hint).
   const trashDir = path.join(root, TRASH_DIR);
   const trashByCapKey = new Map();
-  for (const f of await walkFiles(trashDir)) {
+  for (const f of trashState === 'quarantine' ? await walkFiles(trashDir) : []) {
     if (path.basename(f.path) === TRASH_MARKER) continue;
     const [, ...rest] = path.relative(trashDir, f.path).split(path.sep); // <run>/cap/<dd>/<digest>
     const capKey = rest.join('/');
@@ -716,6 +766,7 @@ export async function restoreTrash(root, run) {
   if (typeof run !== 'string' || run === '' || run === '.' || run === '..' || run.includes('/') || run.includes(path.sep)) {
     throw new Error(`restoreTrash: run must be a directory name under ${TRASH_DIR}/, got ${JSON.stringify(run)}`);
   }
+  await assertQuarantineUsable(root, 'restoreTrash');
   const runDir = path.join(root, TRASH_DIR, run);
   let stat;
   try {
@@ -782,6 +833,7 @@ async function pruneEmptyDirs(dir) {
 export async function emptyTrash(root, options = {}) {
   const { keepRun = null } = options;
   const dir = path.join(root, TRASH_DIR);
+  if ((await assertQuarantineUsable(root, 'emptyTrash')) === 'absent') return { path: dir, files: 0, bytes: 0, kept: [] };
   const named = await namedCapKeys(root);
   const kept = [];
   let files = 0;

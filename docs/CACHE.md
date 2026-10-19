@@ -457,7 +457,7 @@ discrepancy:
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. A `status` outside `{body, empty, redirect, error, interstitial}` is malformed too: such a sidecar cannot say whether it owns a body. So is a bodiless status that carries `contentHash` or `contentLength` (present iff `status: "body"`): that is a body sidecar whose status rotted, and its body sits in `cap/` unnamed. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
 | `schemaVersion` | advisory | a sidecar whose `v` is not `3`, the one version every reader accepts. Rebuild the root. |
-| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` `trash/` — the check that catches a contract violation like a stray `.runs/`. |
+| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` `trash/` — the check that catches a contract violation like a stray `.runs/`. A `trash/` that is a symlink, or that lacks the `.fsck-quarantine` marker, is foreign too: this tool did not create it, never follows or inventories it, never moves into it, and refuses to empty or restore it. |
 | `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. fsck reports an orphan only when every sidecar proves its ownership: it parses, carries a known status, and (for `status: "body"`) names a `cap/` file whose bytes match its `contentHash` and whose size equals its `contentLength`. While a `malformed`, `missingBody`, `hashMismatch`, `sizeMismatch`, or `schemaVersion` finding stands, no `cap/` file is reported orphan and `--fix` moves nothing. The report says so with `reapSuspended: true`. `--fix` **moves** an orphan to the `trash/` quarantine, it never deletes one (below). |
 | `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. `--fix` deletes it: a `tmp/` file was never renamed into place, so nothing can name it. |
 
@@ -497,7 +497,10 @@ every run has its own directory. The body keeps its relative path, and the
 report lists each move (`reaped.moves`, `reaped.trash`). A later `cache verify`
 inventories `trash/` (`counts.trashFiles`) and never scans it as live content:
 a quarantined body is not a `cap/` file, not an orphan, and not a finding. The
-sync never uploads it, because `bucket push` walks `meta/` only.
+sync never uploads it, because `bucket push` walks `meta/` only. `trash/`
+carries a marker file, `.fsck-quarantine`, that says this tool created it. A
+`trash/` without the marker, or one that is a symlink, is not the quarantine:
+`fsck` reports it as `foreignRoot` and leaves it alone.
 
 To **restore** a run, use the restore action. It moves each body of that run
 back to `cap/<dd>/<digest>` **only when no live file exists at that path**.

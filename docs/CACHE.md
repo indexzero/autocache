@@ -491,10 +491,14 @@ the rot restores the bytes with `--restore <run>`.
 ### Quarantine: `--fix` never deletes a body
 
 `--fix` does not delete an orphan body. It moves the file into a quarantine
-directory inside the root, `trash/<run>/cap/<dd>/<digest>`, with one `rename`
-on the same filesystem. `<run>` is the ISO timestamp of the verify run, so
-every run has its own directory. The body keeps its relative path, and the
-report lists each move (`reaped.moves`, `reaped.trash`). A later `cache verify`
+directory inside the root, `trash/<run>/cap/<dd>/<digest>`, as a hard link
+plus an unlink on the same filesystem. The link fails when the destination
+exists, so a move never replaces another run's evidence. `<run>` is the ISO
+timestamp of the verify run (with `:` and `.` as `-`), the pid, and a random
+hex suffix, for example `2026-10-19T14-07-03-512Z-41823-9f3a1c`. The run
+creates the directory exclusively, so every run has its own directory even
+when two start in the same millisecond. The body keeps its relative path, and
+the report lists each move (`reaped.moves`, `reaped.trash`). A later `cache verify`
 inventories `trash/` (`counts.trashFiles`) and never scans it as live content:
 a quarantined body is not a `cap/` file, not an orphan, and not a finding. The
 sync never uploads it, because `bucket push` walks `meta/` only. `trash/`

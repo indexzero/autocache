@@ -56,6 +56,15 @@ import type { Capture, CaptureMeta, CaptureStatus, Store } from './store.ts';
  */
 export const SIDECAR_VERSION = 3;
 
+/**
+ * Whether a parsed JSON value has the SHAPE of a sidecar: a plain object. A
+ * file that parses to null, a number, a string, or an array is malformed, and
+ * a reader says so before it reads any property.
+ */
+export function isSidecarObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** The slice of a sidecar this store consumes. */
 interface Sidecar {
   v: number;
@@ -97,7 +106,11 @@ export class FsStore implements Store {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
     }
-    const sidecar = JSON.parse(raw) as Sidecar;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isSidecarObject(parsed)) {
+      throw new Error(`FsStore: malformed sidecar at ${meta} (not a JSON object)`);
+    }
+    const sidecar = parsed as unknown as Sidecar;
     // Same authenticity checks the writer's own reader performs: the file at
     // this hash-derived path must claim this key and a known schema version.
     if (sidecar.v !== SIDECAR_VERSION) {

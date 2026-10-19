@@ -34,7 +34,7 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { RULE_VERSION, classifyContentType, rewrite } from './rewrite.js';
-import { SIDECAR_VERSION } from './cache.js';
+import { SIDECAR_VERSION, isSidecarObject } from './cache.js';
 import { bodyPath } from './key.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { coerceEvery, emitProgress } from './progress.js';
@@ -149,6 +149,9 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const sidecars = [];
   for (const entry of found) {
     const sidecar = JSON.parse(await fsp.readFile(entry.metaPath, 'utf8'));
+    if (!isSidecarObject(sidecar)) {
+      throw new Error(`remaster: malformed sidecar at ${entry.metaPath} (not a JSON object)`);
+    }
     // Accept only the sidecar version cache.js writes.
     if (sidecar.v !== SIDECAR_VERSION) {
       throw new Error(`remaster: unsupported sidecar version ${sidecar.v} at ${entry.metaPath}`);

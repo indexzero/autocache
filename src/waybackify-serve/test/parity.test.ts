@@ -82,6 +82,20 @@ describe('parity — enumerateRoot', () => {
     assert.equal(example?.capKey, await capturePath('20140403040000/http://example.com/'));
   });
 
+  it('refuses a sidecar that parses to a non-object (null, [], "x", 1) with a clear error', async () => {
+    const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-parity-nonobject-`);
+    try {
+      await fsp.cp(FIXTURE_ROOT, root, { recursive: true });
+      const meta = `${root}/meta/77/77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac.json`;
+      for (const text of ['null', '[]', '"x"', '1']) {
+        await fsp.writeFile(meta, text);
+        await assert.rejects(enumerateRoot(root), { message: `parity: malformed sidecar at ${meta} (not a JSON object)` });
+      }
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a sidecar of another version: the walk reads v3 only, like FsStore', async () => {
     for (const v of [1, 2, 99]) {
       const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-parity-v${v}-`);

@@ -212,6 +212,23 @@ describe('loadCorpusKeySet — the meta-walk', () => {
     }
   });
 
+  it('skips a sidecar that parses to a non-object (null, [], "x", 1): malformed, never a boot abort, in both loaders', async () => {
+    const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-corpus-nonobject-`);
+    try {
+      await fsp.mkdir(`${root}/meta/aa`, { recursive: true });
+      await fsp.writeFile(`${root}/meta/aa/good.json`, JSON.stringify({ v: 3, key: '20140403040000/http://example.com/good', flag: 'im_' }));
+      for (const text of ['null', '[]', '"x"', '1']) {
+        await fsp.writeFile(`${root}/meta/aa/bad.json`, text);
+        assert.deepEqual([...(await loadCorpusKeySet(root))], ['20140403040000/http://example.com/good'], text);
+        const catalog = await loadCorpusCatalog(root);
+        assert.deepEqual([...catalog.keys], ['20140403040000/http://example.com/good'], text);
+        assert.deepEqual([...catalog.requisites], ['20140403040000/http://example.com/good'], text);
+      }
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a sidecar of another version: v3 only, in both loaders (a shape problem, not rot)', async () => {
     for (const v of [1, 2, 99]) {
       const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-corpus-v${v}-`);

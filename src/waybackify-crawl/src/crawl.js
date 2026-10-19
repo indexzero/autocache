@@ -32,7 +32,8 @@ import {
   recordDynamic as coreRecordDynamic,
   readSidecar as coreReadSidecar,
   dynamicEntryError,
-  SIDECAR_VERSION
+  SIDECAR_VERSION,
+  isSidecarObject
 } from '@autocache/waybackify/cache.js';
 import { RULE_VERSION } from '@autocache/waybackify/rewrite.js';
 import { captureKey } from '@autocache/waybackify/key.js';
@@ -113,6 +114,9 @@ export async function enumerateHtmlDocKeys(root) {
       } catch {
         continue; /* skip a torn/foreign sidecar */
       }
+      // Parsed to null, a number, a string, or an array: malformed, the same
+      // class as unparseable. Skipped, never dereferenced, never a throw.
+      if (!isSidecarObject(sidecar)) continue;
       if (sidecar.v !== SIDECAR_VERSION) {
         throw new Error(`enumerateHtmlDocKeys: unsupported sidecar version ${sidecar.v} at ${metaPath}`);
       }

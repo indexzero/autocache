@@ -175,6 +175,18 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     }
   });
 
+  it('reports a sidecar that parses to a non-object (null, [], "x", 1) as malformed, without throwing, and --fix moves nothing', async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      const report = await fsck(root, { fix: true });
+      only(report, 'malformed');
+      assert.equal(report.findings.malformed[0].error, 'not a JSON object', text);
+      assert.equal(report.reapSuspended, true);
+      assert.ok(fs.existsSync(body), `the body survives a sidecar of ${text}`);
+    }
+  });
+
   it('reports an unparseable sidecar as malformed, without throwing', async () => {
     const { body, meta } = await commitBody(root, '2011/http://x.example/');
     await fsp.writeFile(meta, '{ this is not json');

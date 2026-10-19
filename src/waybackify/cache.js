@@ -110,6 +110,18 @@ import { isUnmirrorable } from './beacons.js';
 // refused, never read or upgraded. Rebuild an older root.
 export const SIDECAR_VERSION = 3;
 
+/**
+ * Whether a parsed JSON value has the SHAPE of a sidecar: a plain object. A
+ * file that parses to null, a number, a string, or an array is malformed, and
+ * a reader must say so before it reads any property (`null.v` is a TypeError,
+ * not a diagnostic).
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+export function isSidecarObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** Content types the requisite extractor runs over (documents). */
 const isHtmlish = ct => !ct || /html|xhtml/i.test(ct);
 
@@ -263,6 +275,9 @@ export async function readSidecar(root, key) {
     throw error;
   }
   const sidecar = JSON.parse(raw);
+  if (!isSidecarObject(sidecar)) {
+    throw new Error(`readSidecar: malformed sidecar at ${meta} (not a JSON object)`);
+  }
   // Minimal authenticity checks (doubt-cycle finding): a sidecar at this
   // path MUST claim this key (the file is the sole identity record — a
   // mismatch is tampering/rot, not absence) and the current schema version.

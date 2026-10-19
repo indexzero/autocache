@@ -44,7 +44,7 @@ import { serveCacheRoot } from '@autocache/waybackify-serve/node';
 import { bodyPath } from '@autocache/waybackify/key.js';
 import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
-import { dynamicEntryError, SIDECAR_VERSION } from '@autocache/waybackify/cache.js';
+import { dynamicEntryError, isSidecarObject, SIDECAR_VERSION } from '@autocache/waybackify/cache.js';
 import { classifyContentType, refCaptureKey, waybackRefRe } from '@autocache/waybackify/rewrite.js';
 import { Tokenizer, TokenizerMode } from 'parse5';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
@@ -145,6 +145,9 @@ export async function enumerateRemastered(root) {
       if (!file.endsWith('.json')) continue;
       const metaPath = path.join(metaDir, aa, file);
       const sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+      if (!isSidecarObject(sidecar)) {
+        throw new Error(`remaster verify: malformed sidecar at ${metaPath} (not a JSON object)`);
+      }
       if (sidecar.v !== SIDECAR_VERSION) {
         throw new Error(`remaster verify: unsupported sidecar version ${sidecar.v} at ${metaPath} (sidecar v${SIDECAR_VERSION} only)`);
       }

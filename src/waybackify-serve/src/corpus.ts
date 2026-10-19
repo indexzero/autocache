@@ -28,6 +28,11 @@ const REQUISITE_FLAGS = new Set(['im_', 'cs_', 'js_', 'oe_']);
  */
 const SIDECAR_VERSION = 3;
 
+/** A parsed sidecar is a plain object. null, a number, a string, or an array is malformed. */
+function isSidecarObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** Throw on a parsed sidecar of another version. */
 function assertSidecarVersion(sidecar: { v?: unknown }, meta: string): void {
   if (sidecar.v !== SIDECAR_VERSION) {
@@ -70,15 +75,19 @@ export async function loadCorpusKeySet(root: string): Promise<Set<string>> {
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
       const meta = `${metaDir}/${aa}/${file}`;
-      let sidecar: { v?: unknown; key?: unknown };
+      let parsed: unknown;
       try {
-        sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as { v?: unknown; key?: unknown };
+        parsed = JSON.parse(await fsp.readFile(meta, 'utf8'));
       } catch {
         // Unreadable or unparseable sidecar: skip it. This set is an
         // optimization, not an authority (see the header) — one bad file must
         // not sink the boot walk.
         continue;
       }
+      // Parsed to a non-object (null, a number, a string, an array): the same
+      // malformed class. Skipped, never dereferenced.
+      if (!isSidecarObject(parsed)) continue;
+      const sidecar = parsed as { v?: unknown; key?: unknown };
       assertSidecarVersion(sidecar, meta);
       if (typeof sidecar.key === 'string') keys.add(sidecar.key);
     }
@@ -121,13 +130,15 @@ export async function loadCorpusCatalog(root: string): Promise<{ keys: Set<strin
     for (const file of files) {
       if (!file.endsWith('.json')) continue;
       const meta = `${metaDir}/${aa}/${file}`;
-      let sidecar: { v?: unknown; key?: unknown; flag?: unknown };
+      let parsed: unknown;
       try {
-        sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as { v?: unknown; key?: unknown; flag?: unknown };
+        parsed = JSON.parse(await fsp.readFile(meta, 'utf8'));
       } catch {
         // Unreadable or unparseable sidecar: skip it (see loadCorpusKeySet).
         continue;
       }
+      if (!isSidecarObject(parsed)) continue; // malformed non-object: skip, never dereference
+      const sidecar = parsed as { v?: unknown; key?: unknown; flag?: unknown };
       assertSidecarVersion(sidecar, meta);
       const { key, flag } = sidecar;
       if (typeof key !== 'string') continue;

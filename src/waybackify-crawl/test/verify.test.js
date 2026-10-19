@@ -767,6 +767,19 @@ describe('remaster verify — the tree reader takes sidecar v3 only', () => {
   });
 });
 
+describe('remaster verify — the tree reader refuses a non-object sidecar', () => {
+  it('enumerateRemastered rejects null, [], "x", and 1 with a clear error', async () => {
+    const root = await mkroot('wb-verify-nonobject-');
+    await writeEntry(root, { key: DOC_KEY, contentType: 'text/html', body: '<html>x</html>' });
+    const hash = await captureHash(DOC_KEY);
+    const meta = path.join(root, 'meta', hash.slice(0, 2), `${hash}.json`);
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      await assert.rejects(enumerateRemastered(root), { message: `remaster verify: malformed sidecar at ${meta} (not a JSON object)` }, text);
+    }
+  });
+});
+
 describe('remaster verify static — determinism (build-record integrity + rebuild)', () => {
   let hermetic;
 

@@ -111,7 +111,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { SIDECAR_VERSION, dynamicEntryError } from './cache.js';
+import { SIDECAR_VERSION, dynamicEntryError, isSidecarObject } from './cache.js';
 import { isUnmirrorable } from './beacons.js';
 import { bodyPath, captureHash } from './key.js';
 import { detectInterstitial } from './interstitial.js';
@@ -303,6 +303,12 @@ export async function fsck(root, options = {}) {
       sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
     } catch (error) {
       findings.malformed.push({ hash, aa, path: metaPath, error: error.message });
+      continue;
+    }
+    // Parsed, but not an object (null, a number, a string, an array): nothing
+    // to read a property from. Malformed, and never dereferenced.
+    if (!isSidecarObject(sidecar)) {
+      findings.malformed.push({ hash, aa, path: metaPath, error: 'not a JSON object' });
       continue;
     }
 

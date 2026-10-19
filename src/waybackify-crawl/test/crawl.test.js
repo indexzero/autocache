@@ -598,3 +598,14 @@ test('enumerateHtmlDocKeys reads v3 sidecars only: an HTML body doc is listed, a
     await assert.rejects(enumerateHtmlDocKeys(root), { message: `enumerateHtmlDocKeys: unsupported sidecar version ${v} at ${old}` });
   }
 });
+
+test('enumerateHtmlDocKeys skips a sidecar that parses to a non-object (null, [], "x", 1) and never throws', async () => {
+  const root = await tmpRoot();
+  const metaDir = path.join(root, 'meta', 'aa');
+  await fsp.mkdir(metaDir, { recursive: true });
+  await fsp.writeFile(path.join(metaDir, 'doc.json'), JSON.stringify({ v: 3, key: '20140403040000/http://example.com/', status: 'body', contentType: 'text/html' }));
+  for (const text of ['null', '[]', '"x"', '1']) {
+    await fsp.writeFile(path.join(metaDir, 'bad.json'), text);
+    assert.deepEqual(await enumerateHtmlDocKeys(root), ['20140403040000/http://example.com/'], text);
+  }
+});

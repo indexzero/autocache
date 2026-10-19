@@ -45,7 +45,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { assertMetadataSafe, bodyPath, capturePath, metaPath } from './key.js';
-import { readSidecar } from './cache.js';
+import { isSidecarObject, readSidecar } from './cache.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { coerceEvery, emitProgress } from './progress.js';
 
@@ -184,6 +184,9 @@ export async function emitBucketBatch(root, options = {}) {
       probe = JSON.parse(raw);
     } catch (error) {
       throw new Error(`emit-bucket-batch: unparseable sidecar ${rel}: ${error.message}`);
+    }
+    if (!isSidecarObject(probe)) {
+      throw new Error(`emit-bucket-batch: malformed sidecar ${rel} (not a JSON object)`);
     }
     if (typeof probe.key !== 'string' || probe.key.length === 0) {
       throw new Error(`emit-bucket-batch: sidecar ${rel} has no string key`);

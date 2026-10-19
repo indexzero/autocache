@@ -556,3 +556,16 @@ describe('commitEntry — interstitial refusal (#363)', () => {
     assert.ok(fs.existsSync(await bodyOf(root, key)));
   });
 });
+
+describe('readSidecar — a sidecar that parses to a non-object is malformed', () => {
+  it('throws a clear error for null, [], "x", and 1 instead of a TypeError', async () => {
+    const root = await mkroot();
+    const key = '2011/http://x.example/';
+    await commitEntry(root, { key, status: 'redirect', contentType: 'text/html' });
+    const { meta } = await entryPaths(root, key);
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      await assert.rejects(readSidecar(root, key), { message: `readSidecar: malformed sidecar at ${meta} (not a JSON object)` }, text);
+    }
+  });
+});

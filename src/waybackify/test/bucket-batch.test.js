@@ -203,6 +203,16 @@ describe('emitBucketBatch', () => {
     assert.match(warnings[0].msg, /names a missing body at .* \(skipped, needs a refetch\)$/);
   });
 
+  it('refuses a sidecar that parses to a non-object (null, [], "x", 1) with a clear error', async () => {
+    const root = await mkRoot();
+    await commitEntry(root, { key: '1/a', status: 'body', contentType: 'text/html', body: new TextEncoder().encode('<html>') });
+    const rel = await metaPath('1/a');
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(path.join(root, rel), text);
+      await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), { message: `emit-bucket-batch: malformed sidecar ${rel} (not a JSON object)` }, text);
+    }
+  });
+
   it('emits nothing for an empty / never-populated root', async () => {
     const root = await mkRoot();
     const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });

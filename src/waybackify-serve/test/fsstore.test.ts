@@ -289,6 +289,14 @@ describe('FsStore', () => {
       await assert.rejects(new FsStore(root).head(KEY));
     });
 
+    for (const text of ['null', '[]', '"x"', '1']) {
+      it(`throws a clear malformed error on a sidecar that parses to ${text}`, async () => {
+        const root = await makeRoot();
+        await writeEntry(root, KEY, { sidecar: text });
+        await assert.rejects(new FsStore(root).head(KEY), { message: `FsStore: malformed sidecar at ${root}/${await metaPath(KEY)} (not a JSON object)` });
+      });
+    }
+
     it('throws on an unsupported sidecar version', async () => {
       const root = await makeRoot();
       await writeEntry(root, KEY, { sidecar: { ...bodiedSidecar('x'), v: 99 } });

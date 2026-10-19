@@ -36,7 +36,7 @@
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import { capturePath, metaPath } from '@autocache/waybackify/key.js';
-import { SIDECAR_VERSION } from './fsstore.ts';
+import { isSidecarObject, SIDECAR_VERSION } from './fsstore.ts';
 import { S3Store } from './s3store.ts';
 import { serveBucket, serveCacheRoot, type RunningServer } from './node.ts';
 import { signRequest, type SigV4Credentials } from './sigv4.ts';
@@ -226,7 +226,11 @@ export async function enumerateRoot(root: string): Promise<Entry[]> {
     for (const file of await readdirOrEmpty(`${metaDir}/${aa}`)) {
       if (!file.endsWith('.json')) continue;
       const meta = `${metaDir}/${aa}/${file}`;
-      const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8')) as Sidecar;
+      const parsed: unknown = JSON.parse(await fsp.readFile(meta, 'utf8'));
+      if (!isSidecarObject(parsed)) {
+        throw new Error(`parity: malformed sidecar at ${meta} (not a JSON object)`);
+      }
+      const sidecar = parsed as unknown as Sidecar;
       if (sidecar.v !== SIDECAR_VERSION) {
         throw new Error(`parity: unsupported sidecar version ${sidecar.v} at ${meta}`);
       }

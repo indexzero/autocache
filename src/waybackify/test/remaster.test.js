@@ -271,6 +271,19 @@ describe('remaster — a sidecar whose body is missing', () => {
   });
 });
 
+describe('remaster — a sidecar that parses to a non-object is malformed', () => {
+  it('fails with a clear error for null, [], "x", and 1', async () => {
+    const root = await mkroot('wb-remaster-nonobject-');
+    const key = `${TS}/http://example.com/`;
+    const { hash, aa } = await writeEntry(root, { key, contentType: 'text/html', body: '<html>x</html>' });
+    const meta = path.join(root, 'meta', aa, `${hash}.json`);
+    for (const text of ['null', '[]', '"x"', '1']) {
+      await fsp.writeFile(meta, text);
+      await assert.rejects(remaster(root, await mkroot('wb-remaster-nonobject-out-')), { message: `remaster: malformed sidecar at ${meta} (not a JSON object)` }, text);
+    }
+  });
+});
+
 describe('remaster — determinism (hard requirement)', () => {
   it('same hermetic tree → byte-identical remastered tree + build record, twice', async () => {
     const a = await mkroot('rm-det-a-');

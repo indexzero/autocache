@@ -143,10 +143,14 @@ export async function probeGithub(url, options = {}) {
     res = await fetch(root, { redirect: 'manual' });
   }
   if (missing(res.status) || (res.status >= 200 && res.status < 300)) return { renamed: false };
-  if (res.status < 300 || res.status >= 400) throw inconclusive('root', res.status, root);
+  // Only a real redirect with a Location can name a rename. A 304, a 3xx
+  // with no Location, or any other status proves nothing about the repo.
+  if (!REDIRECT_STATUSES.has(res.status)) throw inconclusive('root', res.status, root);
+  const location = res.headers.get('location');
+  if (!location) throw inconclusive('root redirect without a Location', res.status, root);
 
-  const target = redirectRepo(res.headers.get('location') ?? '', root);
-  if (!target) throw inconclusive('root redirect off GitHub', res.status, root);
+  const target = redirectRepo(location, root);
+  if (!target) throw inconclusive('root redirect that names no repo', res.status, root);
   if (`${target.owner}/${target.repo}`.toLowerCase() === `${parsed.owner}/${parsed.repo}`.toLowerCase()) {
     return { renamed: false };
   }

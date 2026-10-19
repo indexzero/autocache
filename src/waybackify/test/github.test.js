@@ -107,7 +107,22 @@ describe('probeGithub: the repo-root probe', () => {
 
   it('a redirect off GitHub is inconclusive, so it throws', async () => {
     const away = scriptedFetch({ [OLD]: { status: 302, location: 'https://example.com/login' } });
-    await assert.rejects(() => probeGithub(DEEP, { fetch: away, sleep: noSleep }), /inconclusive/);
+    await assert.rejects(() => probeGithub(DEEP, { fetch: away, sleep: noSleep }), /inconclusive.*names no repo/);
+    const login = scriptedFetch({ [OLD]: { status: 302, location: '/login?return_to=%2Fold-owner%2Fold-repo' } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: login, sleep: noSleep }), /inconclusive.*names no repo/);
+  });
+
+  it('a root 3xx without a Location is inconclusive, so it throws', async () => {
+    const bare = scriptedFetch({ [OLD]: { status: 302 } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: bare, sleep: noSleep }), /root redirect without a Location.*HTTP 302/);
+    const empty = scriptedFetch({ [OLD]: { status: 301, location: '' } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: empty, sleep: noSleep }), /root redirect without a Location.*HTTP 301/);
+    assert.equal(bare.calls.length, 1, 'no graft is attempted');
+  });
+
+  it('a root 304 is not a redirect: inconclusive, so it throws', async () => {
+    const notModified = scriptedFetch({ [OLD]: { status: 304 } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: notModified, sleep: noSleep }), /root returned HTTP 304/);
   });
 
   for (const status of [200, 404]) {

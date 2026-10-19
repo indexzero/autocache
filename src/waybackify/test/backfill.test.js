@@ -270,6 +270,8 @@ describe('backfill: an inconclusive GitHub reply keeps the capture eligible', ()
   const cases = [
     ['denied at the root', { [ROOT]: reply(403) }],
     ['timed out at the root', { [ROOT]: reply(408) }],
+    ['root 302 without a Location', { [ROOT]: reply(302) }],
+    ['root 304', { [ROOT]: reply(304) }],
     ['denied at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(403) }],
     ['timed out at the graft', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(408) }],
     ['redirected off GitHub at the graft, other host answers 200', { [ROOT]: reply(301, 'https://github.com/new-owner/new-repo'), [GRAFT]: reply(302, LOGIN), [LOGIN]: reply(200) }],

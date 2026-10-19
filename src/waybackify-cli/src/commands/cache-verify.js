@@ -1,7 +1,7 @@
 // `waybackify cache verify` handler — thin wiring over the library, per the
 // CLI's hard thin-wrapper rule: the load-bearing store fsck (walk meta/,
-// re-hash bodies, re-derive paths, check requisite closure, reap orphan cap/ +
-// stale tmp/ under --fix) is spv/waybackify/fsck.js; this file translates the
+// re-hash bodies, re-derive paths, check requisite closure, quarantine orphan
+// cap/ + delete stale tmp/ under --fix) is the library's fsck.js; this file translates the
 // parsed argv payload into an fsck() call, formats the per-category report on
 // stdout (--json for the raw record), and maps an unresolved store to a
 // domain-failure exit (1). Report-only unless --fix is passed.
@@ -50,7 +50,8 @@ function printReport(report, { quiet, CATEGORIES, totalFindings, unresolvedFindi
   log(`fsck ${report.root}`);
   log(
     `  inventory: ${counts.sidecars} sidecars (${counts.bodies} bodied) · ` +
-      `${counts.capFiles} cap/ files · ${counts.tmpFiles} tmp/ entries · schema v${report.schemaVersion}`
+      `${counts.capFiles} cap/ files · ${counts.tmpFiles} tmp/ entries · ` +
+      `${counts.trashFiles ?? 0} trash/ files · schema v${report.schemaVersion}`
   );
   log('');
 
@@ -62,7 +63,7 @@ function printReport(report, { quiet, CATEGORIES, totalFindings, unresolvedFindi
     }
     const reaped = report.reaped?.[key]?.length ?? 0;
     let tag;
-    if (severity === 'reapable') tag = reaped === hits.length ? 'reaped' : 'REAP';
+    if (severity === 'reapable') tag = reaped === hits.length ? (key === 'orphanCap' ? 'moved' : 'reaped') : 'REAP';
     else if (severity === 'incomplete') tag = 'SHORT';
     else if (severity === 'advisory') tag = 'flag';
     else tag = 'FAIL';
@@ -79,9 +80,11 @@ function printReport(report, { quiet, CATEGORIES, totalFindings, unresolvedFindi
   if (total === 0) {
     log('  clean — every sidecar verifies against its body; no orphans, no stragglers.');
   } else if (report.reaped) {
-    log(`  ${total} finding(s); reaped ${total - unresolved}; ${unresolved} unresolved.`);
+    const moved = report.reaped.orphanCap.length;
+    const where = moved && report.reaped.trash ? ` (${moved} orphan cap/ file(s) moved to ${report.reaped.trash})` : '';
+    log(`  ${total} finding(s); resolved ${total - unresolved}${where}; ${unresolved} unresolved.`);
   } else {
-    log(`  ${total} finding(s) — report-only (pass --fix to reap orphan cap/ + stale tmp/).`);
+    log(`  ${total} finding(s) — report-only (pass --fix to quarantine orphan cap/ + delete stale tmp/).`);
   }
 }
 
@@ -91,7 +94,8 @@ function printReport(report, { quiet, CATEGORIES, totalFindings, unresolvedFindi
  * never loads waybackify/fsck.js (which transitively pulls the fetch stack).
  *
  * @param {Object} [deps]
- * @param {Function} [deps.fsck] - spv/waybackify/fsck.js#fsck
+ * @param {Function} [deps.fsck] - fsck.js#fsck
+ * @param {Function} [deps.emptyTrash] - fsck.js#emptyTrash (the --empty-trash action)
  * @param {Array}    [deps.CATEGORIES] - fsck.js#CATEGORIES
  * @param {Function} [deps.totalFindings] - fsck.js#totalFindings
  * @param {Function} [deps.unresolvedFindings] - fsck.js#unresolvedFindings
@@ -103,11 +107,20 @@ export function cacheVerifyHandler(deps = {}) {
     // If fsck is injected, every helper comes off deps (no library load);
     // otherwise lazily import the module for all four members.
     const mod = deps.fsck ? deps : await import('@autocache/waybackify/fsck.js');
-    const { fsck, CATEGORIES, totalFindings, unresolvedFindings } = mod;
+    const { fsck, emptyTrash, CATEGORIES, totalFindings, unresolvedFindings } = mod;
 
-    // --root|-r is canonical (cli.js). --fix reaps ONLY orphan cap/ + stale
-    // tmp/; corruption and a short closure are never touched. Silent-loop
-    // progress (§6): the re-hash sweep speaks every --progress-every.
+    // --empty-trash is the ONE action that deletes body files: it empties the
+    // quarantine --fix filled on earlier runs. Explicit, separate, and first,
+    // so this run's own moves (if --fix is also set) survive it.
+    if (flags.emptyTrash) {
+      const emptied = await emptyTrash(flags.root);
+      logger.info({ evt: 'fsck-empty-trash', ...emptied }, `cache verify: emptied ${emptied.path} (${emptied.files} file(s), ${emptied.bytes} bytes)`);
+    }
+
+    // --root|-r is canonical (cli.js). --fix moves orphan cap/ files to the
+    // trash/ quarantine and deletes stale tmp/; corruption and a short closure
+    // are never touched. Silent-loop progress (§6): the re-hash sweep speaks
+    // every --progress-every.
     const report = await fsck(flags.root, { fix: Boolean(flags.fix), logger, progressEvery });
 
     if (flags.json) out(JSON.stringify(report, null, 2));

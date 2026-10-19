@@ -32,13 +32,15 @@ const reportOf = (findings = {}, reaped = null) => ({
 function handlerFor(report) {
   const calls = [];
   const out = [];
+  const emptied = [];
   const handler = cacheVerifyHandler({
     fsck: async (root, options) => { calls.push({ root, options }); return report; },
+    emptyTrash: async root => { emptied.push(root); return { path: `${root}/trash`, files: 2, bytes: 10 }; },
     CATEGORIES,
     totalFindings,
     unresolvedFindings
   });
-  return { handler, calls, out };
+  return { handler, calls, out, emptied };
 }
 
 test('a clean store: fsck(root,{fix:false}), human report on stdout, exit 0', async () => {
@@ -85,4 +87,32 @@ test('--fix is passed through to fsck; a fully reaped store exits 0', async () =
   assert.equal(await run(['cache', 'verify', '-r', '/c', '--fix'], { handlers: { cacheVerify: handler }, out: l => out.push(l), error: () => {} }), EXIT.OK);
   assert.equal(calls[0].options.fix, true);
   assert.equal(calls[0].options.progressEvery, 500);
+});
+
+test('--fix output names the quarantine directory the orphans moved to', async () => {
+  const report = reportOf(
+    { orphanCap: [{ aa: 'ab', hash: 'h', path: '/c/cap/ab/h' }] },
+    { orphanCap: ['/c/cap/ab/h'], staleTmp: [], trash: '/c/trash/run-1', moves: [{ from: '/c/cap/ab/h', to: '/c/trash/run-1/cap/ab/h' }] }
+  );
+  const { handler, out } = handlerFor(report);
+  assert.equal(await run(['cache', 'verify', '-r', '/c', '--fix'], { handlers: { cacheVerify: handler }, out: l => out.push(l), error: () => {} }), EXIT.OK);
+  assert.ok(out.some(l => l.includes('moved ') && l.includes('cap/ file with no sidecar')), 'the orphan row is tagged moved');
+  assert.ok(out.some(l => l.includes('1 orphan cap/ file(s) moved to /c/trash/run-1')), 'the summary names the quarantine');
+});
+
+test('--empty-trash runs the explicit deletion before the verify, and reports it through the logger', async () => {
+  const { handler, calls, out, emptied } = handlerFor(reportOf());
+  const logs = [];
+  const push = (o, m) => logs.push(typeof o === 'string' ? o : m);
+  const logger = { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
+  assert.equal(await run(['cache', 'verify', '-r', '/c', '--empty-trash'], { handlers: { cacheVerify: handler }, out: l => out.push(l), logger, error: () => {} }), EXIT.OK);
+  assert.deepEqual(emptied, ['/c']);
+  assert.equal(calls.length, 1, 'the verify still runs');
+  assert.ok(logs.some(l => l.includes('emptied /c/trash (2 file(s), 10 bytes)')));
+});
+
+test('without --empty-trash the quarantine is never touched', async () => {
+  const { handler, emptied } = handlerFor(reportOf());
+  await run(['cache', 'verify', '-r', '/c', '--fix'], { handlers: { cacheVerify: handler }, out: () => {}, error: () => {} });
+  assert.deepEqual(emptied, []);
 });

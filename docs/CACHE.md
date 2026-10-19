@@ -45,6 +45,10 @@ captures share one `cap/` file. Implementation:
   tmp/                     ingest scratch — MUST stay on the same filesystem
                            as cap/ and meta/ (atomic rename cannot cross
                            filesystems: rename(2) fails EXDEV)
+  trash/<run>/cap/<dd>/<digest>
+                           fsck's quarantine: an orphan body `cache verify
+                           --fix` moved out of cap/, under its own relative
+                           path. Never scanned as live content, never synced.
 
 hash = sha256hex(captureKey)
 captureKey = `${timestamp}/${originalUrl}`
@@ -414,16 +418,19 @@ The consumer-side read contract is [SERVE.md §Bucket sync](./SERVE.md#bucket-sy
 
 ## The root contract and `fsck`
 
-**A store root contains ONLY `cap/`, `meta/`, and `tmp/`.** Nothing else
-belongs inside it. The root is a *rebuildable projection* — the archive of
+**A store root contains ONLY `cap/`, `meta/`, `tmp/`, and `trash/`.** Nothing
+else belongs inside it. `trash/` is the quarantine `cache verify --fix` fills
+(below). It is part of the contract so that a quarantined body is never a
+foreign entry, and it is never live content. The root is a *rebuildable projection* — the archive of
 record that projects onto R2 / Fastly Object Storage (see
 [Bucket projection](#bucket-projection)) — so any
 foreign entry is either uploaded as a junk object or silently dropped by the
 sync. **Operational artifacts live OUTSIDE the root**: run reports, audit
 checkpoints, driver logs, and any `.runs/`-style scratch belong to an
 operational home alongside the store, never within it. The contract is exactly
-three names so "what is the deploy artifact?" has one answer — walk the root,
-everything you see is `cap/` + `meta/` + `tmp/`.
+four names so "what is the deploy artifact?" has one answer — walk the root,
+everything you see is `cap/` + `meta/` + `tmp/` + `trash/`, and only the first
+two project onto a bucket.
 
 `fsck` is the verify-on-read command the design debate deferred (see the
 Verification dissent below): a store without a verify pass rots silently,
@@ -450,17 +457,45 @@ discrepancy:
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. A `status` outside `{body, empty, redirect, error, interstitial}` is malformed too: such a sidecar cannot say whether it owns a body. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
 | `schemaVersion` | advisory | a sidecar whose `v` is not `3`, the one version every reader accepts. Rebuild the root. |
-| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` — the check that catches a contract violation like a stray `.runs/`. |
-| `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. fsck reports an orphan only when every sidecar proves its ownership: it parses, carries a known status, and (for `status: "body"`) names a `cap/` file whose bytes match its `contentHash` and whose size equals its `contentLength`. While a `malformed`, `missingBody`, `hashMismatch`, `sizeMismatch`, or `schemaVersion` finding stands, no `cap/` file is reported orphan and `--fix` keeps every body. The report says so with `reapSuspended: true`. |
-| `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. |
+| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` `trash/` — the check that catches a contract violation like a stray `.runs/`. |
+| `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. fsck reports an orphan only when every sidecar proves its ownership: it parses, carries a known status, and (for `status: "body"`) names a `cap/` file whose bytes match its `contentHash` and whose size equals its `contentLength`. While a `malformed`, `missingBody`, `hashMismatch`, `sizeMismatch`, or `schemaVersion` finding stands, no `cap/` file is reported orphan and `--fix` moves nothing. The report says so with `reapSuspended: true`. `--fix` **moves** an orphan to the `trash/` quarantine, it never deletes one (below). |
+| `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. `--fix` deletes it: a `tmp/` file was never renamed into place, so nothing can name it. |
 
-`--fix` reaps **only** the two reapable classes — `orphanCap` and `staleTmp` —
+`--fix` acts **only** on the two reapable classes — `orphanCap` and `staleTmp` —
 neither of which is reachable by any reader (an orphan has no completion token;
 a `tmp/` file was never renamed into place). It **never** touches a valid entry
 and **refuses** to "fix" corruption: a `hashMismatch` / `sizeMismatch` /
 `keyMismatch` / `missingBody` / `malformed` finding is evidence to investigate,
 not garbage to sweep. It also never deletes a `foreignRoot` entry. The entry is
 operational data, possibly precious, and the operator relocates it.
+
+### Quarantine: `--fix` never deletes a body
+
+`--fix` does not delete an orphan body. It moves the file into a quarantine
+directory inside the root, `trash/<run>/cap/<dd>/<digest>`, with one `rename`
+on the same filesystem. `<run>` is the ISO timestamp of the verify run, so
+every run has its own directory. The body keeps its relative path, and the
+report lists each move (`reaped.moves`, `reaped.trash`). A later `cache verify`
+inventories `trash/` (`counts.trashFiles`) and never scans it as live content:
+a quarantined body is not a `cap/` file, not an orphan, and not a finding. The
+sync never uploads it, because `bucket push` walks `meta/` only.
+
+To **restore** a body, move it back to where it came from:
+
+```sh
+mv <root>/trash/<run>/cap/<dd>/<digest> <root>/cap/<dd>/<digest>
+```
+
+To **empty** the quarantine, run the explicit, separate action. It is the only
+path that deletes a body file, and it runs before the verify so that the run's
+own moves survive it:
+
+```sh
+waybackify cache verify --root <root> --empty-trash
+```
+
+The library exposes the same action as `fsck.js#emptyTrash(root)`, which
+returns the path, file count, and byte total it removed.
 
 ## Recorded dissents (design notes, not implemented)
 
@@ -512,7 +547,8 @@ tree:
 │   ├── 0d/0d5b21…bd9.json  … 89/894274…271.json   (one sidecar per cap file)
 │   ├── e3/e38115d15f830d2b6cd3fefccb61b72d7953b90ae9ed68650c4cd0a7257abfe7.json
 │   └── f3/… f6/…
-└── tmp/                                            (empty after a clean run)
+├── tmp/                                            (empty after a clean run)
+└── trash/                                          (absent until a --fix moves an orphan)
 ```
 
 The document's sidecar (one line on disk; wrapped here for reading):

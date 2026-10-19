@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bodyFile, commitEntry, entryPaths } from '../cache.js';
-import { fsck, totalFindings, unresolvedFindings, CATEGORIES } from '../fsck.js';
+import { emptyTrash, fsck, totalFindings, unresolvedFindings, CATEGORIES, TRASH_DIR } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.resolve(HERE, 'fixtures/cache-root');
@@ -128,7 +128,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     const report = await fsck(root, { fix: true });
     only(report, 'missingBody');
     assert.equal(report.findings.missingBody[0].contentHash, rotted, 'the rotted digest is reported');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
     assert.ok(fs.existsSync(body), 'the true body is kept for investigation');
   });
 
@@ -139,7 +139,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
 
     const report = await fsck(root, { fix: true });
     only(report, 'missingBody');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
     assert.ok(fs.existsSync(body), 'the true body is kept for investigation');
   });
 
@@ -205,7 +205,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
       actual: 1
     });
     assert.equal(report.reapSuspended, true);
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
     assert.ok(fs.existsSync(a.body), 'the body A meant to name is kept');
     assert.ok(fs.existsSync(b.body), 'B is untouched');
     assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
@@ -220,7 +220,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     only(report, 'malformed');
     assert.match(report.findings.malformed[0].error, /status "b0dy" is not one of/);
     assert.equal(report.reapSuspended, true);
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
     assert.ok(fs.existsSync(body), 'the body of a sidecar with an unknown status is evidence, never reaped');
     assert.ok(fs.existsSync(meta), 'the sidecar is kept too');
     assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
@@ -249,7 +249,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     const suspended = await fsck(root, { fix: true });
     only(suspended, 'hashMismatch', 'sizeMismatch');
     assert.equal(suspended.reapSuspended, true);
-    assert.deepEqual(suspended.reaped, { orphanCap: [], staleTmp: [] });
+    assert.deepEqual(suspended.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
     assert.ok(fs.existsSync(orphan), 'nothing is reaped while the proof is broken');
 
     await fsp.writeFile(body, good); // the operator restores the bytes
@@ -257,7 +257,8 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     only(clean, 'orphanCap');
     assert.equal(clean.reapSuspended, false);
     assert.deepEqual(clean.reaped.orphanCap, [orphan]);
-    assert.ok(!fs.existsSync(orphan), 'the orphan is reaped once every sidecar proves ownership');
+    assert.ok(!fs.existsSync(orphan), 'the orphan is quarantined once every sidecar proves ownership');
+    assert.ok(fs.existsSync(clean.reaped.moves[0].to), 'and it is in trash/, not deleted');
     assert.equal(unresolvedFindings(clean), 0);
   });
 
@@ -267,7 +268,7 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
 
     const report = await fsck(root, { fix: true });
     only(report, 'hashMismatch', 'sizeMismatch');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
     assert.ok(fs.existsSync(body), 'corrupt body is preserved for investigation');
     assert.equal(unresolvedFindings(report), 2);
   });
@@ -313,13 +314,59 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     const report = await fsck(root, { fix: true });
     assert.deepEqual(report.reaped.orphanCap, [orphan]);
     assert.deepEqual(report.reaped.staleTmp, [tmp]);
-    assert.ok(!fs.existsSync(orphan), 'orphan reaped');
-    assert.ok(!fs.existsSync(tmp), 'stale tmp reaped');
+    assert.ok(!fs.existsSync(orphan), 'orphan gone from cap/');
+    assert.ok(!fs.existsSync(tmp), 'stale tmp deleted');
     assert.ok(fs.existsSync(goodBody) && fs.existsSync(goodMeta), 'valid entry untouched');
     assert.equal(unresolvedFindings(report), 0, 'a fixed store is clean');
 
-    // idempotent: a second pass finds nothing
-    assert.equal(totalFindings(await fsck(root)), 0);
+    // The orphan was MOVED, not deleted: it sits in this run's quarantine
+    // under its own relative path, byte-identical.
+    assert.ok(report.reaped.trash.startsWith(path.join(root, TRASH_DIR, '')), 'the quarantine is inside the root');
+    const moved = path.join(report.reaped.trash, 'cap', hash.slice(0, 2), hash);
+    assert.deepEqual(report.reaped.moves, [{ from: orphan, to: moved }]);
+    assert.equal(fs.readFileSync(moved, 'utf8'), 'garbage', 'the bytes survive in quarantine');
+
+    // idempotent: a second pass finds nothing, and never scans trash/ as live content
+    const again = await fsck(root);
+    assert.equal(totalFindings(again), 0);
+    assert.equal(again.counts.capFiles, 1, 'the quarantined body is not a cap/ file');
+    assert.equal(again.counts.trashFiles, 1, 'but it is inventoried');
+  });
+
+  it('--fix never deletes a body: an operator restores a quarantined body by moving it back, and emptyTrash is the only deletion', async () => {
+    const hash = crypto.createHash('sha256').update('orphan-key').digest('hex');
+    const orphan = path.join(root, 'cap', hash.slice(0, 2), hash);
+    await fsp.mkdir(path.dirname(orphan), { recursive: true });
+    await fsp.writeFile(orphan, 'not garbage after all');
+
+    const first = await fsck(root, { fix: true });
+    const [{ to }] = first.reaped.moves;
+    assert.ok(fs.existsSync(to));
+
+    // Restore: move it back under cap/ (the documented operator step). It is
+    // an orphan again, and --fix quarantines it again under a new run dir.
+    await fsp.rename(to, orphan);
+    const second = await fsck(root, { fix: true });
+    assert.equal(second.reaped.moves.length, 1);
+    assert.notEqual(second.reaped.trash, first.reaped.trash, 'each run gets its own quarantine directory');
+    assert.equal(fs.readFileSync(second.reaped.moves[0].to, 'utf8'), 'not garbage after all');
+
+    // The explicit, separate action empties the quarantine.
+    const emptied = await emptyTrash(root);
+    assert.equal(emptied.path, path.join(root, TRASH_DIR));
+    assert.equal(emptied.files, 1);
+    assert.equal(emptied.bytes, 'not garbage after all'.length);
+    assert.ok(!fs.existsSync(path.join(root, TRASH_DIR)));
+    assert.equal((await fsck(root)).counts.trashFiles, 0);
+    assert.deepEqual(await emptyTrash(root), { path: path.join(root, TRASH_DIR), files: 0, bytes: 0 }, 'emptying an empty quarantine is a no-op');
+  });
+
+  it('trash/ is part of the root contract: never a foreignRoot finding', async () => {
+    await fsp.mkdir(path.join(root, TRASH_DIR, 'old-run', 'cap', 'ab'), { recursive: true });
+    await fsp.writeFile(path.join(root, TRASH_DIR, 'old-run', 'cap', 'ab', 'abcd'), 'quarantined');
+    const report = await fsck(root);
+    assert.equal(totalFindings(report), 0);
+    assert.equal(report.counts.trashFiles, 1);
   });
 });
 
@@ -350,7 +397,7 @@ describe('fsck — interstitial-as-body (#363, report-only)', () => {
     const report = await fsck(root, { fix: true });
     only(report, 'interstitialAsBody');
     assert.equal(report.findings.interstitialAsBody[0].signature, 'wrapper-stub');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'remediation is #364, not fsck');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] }, 'remediation is #364, not fsck');
     assert.equal(unresolvedFindings(report), 1);
     assert.ok(fs.existsSync(capPath), 'the body is left in place');
   });
@@ -481,7 +528,7 @@ describe('fsck — incomplete requisite closure (store-relative, report-only)', 
 
     const report = await fsck(root, { fix: true });
     only(report, 'incompleteClosure');
-    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'a short closure is filled by fetching, never by reaping');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] }, 'a short closure is filled by fetching, never by reaping');
     assert.ok(fs.existsSync(body) && fs.existsSync(meta), 'the doc is left in place');
     assert.equal(unresolvedFindings(report), 1, 'closure gap keeps the store dirty through --fix');
   });

@@ -81,12 +81,23 @@
 // bytes match its contentHash and whose size equals its contentLength. A
 // sidecar that fails any of those checks is a finding (malformed,
 // missingBody, hashMismatch, sizeMismatch, or schemaVersion), and it
-// suspends orphan detection for the whole run. Reaping never destroys
-// evidence: the body a rotted sidecar meant to name stays on disk.
+// suspends orphan detection for the whole run.
 //
-// --fix reaps ONLY the two safe-to-delete classes — orphanCap + staleTmp
-// (neither is reachable by any reader: an orphan has no completion token, a
-// tmp file was never renamed into place). It NEVER touches a valid entry and
+// QUARANTINE, NOT DELETION: the proof is not complete. Two rot shapes pass it
+// and leave a body unnamed: a contentHash rotted to another live body of the
+// same size, and a status rotted to a bodiless value that also drops
+// contentHash and contentLength. No check can see either one. So --fix never
+// deletes a body file. It MOVES each orphan into the quarantine directory
+// trash/<run>/cap/<dd>/<digest> inside the root (same filesystem, one
+// rename), keeps the relative path, and reports each move. A later run never
+// scans trash/ as live content. An operator restores a body by moving it back
+// to cap/<dd>/<digest>, and empties the quarantine with `cache verify
+// --empty-trash` (emptyTrash below). Stale tmp/ files are still deleted: a
+// tmp file was never renamed into place, so nothing can name it.
+//
+// --fix acts ONLY on the two reapable classes — orphanCap (moved) + staleTmp
+// (deleted). Neither is reachable by any reader: an orphan has no completion
+// token, a tmp file was never published. It NEVER touches a valid entry and
 // REFUSES to "fix" a hashMismatch/sizeMismatch/keyMismatch/missingBody/
 // malformed finding: those are corruption to investigate, not garbage to
 // sweep. An incompleteClosure finding is likewise never touched — a short
@@ -118,11 +129,14 @@ export const CATEGORIES = [
   { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial (#363)", severity: 'advisory' },
   { key: 'schemaVersion', label: 'sidecar schema version is not the current version', severity: 'advisory' },
   { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/', severity: 'advisory' },
-  { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage)', severity: 'reapable' },
+  { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage; --fix moves it to trash/)', severity: 'reapable' },
   { key: 'staleTmp', label: 'leftover tmp/ scratch file', severity: 'reapable' }
 ];
 
 const REAPABLE = new Set(CATEGORIES.filter(c => c.severity === 'reapable').map(c => c.key));
+
+/** The quarantine directory inside a root. fsck never scans it as live content. */
+export const TRASH_DIR = 'trash';
 
 /** Every legal sidecar.status (SERVE.md). A sidecar outside this set is malformed. */
 const STATUSES = new Set(['body', 'empty', 'redirect', 'error', 'interstitial']);
@@ -157,6 +171,22 @@ async function fileSRI(file) {
 }
 
 /**
+ * Every regular file under a directory, recursively (the quarantine inventory).
+ * A missing directory is empty.
+ * @param {string} dir
+ * @returns {Promise<Array<{ path: string, size: number }>>}
+ */
+async function walkFiles(dir) {
+  const out = [];
+  for (const ent of await readdirSafe(dir)) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...(await walkFiles(full)));
+    else if (ent.isFile()) out.push({ path: full, size: (await fsp.stat(full)).size });
+  }
+  return out;
+}
+
+/**
  * Walk a `cap/` or `meta/` shard tree: <sub>/<aa>/<name>. Returns the leaf
  * files (aa dir + filename), tolerating a shard dir that holds a stray file.
  * @param {string} root
@@ -181,19 +211,22 @@ async function walkShards(root, sub) {
  * `--fix`. Pure read unless `fix` is set; never throws on a bad entry (that
  * entry becomes a finding), only on an unreadable root.
  *
- * @param {string} root - store root (contains cap/, meta/, tmp/)
+ * @param {string} root - store root (contains cap/, meta/, tmp/, and the trash/ quarantine)
  * @param {Object} [options]
- * @param {boolean} [options.fix=false] - reap orphan cap/ + stale tmp/
+ * @param {boolean} [options.fix=false] - move orphan cap/ files to trash/, delete stale tmp/
  * @returns {Promise<{
  *   root: string,
  *   schemaVersion: number,
- *   counts: { sidecars: number, bodies: number, capFiles: number, tmpFiles: number },
+ *   counts: { sidecars: number, bodies: number, capFiles: number, tmpFiles: number, trashFiles: number },
  *   findings: Record<string, Array<object>>,
  *   reapSuspended: boolean,
- *   reaped: { orphanCap: string[], staleTmp: string[] } | null
+ *   reaped: { orphanCap: string[], staleTmp: string[], trash: string | null, moves: Array<{ from: string, to: string }> } | null
  * }>}
  * `reapSuspended` is true when a finding broke the ownership proof, so no
- * cap/ file was classified as an orphan on this run.
+ * cap/ file was classified as an orphan on this run. `reaped.orphanCap` lists
+ * the cap/ paths that were MOVED (never deleted) into `reaped.trash`, the
+ * quarantine directory of this run (null when nothing moved). `reaped.moves`
+ * pairs each source with its destination.
  */
 export async function fsck(root, options = {}) {
   const { fix = false } = options;
@@ -220,7 +253,10 @@ export async function fsck(root, options = {}) {
   // `cache fill`/`cache crawl`/`remaster build` then `cache verify` on that
   // root would report unclean forever (a non-reapable advisory). (Filenames are
   // a deliberate local copy, per this file's layout-knowledge note.)
-  const allowed = new Set(['cap', 'meta', 'tmp', '.refetch', '.crawl', 'remaster.build.json']);
+  // trash/ is fsck's own quarantine (QUARANTINE, NOT DELETION above). It is
+  // part of the root contract, never scanned as live content, and never
+  // projected onto a bucket: the sync walks meta/ only.
+  const allowed = new Set(['cap', 'meta', 'tmp', TRASH_DIR, '.refetch', '.crawl', 'remaster.build.json']);
   for (const ent of await readdirSafe(root)) {
     if (!allowed.has(ent.name)) {
       findings.foreignRoot.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, ent.name) });
@@ -237,6 +273,9 @@ export async function fsck(root, options = {}) {
   for (const ent of await readdirSafe(path.join(root, 'tmp'))) {
     findings.staleTmp.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, 'tmp', ent.name) });
   }
+  // The quarantine is inventoried, never verified: a body in trash/ is not
+  // live content, and nothing in it is a finding.
+  const trashFiles = (await walkFiles(path.join(root, TRASH_DIR))).length;
 
   // ---- sidecar sweep (the authority) ---------------------------------------
   const metaFiles = (await walkShards(root, 'meta')).filter(f => f.name.endsWith('.json'));
@@ -419,19 +458,34 @@ export async function fsck(root, options = {}) {
     }
   }
 
-  // ---- --fix: reap ONLY the safe classes ------------------------------------
+  // ---- --fix: act ONLY on the safe classes ----------------------------------
+  // An orphan body is MOVED into this run's quarantine directory, under its
+  // own relative path (trash/<run>/cap/<dd>/<digest>), by one rename on the
+  // same filesystem. A stale tmp/ file is deleted. See QUARANTINE, NOT
+  // DELETION in the header for why a body is never deleted.
   let reaped = null;
   if (fix) {
-    reaped = { orphanCap: [], staleTmp: [] };
-    for (const category of REAPABLE) {
-      for (const f of findings[category]) {
-        try {
-          await fsp.rm(f.path, { recursive: true, force: true });
-          reaped[category].push(f.path);
-        } catch (error) {
-          // A reap that fails (permissions, race) stays a finding — surface it.
-          f.reapError = error.message;
-        }
+    reaped = { orphanCap: [], staleTmp: [], trash: null, moves: [] };
+    const runDir = path.join(root, TRASH_DIR, new Date().toISOString().replace(/[:.]/g, '-'));
+    for (const f of findings.orphanCap) {
+      const to = path.join(runDir, 'cap', f.aa, f.hash);
+      try {
+        await fsp.mkdir(path.dirname(to), { recursive: true });
+        await fsp.rename(f.path, to);
+        reaped.orphanCap.push(f.path);
+        reaped.moves.push({ from: f.path, to });
+        reaped.trash = runDir;
+      } catch (error) {
+        // A move that fails (permissions, race) stays a finding — surface it.
+        f.reapError = error.message;
+      }
+    }
+    for (const f of findings.staleTmp) {
+      try {
+        await fsp.rm(f.path, { recursive: true, force: true });
+        reaped.staleTmp.push(f.path);
+      } catch (error) {
+        f.reapError = error.message;
       }
     }
   }
@@ -439,11 +493,27 @@ export async function fsck(root, options = {}) {
   return {
     root,
     schemaVersion: SIDECAR_VERSION,
-    counts: { sidecars: metaFiles.length, bodies, capFiles: capFiles.length, tmpFiles: findings.staleTmp.length },
+    counts: { sidecars: metaFiles.length, bodies, capFiles: capFiles.length, tmpFiles: findings.staleTmp.length, trashFiles },
     findings,
     reapSuspended,
     reaped
   };
+}
+
+/**
+ * Empty the quarantine: delete `<root>/trash` and everything under it. This
+ * is the ONLY path that deletes a body file, and it runs only when an
+ * operator asks for it (`cache verify --empty-trash`). Returns what was
+ * removed so the caller can report it. A root with no trash/ removes nothing.
+ *
+ * @param {string} root
+ * @returns {Promise<{ path: string, files: number, bytes: number }>}
+ */
+export async function emptyTrash(root) {
+  const dir = path.join(root, TRASH_DIR);
+  const files = await walkFiles(dir);
+  await fsp.rm(dir, { recursive: true, force: true });
+  return { path: dir, files: files.length, bytes: files.reduce((n, f) => n + f.size, 0) };
 }
 
 /**
@@ -457,7 +527,7 @@ export function totalFindings(report) {
 
 /**
  * Findings still standing after any reap — corruption/advisory always count,
- * reaped classes drop by however many were successfully removed. This is the
+ * reaped classes drop by however many were moved or removed. This is the
  * exit-status signal: 0 iff the store is clean (or made clean by --fix).
  * @param {{ findings: Record<string, Array<object>>, reaped: object | null }} report
  * @returns {number}

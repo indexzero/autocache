@@ -97,7 +97,17 @@ export function classifyContentType(contentType) {
 // liberally ([^"'\s<>\\]+) and trimmed/repaired below — the same tempered
 // scan requisites.js and manifest.js#extractArchiveUrls apply. remaster verify
 // scans with this same pattern, so an upstream ref resolves to the same key here.
-export const WAYBACK_REF_RE = /((?:https?:)?\/\/web\.archive\.org)?\/web\/(\d{4,14})([a-z]{1,3}_)?\/([^"'\s<>\\]+)/g;
+const WAYBACK_REF_RE = /((?:https?:)?\/\/web\.archive\.org)?\/web\/(\d{4,14})([a-z]{1,3}_)?\/([^"'\s<>\\]+)/g;
+
+/**
+ * A fresh copy of the wayback reference pattern (global, so it drives
+ * `matchAll` and `replace`). Each caller gets its own `lastIndex`, so a
+ * `.exec` or `.test` in one place never carries state into another.
+ * Groups: `[host, ts, flag, original]`.
+ */
+export function waybackRefRe() {
+  return new RegExp(WAYBACK_REF_RE.source, WAYBACK_REF_RE.flags);
+}
 
 /**
  * Truncate an original-URL token at its first UNBALANCED ')' — the

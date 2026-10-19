@@ -44,7 +44,7 @@ import { serveCacheRoot } from '@autocache/waybackify-serve/node';
 import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
 import { dynamicEntryError, SIDECAR_VERSION } from '@autocache/waybackify/cache.js';
-import { classifyContentType, refCaptureKey, WAYBACK_REF_RE } from '@autocache/waybackify/rewrite.js';
+import { classifyContentType, refCaptureKey, waybackRefRe } from '@autocache/waybackify/rewrite.js';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
 
 // The library never constructs pino (design §1); default no-op.
@@ -351,7 +351,7 @@ function inResourceContext(text, index, { css, html, rawSpan }) {
 /**
  * Scan one text body for escapes. Pure: (key, text) → one finding per
  * occurrence. A hosted wayback ref (absolute or protocol-relative, the
- * rewriter's own WAYBACK_REF_RE) is `archive-org` and carries the upstream `url`
+ * rewriter's own waybackRefRe()) is `archive-org` and carries the upstream `url`
  * and the `upstreamKey` the server resolves. An archive.org byte run outside every
  * such ref is `archive-org-bare`. The absolute-web-path scan skips any match
  * whose host is in the archive family. Root-relative refs are never findings.
@@ -368,7 +368,7 @@ export function scanBody(key, text, { html = false, css = false } = {}) {
   const owned = [];
   const raw = html ? rawTextSpans(text) : [];
   let rawAt = 0; // matches and spans both come in byte order, so one pointer walks the spans
-  for (const m of text.matchAll(WAYBACK_REF_RE)) {
+  for (const m of text.matchAll(waybackRefRe())) {
     const [full, host, ts, flag, rawOriginal] = m;
     if (!host) continue; // root-relative: the correct remastered form
     while (rawAt < raw.length && raw[rawAt][1] <= m.index) rawAt++;

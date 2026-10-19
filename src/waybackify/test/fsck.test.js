@@ -226,6 +226,29 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     assert.equal(unresolvedFindings(report), 1, 'the store stays dirty');
   });
 
+  it('a body sidecar whose status rots to a bodiless value but keeps contentHash is malformed, and --fix moves nothing', async () => {
+    const { body, meta } = await commitBody(root, '2014/http://x.example/a.css', 'body { color: red }');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    for (const status of ['empty', 'redirect', 'error', 'interstitial']) {
+      await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status })); // contentHash + contentLength stay
+
+      const report = await fsck(root, { fix: true });
+      only(report, 'malformed');
+      assert.match(report.findings.malformed[0].error, new RegExp(`status "${status}" carries contentHash or contentLength`));
+      assert.equal(report.reapSuspended, true);
+      assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [], trash: null, moves: [] });
+      assert.ok(fs.existsSync(body), `the body stays in cap/ under status ${status}`);
+      assert.equal(unresolvedFindings(report), 1);
+    }
+    // Either field alone is enough.
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status: 'empty', contentHash: undefined }));
+    only(await fsck(root), 'malformed');
+    // A genuine bodiless sidecar (neither field) is clean.
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, status: 'empty', contentHash: undefined, contentLength: undefined }));
+    await fsp.unlink(body);
+    assert.equal(totalFindings(await fsck(root)), 0);
+  });
+
   it('detects a contentLength that disagrees with the stored body size', async () => {
     const { meta } = await commitBody(root, '2011/http://x.example/');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));

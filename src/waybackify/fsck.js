@@ -25,6 +25,10 @@
 //                   bad entry is surfaced, never silently trusted. A `status`
 //                   outside {body,empty,redirect,error,interstitial} is also
 //                   malformed: such a sidecar cannot say whether it owns a body.
+//                   So is a bodiless status that carries contentHash or
+//                   contentLength (the schema says present iff status body):
+//                   that is a body sidecar whose status rotted, and its body
+//                   is on disk unnamed.
 //   - hashMismatch  status 'body' whose contentHash != the SRI of the cap/
 //                   bytes — the one thing fsync cannot catch (it persists
 //                   what was written, not that the right bytes were written)
@@ -316,6 +320,18 @@ export async function fsck(root, options = {}) {
         key: sidecar.key ?? null,
         path: metaPath,
         error: `status ${JSON.stringify(sidecar.status ?? null)} is not one of body, empty, redirect, error, interstitial`
+      });
+    } else if (sidecar.status !== 'body' && (sidecar.contentHash !== undefined || sidecar.contentLength !== undefined)) {
+      // contentHash and contentLength are present iff status is body. A
+      // bodiless status that carries them is a body sidecar whose status
+      // rotted: its body sits on disk, and nothing else names it. Malformed,
+      // so the run moves nothing and the body stays where it is.
+      findings.malformed.push({
+        hash,
+        aa,
+        key: sidecar.key ?? null,
+        path: metaPath,
+        error: `status ${JSON.stringify(sidecar.status)} carries contentHash or contentLength, which are present only when status is body`
       });
     }
 

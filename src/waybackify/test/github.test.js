@@ -196,10 +196,21 @@ describe('probeGithub: the repo-root probe', () => {
     assert.ok(!fetch.calls.some(c => c.url === login), 'the probe never fetches the login page');
   });
 
-  it('a grafted URL that redirects to the repo root or to another repo is inconclusive', async () => {
-    const root = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 302, location: NEW }, [NEW]: { status: 200 } });
-    await assert.rejects(() => probeGithub(DEEP, { fetch: root, sleep: noSleep }), /grafted URL redirect out of the repo/);
-    assert.equal(root.calls.length, 2, 'the root of the renamed repo is never fetched as the graft');
+  it('a grafted URL that redirects to the renamed repo root is followed, and a root that answers is a rename', async () => {
+    // GitHub sends a disabled wiki or an empty issues tab to the repo root.
+    const wiki = `${OLD}/wiki`;
+    const root = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: `${NEW}/` }, [`${NEW}/`]: { status: 200 } });
+    assert.deepEqual(await probeGithub(wiki, { fetch: root, sleep: noSleep }), { renamed: true, from: wiki, to: `${NEW}/wiki` });
+    assert.equal(root.calls.at(-1).url, `${NEW}/`, 'the root is fetched, not assumed');
+    const query = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: `${NEW}?tab=readme` }, [`${NEW}?tab=readme`]: { status: 200 } });
+    assert.equal((await probeGithub(wiki, { fetch: query, sleep: noSleep })).renamed, true);
+    const gone = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [`${NEW}/wiki`]: { status: 302, location: NEW }, [NEW]: { status: 404 } });
+    assert.deepEqual(await probeGithub(wiki, { fetch: gone, sleep: noSleep }), { renamed: false });
+    const otherRoot = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 302, location: 'https://github.com/third-owner/third-repo' } });
+    await assert.rejects(() => probeGithub(DEEP, { fetch: otherRoot, sleep: noSleep }), /grafted URL redirect out of the repo/);
+  });
+
+  it('a grafted URL that redirects to another repo is inconclusive', async () => {
     const other = `https://github.com/third-owner/third-repo${githubRepo(DEEP).rest}`;
     const moved = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 301, location: other }, [other]: { status: 200 } });
     await assert.rejects(() => probeGithub(DEEP, { fetch: moved, sleep: noSleep }), /grafted URL redirect out of the repo/);

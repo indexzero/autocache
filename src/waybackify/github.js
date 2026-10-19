@@ -119,6 +119,15 @@ function redirectRepo(location, root) {
   return owner && repo && validNames(owner, repo) ? { owner, repo } : null;
 }
 
+/**
+ * True when a redirect target on github.com is the root of `repo`, with or
+ * without a trailing slash or a query. GitHub sends a disabled tab (a wiki,
+ * an empty issues list) there, so the renamed repo answers for that path.
+ */
+function isRepoRoot(target, repo) {
+  return target.pathname.replace(/\/$/, '').toLowerCase() === `/${repo.owner}/${repo.repo}`.toLowerCase();
+}
+
 /** A reply that proves the link is absent. */
 function missing(status) {
   return status === 404 || status === 410;
@@ -135,12 +144,12 @@ const MAX_GRAFT_HOPS = 5;
 /**
  * Fetch the grafted URL and walk its redirects by hand, one hop at a time.
  * Every hop must stay inside the renamed repo: a deep link on github.com's
- * default port under the same owner/repo. A `redirect: 'follow'` fetch hides
- * the chain, so a login page that answers 200 looks like a verdict about the
- * graft, whether it sits on another host or at `github.com/login`. The walk
- * keeps the final reply attributable to the repo. A hop off GitHub, a hop to
- * a GitHub route, a repo root, or another repo, a hop with no Location, or a
- * chain longer than MAX_GRAFT_HOPS is inconclusive.
+ * default port under the same owner/repo, or that repo's root. A
+ * `redirect: 'follow'` fetch hides the chain, so a login page that answers
+ * 200 looks like a verdict about the graft, whether it sits on another host
+ * or at `github.com/login`. The walk keeps the final reply attributable to
+ * the repo. A hop off GitHub, a hop to a GitHub route or another repo, a hop
+ * with no Location, or a chain longer than MAX_GRAFT_HOPS is inconclusive.
  * So is a grafted URL that resolves outside `target` before the first fetch.
  * @param {Function} fetch
  * @param {string} to - the grafted URL
@@ -164,7 +173,8 @@ async function verifyGraft(fetch, to, target) {
     const next = onGithub(location, url);
     if (!next) throw inconclusive('grafted URL redirect off GitHub', res.status, url);
     const hopRepo = githubRepo(next.href);
-    if (!hopRepo || !sameRepo(hopRepo, target)) throw inconclusive('grafted URL redirect out of the repo', res.status, url);
+    const inRepo = hopRepo ? sameRepo(hopRepo, target) : isRepoRoot(next, target);
+    if (!inRepo) throw inconclusive('grafted URL redirect out of the repo', res.status, url);
     url = next.href;
   }
   throw new Error(`github probe: inconclusive, grafted URL redirected more than ${MAX_GRAFT_HOPS} times: ${to}`);

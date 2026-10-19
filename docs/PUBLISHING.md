@@ -15,14 +15,13 @@ is a publish**; it is the pre-flight.
 
 Registry availability, checked 2026-07-24 with `npm view <name> name`:
 
-- `waybackify` — **404 (unpublished; available)**
-- `@autocache/waybackify-cli` — **404 (unpublished)**; a scoped name is
-  claimable only by the scope's owner. `@autocache` (no dot) is a valid npm
-  scope and is the chosen home for these packages.
-- `waybackify-cli` (the plain fallback if the scope is dropped) —
-  **404 (unpublished; available)**
+- `@autocache/waybackify-cli` — **404 (unpublished)**. A scoped name is
+  claimable only by the scope's owner, and `@autocache` (no dot) is a valid
+  npm scope.
+- `@autocache/waybackify` was not checked on that date. The library was
+  then named plain `waybackify`, which was unpublished and available.
 
-Both packages now sit under the `@autocache` scope. The CLI's **bin** is
+Both packages sit under the `@autocache` scope. The CLI's **bin** is
 `waybackify` — installing the CLI is what puts a `waybackify` command on PATH,
 while the library package ships no bin, so the two do not collide.
 
@@ -62,8 +61,8 @@ change to either package carries that check.
 
 ## What publishing would still need (operator decisions)
 
-1. Settle the CLI's published name: `@autocache/waybackify-cli` (requires
-   the npm scope) or plain `waybackify-cli`.
+1. Claim the `@autocache` scope on the registry, and check
+   `@autocache/waybackify` the same way.
 2. Pick initial versions and cut the GitHub release that triggers `Publish`.
 3. Add a package-level `LICENSE` file to each package so the tarball carries
    the license text.

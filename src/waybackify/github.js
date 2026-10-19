@@ -39,9 +39,10 @@ function validNames(owner, repo) {
 // owner. A closed list: `/orgs/x/people` or `/login/oauth` is not a repo.
 const RESERVED_OWNERS = new Set([
   'about', 'account', 'apps', 'blog', 'codespaces', 'collections', 'contact',
-  'customer-stories', 'dashboard', 'enterprise', 'events', 'explore', 'features',
-  'issues', 'join', 'login', 'logout', 'marketplace', 'new', 'notifications',
-  'organizations', 'orgs', 'pricing', 'pulls', 'search', 'security', 'sessions',
+  'copilot', 'customer-stories', 'dashboard', 'discussions', 'enterprise',
+  'events', 'explore', 'features', 'issues', 'join', 'login', 'logout',
+  'marketplace', 'mobile', 'new', 'notifications', 'organizations', 'orgs',
+  'pricing', 'pulls', 'readme', 'resources', 'search', 'security', 'sessions',
   'settings', 'signup', 'site', 'sponsors', 'stars', 'team', 'topics',
   'trending', 'users'
 ]);

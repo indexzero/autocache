@@ -73,7 +73,6 @@ const NOOP_LOGGER = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, 
  * @property {string} [original] - escape: the trimmed `<original>` token of the upstream ref
  * @property {string|null} [flag] - escape: the replay flag of the upstream ref, e.g. `im_`
  * @property {boolean} [resource] - escape: the ref sits where a browser loads a resource (CSS url(), src, srcset, poster, a stylesheet or icon link)
- * @property {boolean} [inert] - escape: the ref sits where a browser neither loads nor follows it (a title, alt, or data-* value, a comment)
  * @property {string} [class] - escape: the upstream class (see UPSTREAM_CLASSES)
  * @property {number} [docs]  - escape: how many documents carry this distinct upstream URL
  *
@@ -274,23 +273,6 @@ function isIntegrationPoint(namespace, tagName, attrs) {
   return ANNOTATION_HTML_ENCODINGS.has(encoding);
 }
 
-// The URL-valued attributes: the only attribute values a browser loads or
-// follows. Any other attribute value (title, alt, data-*) is text the browser
-// never fetches, so a wayback URL there is inert and advisory.
-const URL_ATTRS = new Set([
-  'href', 'src', 'srcset', 'imagesrcset', 'action', 'formaction', 'poster', 'cite', 'background',
-  'xlink:href', 'ping', 'manifest', 'longdesc', 'usemap', 'style'
-]);
-const TAG_URL_ATTRS = new Map([
-  ['object', new Set(['data', 'codebase', 'archive'])],
-  ['applet', new Set(['code', 'codebase', 'archive'])]
-]);
-
-/** Does attribute `name` of `tagName` hold a URL the browser loads or follows? */
-function isUrlAttr(tagName, name) {
-  return URL_ATTRS.has(name) || (TAG_URL_ATTRS.get(tagName)?.has(name) ?? false);
-}
-
 // The navigational positions: the only markup positions where a URL names a
 // page the reader follows. Every other attribute value loads a resource,
 // whatever the URL's extension: src, srcset, poster, SVG href and xlink:href,
@@ -337,7 +319,6 @@ function isResourceAttr(tagName, name, attrs) {
  * @property {number} end
  * @property {boolean} raw      - character references do not decode here
  * @property {boolean} resource - a URL here loads a resource
- * @property {boolean} inert    - a URL here is neither loaded nor followed
  * @property {string} kind      - the element or `tag attr`, for a reader
  */
 
@@ -365,7 +346,7 @@ function htmlRegions(html, base = 0) {
   const closeOpen = end => {
     if (open === null) return;
     if (open.tagName === 'noscript') regions.push(...htmlRegions(html.slice(open.start, end), base + open.start));
-    else regions.push({ start: base + open.start, end: base + end, raw: !open.decoded, resource: open.tagName === 'style', inert: false, kind: open.decoded ? 'foreign style' : open.tagName });
+    else regions.push({ start: base + open.start, end: base + end, raw: !open.decoded, resource: open.tagName === 'style', kind: open.decoded ? 'foreign style' : open.tagName });
     open = null;
   };
   // The open foreign elements and the integration points inside them. Empty
@@ -382,8 +363,7 @@ function htmlRegions(html, base = 0) {
             // own-property check keeps an attribute named `constructor` honest.
             if (!location.attrs || !Object.hasOwn(location.attrs, attr.name)) continue;
             const loc = location.attrs[attr.name];
-            const url = isUrlAttr(tagName, attr.name);
-            regions.push({ start: base + loc.startOffset, end: base + loc.endOffset, raw: false, resource: url && isResourceAttr(tagName, attr.name, attrs), inert: !url, kind: `${tagName} ${attr.name}` });
+            regions.push({ start: base + loc.startOffset, end: base + loc.endOffset, raw: false, resource: isResourceAttr(tagName, attr.name, attrs), kind: `${tagName} ${attr.name}` });
           }
         }
         if (inForeign()) {
@@ -412,7 +392,7 @@ function htmlRegions(html, base = 0) {
         if (at !== -1) frames.length = at;
       },
       onComment({ location }) {
-        if (open === null) regions.push({ start: base + location.startOffset, end: base + location.endOffset, raw: true, resource: false, inert: true, kind: '#comment' });
+        if (open === null) regions.push({ start: base + location.startOffset, end: base + location.endOffset, raw: true, resource: false, kind: '#comment' });
       },
       onEof({ location }) {
         closeOpen(location?.startOffset ?? html.length); // an unclosed block, or <plaintext>, runs to the end
@@ -479,7 +459,6 @@ export function scanBody(key, text, { html = false, css = false } = {}) {
       upstreamKey: ref.key === null ? null : stripFragment(ref.key),
       flag: flag ?? null,
       resource: css || (region?.resource ?? false),
-      inert: region?.inert ?? false,
       offset,
       excerpt: excerptAround(text, offset, offset + 'archive.org'.length)
     });
@@ -517,8 +496,8 @@ export function scanBody(key, text, { html = false, css = false } = {}) {
 
 /**
  * The upstream classes, in report order. A distinct upstream key lands in the first
- * class whose test holds: inert (never loaded), in the store, unmirrorable,
- * in the recorded frontier, then novel (resource or page). A ref with no key is unmirrorable if
+ * class whose test holds: in the store, unmirrorable, in the recorded frontier,
+ * then novel (resource or page). A ref with no key is unmirrorable if
  * isUnmirrorable exempts its original, and unresolved if not. `status` splits the verdict:
  *   fail      the tree does not stand alone, and `next` names the fix
  *   advisory  reported, but a link out of mirror scope does not fail the layer
@@ -530,7 +509,7 @@ const UPSTREAM_CLASSES = {
   novelResource: { status: 'fail', label: 'fetchable gap (novel resource)', next: 'a full (dynamic) cache crawl' },
   bare: { status: 'fail', label: 'bare archive.org reference (not /web/-shaped)', next: 'inspect the body' },
   unresolved: { status: 'fail', label: 'archive.org reference with no resolvable original', next: 'inspect the body' },
-  novelPage: { status: 'advisory', label: 'out of scope (page link, or a URL the browser never loads)', next: 'none: nothing to fetch' },
+  novelPage: { status: 'advisory', label: 'out of scope (novel page link)', next: 'none: the page is outside the mirror' },
   unmirrorable: { status: 'excluded', label: 'unmirrorable (beacon or pseudo URL)', next: 'none' }
 };
 
@@ -563,9 +542,6 @@ function recordedFrontier(entries) {
 /** The class of one distinct upstream URL. */
 function classOf(upstream, store, frontier) {
   if (upstream.kind === 'archive-org-bare') return 'bare';
-  // Every occurrence sits where the browser neither loads nor follows it (a
-  // title or alt value, a comment): nothing to fetch, so it only advises.
-  if (upstream.inert) return 'novelPage';
   // No key: the original is not a URL with a host. It is still a live
   // archive.org request unless the shared predicate exempts it.
   if (upstream.upstreamKey === null) return isUnmirrorable(upstream.original) ? 'unmirrorable' : 'unresolved';
@@ -591,12 +567,11 @@ export function classifyUpstream(occurrences, store, frontier) {
     const id = f.kind === 'archive-org-bare' ? `bare:${f.url}` : f.upstreamKey === null ? `url:${f.url}` : f.upstreamKey;
     let upstream = distinct.get(id);
     if (!upstream) {
-      upstream = { first: f, kind: f.kind, upstreamKey: f.upstreamKey ?? null, original: f.original ?? null, url: f.url, docs: new Set(), resource: false, inert: true };
+      upstream = { first: f, kind: f.kind, upstreamKey: f.upstreamKey ?? null, original: f.original ?? null, url: f.url, docs: new Set(), resource: false };
       distinct.set(id, upstream);
     }
     upstream.docs.add(f.key);
     if (RESOURCE_FLAGS.has(f.flag) || f.resource) upstream.resource = true;
-    if (f.inert !== true) upstream.inert = false; // one loaded or followed occurrence counts
   }
   const classes = Object.fromEntries(Object.entries(UPSTREAM_CLASSES).map(([id, c]) => [id, { ...c, count: 0, entries: [] }]));
   const findings = [];

@@ -97,9 +97,11 @@
 // an exclusive mkdir, so two runs never share a directory, and the move is a
 // hard link plus an unlink, so it never replaces an existing file. A move that
 // fails stays a finding. trash/ carries a marker file (TRASH_MARKER) that says
-// this tool created it. A later run never scans trash/ as live content. An operator restores a body by moving it back
-// to cap/<dd>/<digest>, and empties the quarantine with `cache verify
-// --empty-trash` (emptyTrash below). Stale tmp/ files are still deleted: a
+// this tool created it. A later run never scans trash/ as live content. An
+// operator restores a run with `cache verify --restore <run>` (restoreTrash
+// below), which moves a body back only when no live file exists at its path
+// and otherwise skips it with a report, and empties the quarantine with
+// `cache verify --empty-trash` (emptyTrash below). Stale tmp/ files are still deleted: a
 // tmp file was never renamed into place, so nothing can name it.
 //
 // --fix acts ONLY on the two reapable classes — orphanCap (moved) + staleTmp
@@ -583,6 +585,73 @@ export async function fsck(root, options = {}) {
     reapSuspended,
     reaped
   };
+}
+
+/**
+ * Restore one quarantine run: move every `trash/<run>/cap/<dd>/<digest>` back
+ * to `cap/<dd>/<digest>`. A body is moved back ONLY when no live file exists
+ * at that path (moveNoReplace), so a restore never replaces a repaired body.
+ * Everything else is skipped and reported, and stays in the quarantine. Empty
+ * directories under the run are pruned afterwards.
+ *
+ * @param {string} root
+ * @param {string} run - a directory name under trash/ (never a path)
+ * @returns {Promise<{
+ *   run: string,
+ *   restored: Array<{ from: string, to: string }>,
+ *   skipped: Array<{ from: string, to: string | null, reason: string }>
+ * }>}
+ */
+export async function restoreTrash(root, run) {
+  if (typeof run !== 'string' || run === '' || run === '.' || run === '..' || run.includes('/') || run.includes(path.sep)) {
+    throw new Error(`restoreTrash: run must be a directory name under ${TRASH_DIR}/, got ${JSON.stringify(run)}`);
+  }
+  const runDir = path.join(root, TRASH_DIR, run);
+  let stat;
+  try {
+    stat = await fsp.lstat(runDir);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    throw new Error(`restoreTrash: no quarantine run at ${runDir}`);
+  }
+  if (!stat.isDirectory()) throw new Error(`restoreTrash: ${runDir} is not a directory`);
+
+  const restored = [];
+  const skipped = [];
+  for (const f of await walkFiles(runDir)) {
+    const rel = path.relative(runDir, f.path);
+    if (!rel.startsWith(`cap${path.sep}`)) {
+      skipped.push({ from: f.path, to: null, reason: 'not a cap/ body' });
+      continue;
+    }
+    const to = path.join(root, rel);
+    if (fs.existsSync(to)) {
+      skipped.push({ from: f.path, to, reason: 'a live body exists at that path' });
+      continue;
+    }
+    await fsp.mkdir(path.dirname(to), { recursive: true });
+    try {
+      await moveNoReplace(f.path, to);
+      restored.push({ from: f.path, to });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      skipped.push({ from: f.path, to, reason: 'a live body exists at that path' });
+    }
+  }
+  await pruneEmptyDirs(runDir);
+  return { run: runDir, restored, skipped };
+}
+
+/** Remove empty directories under `dir`, then `dir` itself when it is empty. */
+async function pruneEmptyDirs(dir) {
+  for (const ent of await readdirSafe(dir)) {
+    if (ent.isDirectory()) await pruneEmptyDirs(path.join(dir, ent.name));
+  }
+  try {
+    await fsp.rmdir(dir);
+  } catch (error) {
+    if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error;
+  }
 }
 
 /**

@@ -96,6 +96,7 @@ function printReport(report, { quiet, CATEGORIES, totalFindings, unresolvedFindi
  * @param {Object} [deps]
  * @param {Function} [deps.fsck] - fsck.js#fsck
  * @param {Function} [deps.emptyTrash] - fsck.js#emptyTrash (the --empty-trash action)
+ * @param {Function} [deps.restoreTrash] - fsck.js#restoreTrash (the --restore <run> action)
  * @param {Array}    [deps.CATEGORIES] - fsck.js#CATEGORIES
  * @param {Function} [deps.totalFindings] - fsck.js#totalFindings
  * @param {Function} [deps.unresolvedFindings] - fsck.js#unresolvedFindings
@@ -107,7 +108,20 @@ export function cacheVerifyHandler(deps = {}) {
     // If fsck is injected, every helper comes off deps (no library load);
     // otherwise lazily import the module for all four members.
     const mod = deps.fsck ? deps : await import('@autocache/waybackify/fsck.js');
-    const { fsck, emptyTrash, CATEGORIES, totalFindings, unresolvedFindings } = mod;
+    const { fsck, emptyTrash, restoreTrash, CATEGORIES, totalFindings, unresolvedFindings } = mod;
+
+    // --restore <run> moves a quarantined run's bodies back under cap/. It runs
+    // before the verify so the report below describes the restored store. A
+    // body whose live path is occupied is skipped and reported, never replaced.
+    if (flags.restore) {
+      const result = await restoreTrash(flags.root, flags.restore);
+      for (const r of result.restored) logger.info({ evt: 'fsck-restore', ...r }, `cache verify: restored ${r.to}`);
+      for (const s of result.skipped) logger.warn({ evt: 'fsck-restore-skipped', ...s }, `cache verify: kept ${s.from} in quarantine (${s.reason})`);
+      logger.info(
+        { evt: 'fsck-restore-summary', run: result.run, restored: result.restored.length, skipped: result.skipped.length },
+        `cache verify: restore of ${result.run}: ${result.restored.length} restored, ${result.skipped.length} skipped`
+      );
+    }
 
     // --empty-trash is the ONE action that deletes body files: it empties the
     // quarantine --fix filled on earlier runs. Explicit, separate, and first,

@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bodyFile, commitEntry, entryPaths } from '../cache.js';
-import { emptyTrash, fsck, moveNoReplace, totalFindings, unresolvedFindings, CATEGORIES, TRASH_DIR, TRASH_MARKER } from '../fsck.js';
+import { emptyTrash, fsck, moveNoReplace, restoreTrash, totalFindings, unresolvedFindings, CATEGORIES, TRASH_DIR, TRASH_MARKER } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = path.resolve(HERE, 'fixtures/cache-root');
@@ -378,9 +378,12 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     const [{ to }] = first.reaped.moves;
     assert.ok(fs.existsSync(to));
 
-    // Restore: move it back under cap/ (the documented operator step). It is
-    // an orphan again, and --fix quarantines it again under a new run dir.
-    await fsp.rename(to, orphan);
+    // Restore (the documented operator step, `cache verify --restore <run>`):
+    // the body goes back under cap/. It is an orphan again, and --fix
+    // quarantines it again under a new run dir.
+    const restore = await restoreTrash(root, path.basename(first.reaped.trash));
+    assert.deepEqual(restore, { run: first.reaped.trash, restored: [{ from: to, to: orphan }], skipped: [] });
+    assert.ok(!fs.existsSync(first.reaped.trash), 'an emptied run directory is pruned');
     const second = await fsck(root, { fix: true });
     assert.equal(second.reaped.moves.length, 1);
     assert.notEqual(second.reaped.trash, first.reaped.trash, 'each run gets its own quarantine directory');
@@ -394,6 +397,32 @@ describe('fsck — reapable classes (orphan cap/ + stale tmp/)', () => {
     assert.ok(!fs.existsSync(path.join(root, TRASH_DIR)));
     assert.equal((await fsck(root)).counts.trashFiles, 0);
     assert.deepEqual(await emptyTrash(root), { path: path.join(root, TRASH_DIR), files: 0, bytes: 0 }, 'emptying an empty quarantine is a no-op');
+  });
+
+  it('restoreTrash never replaces a live body: a repaired body stays, the stale evidence stays in quarantine, and it is reported', async () => {
+    // A body whose sidecar was lost and whose bytes rotted is quarantined.
+    const { body, meta } = await commitBody(root, '2020/http://x.example/body', 'correct archived body');
+    await fsp.unlink(meta);
+    await fsp.writeFile(body, 'corrupted old evidence');
+    const quarantined = await fsck(root, { fix: true });
+    const [{ to: saved }] = quarantined.reaped.moves;
+    // A refetch repairs the live capture before the operator restores.
+    await commitBody(root, '2020/http://x.example/body', 'correct archived body');
+    assert.equal(fs.readFileSync(body, 'utf8'), 'correct archived body');
+
+    const result = await restoreTrash(root, path.basename(quarantined.reaped.trash));
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.skipped, [{ from: saved, to: body, reason: 'a live body exists at that path' }]);
+    assert.equal(fs.readFileSync(body, 'utf8'), 'correct archived body', 'the repaired body is untouched');
+    assert.equal(fs.readFileSync(saved, 'utf8'), 'corrupted old evidence', 'the evidence stays in quarantine');
+    assert.equal(totalFindings(await fsck(root)), 0, 'the store is clean');
+  });
+
+  it('restoreTrash takes a run directory name, never a path, and names a missing run', async () => {
+    for (const bad of ['', '.', '..', 'a/b', `..${path.sep}x`]) {
+      await assert.rejects(restoreTrash(root, bad), /run must be a directory name under trash\//, JSON.stringify(bad));
+    }
+    await assert.rejects(restoreTrash(root, 'no-such-run'), { message: `restoreTrash: no quarantine run at ${path.join(root, TRASH_DIR, 'no-such-run')}` });
   });
 
   it('two --fix runs in the same millisecond get distinct quarantine directories, and both evidences survive', async () => {

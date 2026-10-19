@@ -486,7 +486,7 @@ A sidecar records only the hash and the length of its bytes, so no check can
 tell either shape from a legitimate store. Both make the unnamed body an
 `orphanCap` finding. The quarantine below is the protection: `--fix` moves
 such a body out of `cap/` and never deletes it, so an operator who later finds
-the rot restores the bytes with one `mv`.
+the rot restores the bytes with `--restore <run>`.
 
 ### Quarantine: `--fix` never deletes a body
 
@@ -499,10 +499,15 @@ inventories `trash/` (`counts.trashFiles`) and never scans it as live content:
 a quarantined body is not a `cap/` file, not an orphan, and not a finding. The
 sync never uploads it, because `bucket push` walks `meta/` only.
 
-To **restore** a body, move it back to where it came from:
+To **restore** a run, use the restore action. It moves each body of that run
+back to `cap/<dd>/<digest>` **only when no live file exists at that path**.
+A body whose live path is occupied (a refetch already repaired it) is skipped,
+reported, and left in the quarantine, so a restore never replaces a live body.
+Do not restore with a bare `mv`: it replaces a repaired body with stale
+evidence. The library exposes the same action as `fsck.js#restoreTrash(root, run)`.
 
 ```sh
-mv <root>/trash/<run>/cap/<dd>/<digest> <root>/cap/<dd>/<digest>
+waybackify cache verify --root <root> --restore <run>
 ```
 
 To **empty** the quarantine, run the explicit, separate action. It is the only

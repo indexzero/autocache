@@ -33,14 +33,29 @@ function handlerFor(report) {
   const calls = [];
   const out = [];
   const emptied = [];
+  const restores = [];
   const handler = cacheVerifyHandler({
     fsck: async (root, options) => { calls.push({ root, options }); return report; },
     emptyTrash: async root => { emptied.push(root); return { path: `${root}/trash`, files: 2, bytes: 10 }; },
+    restoreTrash: async (root, run) => {
+      restores.push({ root, run });
+      return {
+        run: `${root}/trash/${run}`,
+        restored: [{ from: `${root}/trash/${run}/cap/ab/h1`, to: `${root}/cap/ab/h1` }],
+        skipped: [{ from: `${root}/trash/${run}/cap/cd/h2`, to: `${root}/cap/cd/h2`, reason: 'a live body exists at that path' }]
+      };
+    },
     CATEGORIES,
     totalFindings,
     unresolvedFindings
   });
-  return { handler, calls, out, emptied };
+  return { handler, calls, out, emptied, restores };
+}
+
+/** A logger that records every line, info and warn alike. */
+function recordingLogger(lines) {
+  const push = (o, m) => lines.push(typeof o === 'string' ? o : m);
+  return { trace: push, debug: push, info: push, warn: push, error: push, fatal: push, child() { return this; } };
 }
 
 test('a clean store: fsck(root,{fix:false}), human report on stdout, exit 0', async () => {
@@ -115,4 +130,24 @@ test('without --empty-trash the quarantine is never touched', async () => {
   const { handler, emptied } = handlerFor(reportOf());
   await run(['cache', 'verify', '-r', '/c', '--fix'], { handlers: { cacheVerify: handler }, out: () => {}, error: () => {} });
   assert.deepEqual(emptied, []);
+});
+
+test('--restore <run> runs the restore before the verify and reports each restored and skipped body', async () => {
+  const { handler, calls, out, restores } = handlerFor(reportOf());
+  const logs = [];
+  assert.equal(
+    await run(['cache', 'verify', '-r', '/c', '--restore', 'run-1'], { handlers: { cacheVerify: handler }, out: l => out.push(l), logger: recordingLogger(logs), error: () => {} }),
+    EXIT.OK
+  );
+  assert.deepEqual(restores, [{ root: '/c', run: 'run-1' }]);
+  assert.equal(calls.length, 1, 'the verify still runs');
+  assert.ok(logs.some(l => l === 'cache verify: restored /c/cap/ab/h1'));
+  assert.ok(logs.some(l => l === 'cache verify: kept /c/trash/run-1/cap/cd/h2 in quarantine (a live body exists at that path)'));
+  assert.ok(logs.some(l => l.includes('restore of /c/trash/run-1: 1 restored, 1 skipped')));
+});
+
+test('without --restore the quarantine is never restored', async () => {
+  const { handler, restores } = handlerFor(reportOf());
+  await run(['cache', 'verify', '-r', '/c'], { handlers: { cacheVerify: handler }, out: () => {}, error: () => {} });
+  assert.deepEqual(restores, []);
 });

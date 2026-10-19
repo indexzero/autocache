@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🚧 Changed
 - **`remaster verify` reports upstream URLs**: the static escape layer now lists every distinct upstream URL it finds instead of a byte count. Each entry carries its resolved store key, a class (`inStore`, `inRecordedFrontier`, `novelResource`, `bare`, `unresolved`, `novelPage`, `unmirrorable`), and the next command to run. A rewriter miss, a fetchable gap, or a bare `archive.org` reference fails the layer, an out-of-scope page link is advisory, and a beacon is excluded. The `--json` report adds a `residual` object with the full classified list. (#12)
 
+### 💥 Breaking
+- **`remaster verify` reads sidecar v3 only**: the tree reader rejects a v1, v2, or unknown sidecar with `unsupported sidecar version N`. No reader or fallback exists for an older shape. Rebuild a remastered tree from a current store before you verify it. (#12)
+
 ### 🐛 Fixed
 - **Upstream keys follow the store's keying**: `&amp;` in HTML markup is decoded the way the store keys it, and stays raw inside `<script>` and `<style>` text. A `#fragment` is dropped from the lookup key on both sides, so a fragment variant matches its stored or recorded capture. (#12)
 - **A quoted `>` in an attribute does not end a tag early**: the raw-text span detector walks attributes the way an HTML tokenizer does, so a `src` after `data-note="a > b"` still resolves to its stored capture. (#12)

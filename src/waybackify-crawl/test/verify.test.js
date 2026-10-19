@@ -60,12 +60,12 @@ function canonicalJSON(value) {
   return JSON.stringify(sort(value));
 }
 
-/** Write one hermetic entry (body + sidecar) into a root, the way cache.js does. */
+/** Write one hermetic entry (body + sidecar) into a root, the way cache.js does: a v3 sidecar, `dynamic` only when given. */
 async function writeEntry(root, spec) {
-  const { key, status = 'body', contentType = '', flag = null, body = null, requisites = [], dynamic } = spec;
+  const { key, status = 'body', contentType = '', flag = null, body = null, requisites = [], dynamic, v = 3 } = spec;
   const hash = await captureHash(key);
   const aa = hash.slice(0, 2);
-  const sidecar = { contentType, fetchedAt: '2026-07-23T00:00:00.000Z', flag, key, requisites, status, v: dynamic ? 3 : 1 };
+  const sidecar = { contentType, fetchedAt: '2026-07-23T00:00:00.000Z', flag, key, requisites, status, v };
   if (dynamic) sidecar.dynamic = dynamic;
   if (status === 'body') {
     const bytes = bytesOf(body ?? '');
@@ -501,6 +501,25 @@ describe('remaster verify static — upstream URLs, classified and deduped', () 
     assert.doesNotMatch(text, / @\d+/, 'no raw byte offsets in the escape summary');
     await fsp.rm(hermetic, { recursive: true, force: true });
     await fsp.rm(out, { recursive: true, force: true });
+  });
+});
+
+describe('remaster verify — the tree reader takes sidecar v3 only', () => {
+  it('enumerateRemastered rejects an older or unknown sidecar version with a clear error', async () => {
+    for (const v of [1, 2, 99]) {
+      const root = await mkroot(`remaster-verify-sidecar-v${v}-`);
+      await writeEntry(root, { key: DOC_KEY, contentType: 'text/html', body: '<p>clean</p>', v });
+      await assert.rejects(enumerateRemastered(root), new RegExp(`unsupported sidecar version ${v} .*sidecar v3 only`));
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a v3 sidecar without a dynamic array reads with an empty frontier', async () => {
+    const root = await mkroot('remaster-verify-sidecar-v3-');
+    await writeEntry(root, { key: DOC_KEY, contentType: 'text/html', body: '<p>clean</p>' });
+    const [entry] = await enumerateRemastered(root);
+    assert.deepEqual({ requisites: entry.requisites, dynamic: entry.dynamic }, { requisites: [], dynamic: [] });
+    await fsp.rm(root, { recursive: true, force: true });
   });
 });
 

@@ -43,7 +43,7 @@ import path from 'node:path';
 import { serveCacheRoot } from '@autocache/waybackify-serve/node';
 import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
-import { dynamicEntryError } from '@autocache/waybackify/cache.js';
+import { dynamicEntryError, SIDECAR_VERSION } from '@autocache/waybackify/cache.js';
 import { classifyContentType, refCaptureKey, WAYBACK_REF_RE } from '@autocache/waybackify/rewrite.js';
 import { createBrowserProbe, isBrowserAvailable } from './probe.js';
 
@@ -129,7 +129,11 @@ async function readdirOrEmpty(dir) {
   }
 }
 
-/** Walk `<root>/meta/<aa>/*.json` in a stable order. */
+/**
+ * Walk `<root>/meta/<aa>/*.json` in a stable order. The reader takes the
+ * current sidecar shape only (`v: 3`). An older or unknown version is an
+ * error, never a silent read: a verify over a stale tree must say so.
+ */
 export async function enumerateRemastered(root) {
   const metaDir = path.join(root, 'meta');
   const out = [];
@@ -138,6 +142,9 @@ export async function enumerateRemastered(root) {
       if (!file.endsWith('.json')) continue;
       const metaPath = path.join(metaDir, aa, file);
       const sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+      if (sidecar.v !== SIDECAR_VERSION) {
+        throw new Error(`remaster verify: unsupported sidecar version ${sidecar.v} at ${metaPath} (sidecar v${SIDECAR_VERSION} only)`);
+      }
       const hash = file.slice(0, -'.json'.length);
       out.push({
         key: sidecar.key,

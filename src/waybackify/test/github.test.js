@@ -76,10 +76,21 @@ describe('githubRepo: which URLs the probe applies to', () => {
     assert.equal(githubRepo('https://github.com/../old-owner/old-repo/issues/1'), null);
     assert.equal(githubRepo('https://github.com/old-owner/../old-repo/issues/1'), null);
     assert.equal(githubRepo(`${OLD}/../../login`), null);
-    assert.equal(githubRepo(`${OLD}/%2e%2e/%2E%2E/login`), null);
     assert.equal(githubRepo(`${OLD}/./issues/1`), null);
+    assert.equal(githubRepo(`${OLD}/x/../../old-repo/y`), null, 'a path that pops out and back in is not the text as written');
     assert.equal(githubRepo(`${OLD}/issues/1?next=../x`).rest, '/issues/1?next=../x', 'a dot in the query is not a segment');
     assert.equal(githubRepo('https://github.com/old-owner/old.repo.js/issues/1').repo, 'old.repo.js');
+  });
+
+  it('returns null for a dot segment the parser spells another way: percent-encoded, backslash, or tab', () => {
+    assert.equal(githubRepo(`${OLD}/%2e%2e/%2E%2E/login`), null);
+    assert.equal(githubRepo(`${OLD}/issues/%2e./x`), null);
+    assert.equal(githubRepo(`${OLD}/issues/.%2E/x`), null);
+    assert.equal(githubRepo(`${OLD}/issues\\..\\..\\login`), null, 'a backslash is a slash to the URL parser');
+    assert.equal(githubRepo(`${OLD}/issues\\x`), null);
+    assert.equal(githubRepo(`${OLD}/issues/.\t./.\t./login`), null, 'a tab vanishes under the URL parser');
+    assert.equal(githubRepo(`${OLD}/a b/c`), null, 'a character the parser must encode is not the text as written');
+    assert.equal(githubRepo(`${OLD}/caf%C3%A9/x`).rest, '/caf%C3%A9/x', 'an already-encoded path reads as written');
   });
 
   it('returns null for an owner or repo outside GitHub naming', () => {
@@ -248,6 +259,19 @@ describe('probeGithub: the repo-root probe', () => {
     await assert.rejects(() => probeGithub(DEEP, { fetch: down, sleep: noSleep }), /fetch failed/);
     const graftBusy = scriptedFetch({ [OLD]: { status: 301, location: NEW }, [GRAFTED]: { status: 429 } });
     await assert.rejects(() => probeGithub(DEEP, { fetch: graftBusy, sleep: noSleep }), /HTTP 429/);
+  });
+
+  it('a path that escapes the repo through a backslash never reaches the network', async () => {
+    const escape = `${OLD}/issues\\..\\..\\login`;
+    const fetch = scriptedFetch({
+      [OLD]: { status: 301, location: NEW },
+      'https://github.com/new-owner/login': { status: 200 }
+    });
+    assert.equal(await probeGithub(escape, { fetch, sleep: noSleep }), null);
+    assert.equal(fetch.calls.length, 0);
+    const tab = `${OLD}/a/b/.\t./.\t./login`;
+    assert.equal(await probeGithub(tab, { fetch, sleep: noSleep }), null);
+    assert.equal(fetch.calls.length, 0);
   });
 
   it('returns null without network for a URL that is not a deep GitHub link', async () => {

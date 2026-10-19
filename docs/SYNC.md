@@ -109,10 +109,17 @@ The source is the local body that the sidecar's `contentHash` names
 Pipe the batch straight into `s5cmd run` (`--endpoint-url` per target below):
 
 ```sh
+set -o pipefail
 waybackify bucket push \
   --root <cache-root> --bucket <bucket> --empty-file "$EMPTY" \
   | s5cmd --endpoint-url <endpoint> run
 ```
+
+`bucket push` skips a sidecar whose body file is missing, reports it in the
+summary, and exits 1 **after** it has written the rest of the batch to stdout.
+The pipe above still uploads that partial batch. Set `pipefail` so the shell
+reports the exit 1, then refetch the skipped entries and rerun: the push is
+idempotent, so the rerun completes the projection.
 
 Objects are **immutable** (the key is a content-pinning hash), so re-running is
 overwrite-safe and idempotent. Cap Fastly's per-bucket write rate with

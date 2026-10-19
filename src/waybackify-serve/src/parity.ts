@@ -31,6 +31,10 @@
  * capability the read-only Store lacks — enumerating a prefix — is the small
  * standalone `listPrefix` below, signed with the shared SigV4 signer; S3Store's
  * Store interface is left untouched.
+ *
+ * RESUMABLE. The engine hands checkpoint snapshots (passed layers,
+ * verified Layer 3 bodies) to `onCheckpoint`. A run that receives one as
+ * `resume` skips that work. See ./verify-checkpoint.ts for the rules.
  */
 
 import { createHash } from 'node:crypto';
@@ -41,6 +45,14 @@ import { S3Store } from './s3store.ts';
 import { serveBucket, serveCacheRoot, type RunningServer } from './node.ts';
 import { signRequest, type SigV4Credentials } from './sigv4.ts';
 import type { Capture, CaptureStatus } from './store.ts';
+import {
+  checkpointWriter,
+  positiveInteger,
+  snapshotProgress,
+  startProgress,
+  type BodyProgress,
+  type VerifyCheckpoint
+} from './verify-checkpoint.ts';
 
 /** Where the bucket lives + how to read it. Credentials arrive from env. */
 export interface ParityConfig {
@@ -73,6 +85,17 @@ export interface ParityOptions extends ParityConfig {
    * Tests pass 1ms timeouts to stay instant; prod uses the defaults.
    */
   bodyRetry?: BodyRetryTuning;
+  /**
+   * A checkpoint of an earlier run. The run skips its passed layers and
+   * verified bodies, and trusts that the bucket did not change since then.
+   */
+  resume?: VerifyCheckpoint;
+  /** Gets a snapshot after each layer and every `checkpointEvery` verified bodies. Calls are serialized. */
+  onCheckpoint?: (checkpoint: VerifyCheckpoint) => void | Promise<void>;
+  /** Layer 3 bodies between two checkpoint snapshots. Default 500. */
+  checkpointEvery?: number;
+  /** A passing run with a heal rate above this is `PASS-DEGRADED`. Default {@link DEGRADED_HEAL_RATE}. */
+  degradedRate?: number;
   /**
    * Injected diagnostic logger (default no-op; a library never constructs pino,
    * design §1). The throttled sweep progress and each Mismatch fold onto
@@ -124,6 +147,15 @@ function sanitizeBodyRetry(tuning: BodyRetryTuning | undefined): Required<BodyRe
 /** In-flight HEAD/GET cap for Layers 2–3 — shared by the pool default and the bin's hint. */
 export const DEFAULT_CONCURRENCY = 16;
 
+/** Layer 4 sample size per status class when no `sample` arrives. */
+const DEFAULT_SAMPLE = 3;
+
+/**
+ * The default heal-rate ceiling of a clean PASS. A run that heals 12 of
+ * 16,376 bodies is ordinary noise. A run that heals 1,300 is a store in trouble.
+ */
+export const DEGRADED_HEAL_RATE = 0.01;
+
 /** One root entry, as read from its sidecar — the unit Layers 1–4 verify. */
 export interface Entry {
   /** The capture key (`<timestamp>/<originalUrl>`) — the app's request key. */
@@ -162,13 +194,28 @@ export interface LayerReport {
   mismatches: Mismatch[];
   /** Layer-specific roll-up counts (e.g. cap/meta object counts). */
   counts?: Record<string, number>;
+  /** True when this verdict came from a resumed checkpoint, with no read in this run. */
+  fromCheckpoint?: boolean;
+  /** Layer 3: the bodies that `checked` counts as verified by an earlier run. */
+  resumed?: number;
+  /** Layer 3: the bodies that needed one or more re-fetches. */
+  healed?: number;
 }
+
+/** A clean PASS, a PASS with a heal rate over the ceiling, or a FAIL. */
+export type ParityVerdict = 'PASS' | 'PASS-DEGRADED' | 'FAIL';
 
 export interface ParityReport {
   target: { endpoint: string; bucket: string; region: string; prefix?: string };
   root: string;
   entries: number;
   pass: boolean;
+  /** `pass` with the heal rate added: the data is faithful, and the transport was or was not noisy. */
+  verdict: ParityVerdict;
+  /** Layer 3 bodies that needed one or more re-fetches. 0 when Layer 3 did not run. */
+  healed: number;
+  /** `healed` divided by the Layer 3 body count. 0 when Layer 3 did not run. */
+  healRate: number;
   layers: LayerReport[];
 }
 
@@ -196,6 +243,13 @@ export class ParityTaskError extends Error {
 export function normalizeContentType(contentType: string): string {
   return contentType || 'application/octet-stream';
 }
+
+/**
+ * The one sidecar schema the verifier reads. An older sidecar fails loud at
+ * enumeration, before any bucket read, because its fields do not describe the
+ * current body layout. Rebuild the root with `cache add` or `cache fill`.
+ */
+const SIDECAR_VERSION = 3;
 
 /** The sidecar fields this verifier reads (the archive of record). */
 interface Sidecar {
@@ -225,14 +279,14 @@ export async function enumerateRoot(root: string): Promise<Entry[]> {
   for (const aa of await readdirOrEmpty(metaDir)) {
     for (const file of await readdirOrEmpty(`${metaDir}/${aa}`)) {
       if (!file.endsWith('.json')) continue;
-      const meta = `${metaDir}/${aa}/${file}`;
-      const parsed: unknown = JSON.parse(await fsp.readFile(meta, 'utf8'));
+      const metaFile = `${metaDir}/${aa}/${file}`;
+      const parsed: unknown = JSON.parse(await fsp.readFile(metaFile, 'utf8'));
       if (!isSidecarObject(parsed)) {
-        throw new Error(`parity: malformed sidecar at ${meta} (not a JSON object)`);
+        throw new Error(`parity: malformed sidecar at ${metaFile} (not a JSON object)`);
       }
       const sidecar = parsed as unknown as Sidecar;
       if (sidecar.v !== SIDECAR_VERSION) {
-        throw new Error(`parity: unsupported sidecar version ${sidecar.v} at ${meta}`);
+        throw new Error(`parity: unsupported sidecar version ${sidecar.v} at ${metaFile}`);
       }
       const capKey = await capturePath(sidecar.key);
       const metaKey = await metaPath(sidecar.key);
@@ -427,9 +481,15 @@ export async function checkMetadata(config: ParityConfig, entries: Entry[], opti
  * LAYER 3 — full body verification
  * ------------------------------------------------------------------------ */
 
-export async function checkBodies(config: ParityConfig, entries: Entry[], options: ParityOptions): Promise<LayerReport> {
+export async function checkBodies(
+  config: ParityConfig,
+  entries: Entry[],
+  options: ParityOptions,
+  progress: BodyProgress = { verified: new Set(), healed: new Set() }
+): Promise<LayerReport> {
   const store = new S3Store(config);
   const bodied = entries.filter(e => e.status === 'body');
+  const pending = bodied.filter(e => !progress.verified.has(e.capKey));
   const mismatches: Mismatch[] = [];
   const logger = options.logger ?? NOOP_PARITY_LOGGER;
   const retry = sanitizeBodyRetry(options.bodyRetry);
@@ -438,9 +498,25 @@ export async function checkBodies(config: ParityConfig, entries: Entry[], option
   // body read — see the ownership boundary documented there. This callback
   // deliberately adds no retry of its own: wrapping the WHOLE verify (including
   // store.get) in a retry loop is exactly the bug #500 removes.
-  await mapPool(bodied, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, logger, 'layer 3 (body verification)', entry => entry.capKey, entry => verifyBody(store, entry, mismatches, retry, logger));
+  await mapPool(pending, options.concurrency ?? DEFAULT_CONCURRENCY, options.progressEvery ?? 500, logger, 'layer 3 (body verification)', entry => entry.capKey, async entry => {
+    const outcome = await verifyBody(store, entry, mismatches, retry, logger);
+    if (outcome.attempts > 1) progress.healed.add(entry.capKey);
+    if (outcome.verified) {
+      progress.verified.add(entry.capKey);
+      progress.onVerified?.();
+    }
+  });
 
-  return { layer: 3, name: 'body verification (GET every status:body)', pass: mismatches.length === 0, checked: bodied.length, mismatches };
+  const healed = bodied.filter(e => progress.healed.has(e.capKey)).length;
+  return {
+    layer: 3,
+    name: 'body verification (GET every status:body)',
+    pass: mismatches.length === 0,
+    checked: bodied.length,
+    mismatches,
+    resumed: bodied.length - pending.length,
+    healed
+  };
 }
 
 /**
@@ -516,31 +592,33 @@ function isRetryableBodyError(error: unknown): boolean {
  * run.
  *
  * Every verify OUTCOME — miss, bodiless, hash mismatch — RETURNS as Mismatch
- * data, never throws.
+ * data, never throws. The return value states if the body verified, and how
+ * many GETs it took (heal accounting).
  */
-async function verifyBody(store: S3Store, entry: Entry, mismatches: Mismatch[], retry: Required<BodyRetryTuning>, logger: ParityLogger): Promise<void> {
+async function verifyBody(store: S3Store, entry: Entry, mismatches: Mismatch[], retry: Required<BodyRetryTuning>, logger: ParityLogger): Promise<{ verified: boolean; attempts: number }> {
   const { attempts, minTimeout, maxTimeout } = retry;
   for (let attempt = 1; ; attempt += 1) {
     // PRE-HANDOFF — dispatcher-owned. A throw here propagates (never app-retried).
     const capture = await store.get(entry.key);
     if (capture === null) {
       mismatches.push({ key: entry.capKey, field: 'presence', expected: 'present', actual: 'missing (404)' });
-      return;
+      return { verified: false, attempts: attempt };
     }
     if (!('body' in capture)) {
       // The object's x-amz-meta-status disagrees with the sidecar — it answered
       // bodiless where the root says `body`. That's a metadata defect, surfaced
       // here (Layer 2 catches it too); either way, there are no bytes to hash.
       mismatches.push({ key: entry.capKey, field: 'body', expected: 'body bytes', actual: `bodiless (${capture.status ?? 'body'})` });
-      return;
+      return { verified: false, attempts: attempt };
     }
     try {
       // POST-HANDOFF — app-owned. ONLY this body read is retryable.
       const actual = await sriOf(capture.body);
       if (actual !== entry.contentHash) {
         mismatches.push({ key: entry.capKey, field: 'contentHash', expected: entry.contentHash ?? '(none)', actual });
+        return { verified: false, attempts: attempt };
       }
-      return;
+      return { verified: true, attempts: attempt };
     } catch (error) {
       if (!isRetryableBodyError(error) || attempt >= attempts) throw error;
       logger.warn(
@@ -574,7 +652,7 @@ async function sriOf(body: Capture['body']): Promise<string> {
  * ------------------------------------------------------------------------ */
 
 export async function checkServing(config: ParityConfig, entries: Entry[], options: ParityOptions): Promise<LayerReport> {
-  const sample = options.sample ?? 3;
+  const sample = options.sample ?? DEFAULT_SAMPLE;
   const sampled = sampleKeys(entries, sample);
 
   const rootServer = await serveCacheRoot({ root: config.root });
@@ -690,7 +768,7 @@ function closeServer(running: RunningServer): Promise<void> {
  * Orchestration
  * ------------------------------------------------------------------------ */
 
-const LAYER_RUNNERS: Record<number, (config: ParityConfig, entries: Entry[], options: ParityOptions) => Promise<LayerReport>> = {
+const LAYER_RUNNERS: Record<number, (config: ParityConfig, entries: Entry[], options: ParityOptions, bodies: BodyProgress) => Promise<LayerReport>> = {
   1: (config, entries) => checkCounts(config, entries),
   2: checkMetadata,
   3: checkBodies,
@@ -699,20 +777,47 @@ const LAYER_RUNNERS: Record<number, (config: ParityConfig, entries: Entry[], opt
 
 /**
  * Run the requested parity layers against one target, returning the full
- * report. The tool NEVER writes files — the caller owns persistence.
+ * report. The engine never writes files. It hands checkpoint snapshots to
+ * `onCheckpoint`, and the caller stores them.
  */
 export async function runParityCheck(options: ParityOptions): Promise<ParityReport> {
   const logger = options.logger ?? NOOP_PARITY_LOGGER;
   const layers = (options.layers ?? [1, 2, 3, 4]).slice().sort((a, b) => a - b);
   const entries = await enumerateRoot(options.root);
+  const progress = startProgress(options, entries, options.sample ?? DEFAULT_SAMPLE, logger);
+  const writer = checkpointWriter(options.onCheckpoint, () => snapshotProgress(progress), logger);
+  const every = positiveInteger(options.checkpointEvery, 500);
+  let sinceSave = 0;
+  const bodies: BodyProgress = {
+    verified: progress.verified,
+    healed: progress.healed,
+    onVerified: () => {
+      sinceSave += 1;
+      if (sinceSave < every) return;
+      sinceSave = 0;
+      writer.save();
+    }
+  };
 
   const reports: LayerReport[] = [];
   for (const layer of layers) {
     const run = LAYER_RUNNERS[layer];
     if (!run) throw new Error(`parity: unknown layer ${layer} (expected 1–4)`);
+    const carried = progress.passed.get(layer);
+    if (carried) {
+      // A layer that passed under the same signature and target is not read again.
+      reports.push({ ...carried, fromCheckpoint: true });
+      logger.info(
+        { evt: 'parity-layer', layer, name: carried.name, pass: true, checked: carried.checked, mismatches: 0, fromCheckpoint: true },
+        `layer ${layer} — ${carried.name}: PASS (from checkpoint)`
+      );
+      continue;
+    }
     try {
-      const report = await run(options, entries, options);
+      const report = await run(options, entries, options, bodies);
       reports.push(report);
+      if (report.pass) progress.passed.set(layer, report);
+      writer.save();
       // Diagnostic fold (§2/§5): the layer verdict at info, each Mismatch at
       // error (a real divergence). The report itself stays the DATA the CLI
       // renders — this is additive.
@@ -727,6 +832,10 @@ export async function runParityCheck(options: ParityOptions): Promise<ParityRepo
         );
       }
     } catch (error) {
+      // Store the progress that the failed layer earned before it gave out, so
+      // that a resume starts from it.
+      writer.save();
+      await writer.flush();
       // A layer gave out mid-run. The layers that already finished hold real
       // verdicts (they passed, or found honest mismatches) — attach them to the
       // thrown error so the bin can print "nothing failed verification, the
@@ -738,12 +847,23 @@ export async function runParityCheck(options: ParityOptions): Promise<ParityRepo
       throw error;
     }
   }
+  await writer.flush();
+
+  const pass = reports.every(r => r.pass);
+  const bodyReport = reports.find(r => r.layer === 3);
+  const healed = bodyReport?.healed ?? 0;
+  const healRate = bodyReport && bodyReport.checked > 0 ? healed / bodyReport.checked : 0;
+  const ceiling = options.degradedRate ?? DEGRADED_HEAL_RATE;
+  const verdict: ParityVerdict = !pass ? 'FAIL' : healRate > ceiling ? 'PASS-DEGRADED' : 'PASS';
 
   return {
     target: { endpoint: options.endpoint, bucket: options.bucket, region: options.region, prefix: options.prefix },
     root: options.root,
     entries: entries.length,
-    pass: reports.every(r => r.pass),
+    pass,
+    verdict,
+    healed,
+    healRate,
     layers: reports
   };
 }
@@ -759,7 +879,8 @@ export function formatReport(report: ParityReport, firstK = 10): string {
     ? `${report.target.bucket} (${report.target.endpoint}, prefix=${report.target.prefix})`
     : `${report.target.bucket} (${report.target.endpoint})`;
   lines.push(`parity: ${report.root} ↔ ${target}`);
-  lines.push(`  ${report.entries} entries · region=${report.target.region} · ${report.pass ? 'PASS' : 'FAIL'}`);
+  const heal = report.healed > 0 ? ` (healed ${report.healed}, rate ${(report.healRate * 100).toFixed(2)}%)` : '';
+  lines.push(`  ${report.entries} entries · region=${report.target.region} · ${report.verdict}${heal}`);
 
   for (const layer of report.layers) {
     lines.push(formatLayerVerdict(layer));
@@ -779,7 +900,11 @@ export function formatLayerVerdict(layer: LayerReport): string {
     ? ` [${Object.entries(layer.counts).map(([k, v]) => `${k}=${v}`).join(' ')}]`
     : '';
   const verdict = layer.pass ? 'PASS' : `FAIL (${layer.mismatches.length})`;
-  return `  layer ${layer.layer} — ${layer.name}: ${verdict} · ${layer.checked} checked${counts}`;
+  let notes = '';
+  if (layer.fromCheckpoint) notes += ' · from checkpoint';
+  else if (layer.resumed) notes += ` · ${layer.resumed} from checkpoint`;
+  if (layer.healed) notes += ` · healed ${layer.healed}`;
+  return `  layer ${layer.layer} — ${layer.name}: ${verdict} · ${layer.checked} checked${counts}${notes}`;
 }
 
 /** Retry-after / throttle statuses whose fix is fewer in-flight reads, not a re-run. */
@@ -861,19 +986,22 @@ async function mapPool<T>(
 ): Promise<void> {
   let index = 0;
   let done = 0;
+  let failure: ParityTaskError | undefined;
   const total = items.length;
 
+  // After the first failure, no runner takes a new item. The pool rejects
+  // only after every item in flight settles, so that no work outlives it.
   async function runner(): Promise<void> {
-    for (;;) {
+    while (!failure && index < total) {
       const i = index;
       index += 1;
-      if (i >= total) return;
       try {
         await worker(items[i]);
       } catch (error) {
         // Tag the failing entry with its layer + object key so a run that dies
         // mid-sweep names WHICH read gave out, not just `fetch failed`.
-        throw new ParityTaskError(`${label} · ${key(items[i])}`, error);
+        failure ??= new ParityTaskError(`${label} · ${key(items[i])}`, error);
+        return;
       }
       done += 1;
       // Structured throttled progress (was an already-formatted string sink, §2).
@@ -882,4 +1010,5 @@ async function mapPool<T>(
   }
 
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, total || 1)) }, runner));
+  if (failure) throw failure;
 }

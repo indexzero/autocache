@@ -17,6 +17,14 @@
 // serving stack. A test injects `deps.parity` (and skips the dispatcher) to
 // exercise the wiring offline.
 //
+// The run is resumable. Without --layer, the handler stores the
+// checkpoint of the engine at <root>/.verify/<target>.json
+// (waybackify-serve/verify-checkpoint) as the run works. A passing run removes
+// it. A later --resume run hands it back to the engine, which then skips the
+// layers that passed and the Layer 3 bodies that verified. A default run
+// removes an old checkpoint before its first bucket read. An explicit --layer
+// run reads and writes no checkpoint.
+//
 // Full population runbook (creds, verification): docs/SYNC.md.
 
 import { EXIT } from '../cli.js';
@@ -62,6 +70,8 @@ export function bucketVerifyHandler(deps = {}) {
     const layers = parseLayers(flags.layer, fail);
     const sample = parseCount(flags.sample, '--sample', fail);
     const currentConcurrency = parseCount(flags.concurrency, '--concurrency', fail);
+    const resume = Boolean(flags.resume);
+    if (resume && layers) fail('--resume cannot be combined with --layer (an explicit --layer runs exactly those layers, with no checkpoint)');
 
     const accessKeyId = env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
@@ -86,6 +96,33 @@ export function bucketVerifyHandler(deps = {}) {
       setGlobalDispatcher(createRetryAgent());
     }
 
+    // The checkpoint of a run over all layers. An explicit --layer run has none.
+    let checkpointFile;
+    let checkpoints;
+    let prior;
+    if (!layers) {
+      checkpoints = deps.checkpoint ?? (await import('@autocache/waybackify-serve/verify-checkpoint'));
+      checkpointFile = checkpoints.checkpointPath(flags.root, { endpoint: flags.endpoint, bucket: flags.bucket, prefix: flags.prefix });
+      if (resume) {
+        try {
+          prior = await checkpoints.readCheckpoint(checkpointFile);
+        } catch (err) {
+          fail(err.message);
+        }
+        if (prior) logger.info({ evt: 'verify-checkpoint-read', path: checkpointFile }, `resuming from ${checkpointFile}`);
+        else logger.warn({ evt: 'verify-checkpoint-absent', path: checkpointFile }, `no checkpoint at ${checkpointFile}: every layer runs in full`);
+      } else {
+        // A default run establishes its own progress. Remove an old checkpoint
+        // before the first bucket read. If this run stops early, a later
+        // --resume then cannot trust verdicts that this run did not establish.
+        await checkpoints.removeCheckpoint(checkpointFile);
+      }
+    }
+
+    // A failed run keeps its checkpoint. Name the file and the remedy.
+    const logKept = () =>
+      logger.info({ evt: 'verify-checkpoint-kept', path: checkpointFile }, `progress kept at ${checkpointFile}: re-run with --resume to continue`);
+
     let report;
     try {
       report = await runParityCheck({
@@ -103,7 +140,9 @@ export function bucketVerifyHandler(deps = {}) {
         // stays the report only. --progress-every governs parity's Layer 2/3
         // throttle too (§6), overriding its built-in default of 500 (0 = off).
         logger,
-        progressEvery
+        progressEvery,
+        resume: prior,
+        onCheckpoint: checkpointFile ? checkpoint => checkpoints.writeCheckpoint(checkpointFile, checkpoint) : undefined
       });
     } catch (err) {
       // Layers that finished before the run gave out carry real verdicts —
@@ -111,6 +150,7 @@ export function bucketVerifyHandler(deps = {}) {
       // layer N" is legible before the one-line diagnosis.
       const completed = Array.isArray(err?.completedLayers) ? err.completedLayers : [];
       for (const layer of completed) logger.info({ evt: 'layer-verdict', layer: layer?.layer }, formatLayerVerdict(layer));
+      if (checkpointFile) logKept();
       // Then ONE diagnostic line as the thrown message; run() prints it to stderr.
       const diagnosed = new Error(`waybackify bucket verify: ${diagnoseFailure(err, concurrency)}`);
       diagnosed.exitCode = EXIT.DOMAIN;
@@ -124,7 +164,11 @@ export function bucketVerifyHandler(deps = {}) {
       await writeFile(flags.out, `${rendered}\n`);
     }
 
+    // A passing run leaves nothing to resume.
+    if (checkpointFile && report.pass) await checkpoints.removeCheckpoint(checkpointFile);
+
     if (!report.pass) {
+      if (checkpointFile) logKept();
       // A bucket that diverges from the root is a domain failure (exit 1).
       const e = new Error(`waybackify bucket verify: ${flags.bucket} is not a faithful projection of ${flags.root}`);
       e.exitCode = EXIT.DOMAIN;

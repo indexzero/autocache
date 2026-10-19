@@ -85,6 +85,12 @@
         "types": "./dist/esm/retry.d.ts",
         "default": "./dist/esm/retry.js"
       }
+    },
+    "./verify-checkpoint": {
+      "import": {
+        "types": "./dist/esm/verify-checkpoint.d.ts",
+        "default": "./dist/esm/verify-checkpoint.js"
+      }
     }
   },
   "scripts": {
@@ -116,7 +122,8 @@
       "./cloudflare": "./src/cloudflare.ts",
       "./fastly": "./src/fastly.ts",
       "./parity": "./src/parity.ts",
-      "./retry": "./src/retry.ts"
+      "./retry": "./src/retry.ts",
+      "./verify-checkpoint": "./src/verify-checkpoint.ts"
     }
   },
   "author": "Charlie Robbins <npm@charlie.dev>",

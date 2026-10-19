@@ -397,14 +397,17 @@ export async function fsck(root, options = {}) {
   //                        .refetch/.
   //   remaster.build.json  `remaster build`'s build record (remaster.js
   //                        BUILD_NAME) at a remastered root.
+  //   .verify/             `bucket verify`'s checkpoint, one file per bucket
+  //                        target (waybackify-serve verify-checkpoint.ts),
+  //                        so that an interrupted verification can resume.
   // fsck must not flag its own sibling commands' state as foreign — else
-  // `cache fill`/`cache crawl`/`remaster build` then `cache verify` on that
+  // `cache fill`/`cache crawl`/`remaster build`/`bucket verify` then `cache verify` on that
   // root would report unclean forever (a non-reapable advisory). (Filenames are
   // a deliberate local copy, per this file's layout-knowledge note.)
   // trash/ is fsck's own quarantine (QUARANTINE, NOT DELETION above). It is
   // part of the root contract, never scanned as live content, and never
   // projected onto a bucket: the sync walks meta/ only.
-  const allowed = new Set(['cap', 'meta', 'tmp', TRASH_DIR, '.refetch', '.crawl', 'remaster.build.json']);
+  const allowed = new Set(['cap', 'meta', 'tmp', TRASH_DIR, '.refetch', '.crawl', '.verify', 'remaster.build.json']);
   for (const ent of await readdirSafe(root)) {
     if (!allowed.has(ent.name)) {
       findings.foreignRoot.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, ent.name) });

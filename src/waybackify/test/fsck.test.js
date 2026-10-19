@@ -697,6 +697,20 @@ describe('fsck — root contract (foreign entries)', () => {
     assert.equal(unresolvedFindings(report), 0, 'a crawl-populated root verifies clean');
   });
 
+  it('does NOT flag .verify/ (the sanctioned checkpoint of `bucket verify`)', async () => {
+    // `bucket verify` writes <root>/.verify/<target>.json so that an
+    // interrupted run can resume. `cache verify` must treat that directory as
+    // a sibling. If it does not, verify then fsck on one root reports unclean.
+    const root = await mkroot();
+    await commitBody(root, '2011/http://x.example/');
+    await fsp.mkdir(path.join(root, '.verify'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.verify', 'acct-bucket.0123456789ab.json'), '{}');
+
+    const report = await fsck(root);
+    assert.equal(report.findings.foreignRoot.length, 0, '.verify/ is not foreign');
+    assert.equal(unresolvedFindings(report), 0, 'a verified root stays clean');
+  });
+
   it('does NOT flag remaster.build.json — it is `remaster build`\'s sanctioned build record', async () => {
     // Regression: `remaster build` writes remaster.build.json at the remastered
     // root; `remaster verify` on that root must not report it foreign (exit 1).

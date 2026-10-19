@@ -11,7 +11,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commitEntry, entryPaths } from '../cache.js';
+import { bodyFile, commitEntry, entryPaths } from '../cache.js';
 import { fsck, totalFindings, unresolvedFindings, CATEGORIES } from '../fsck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -21,10 +21,10 @@ const WRAPPER = fs.readFileSync(path.join(HERE, 'fixtures/interstitial/wrapper-s
 const mkroot = () => fsp.mkdtemp(path.join(os.tmpdir(), 'waybackify-fsck-'));
 const bytesOf = s => new TextEncoder().encode(s);
 
-/** Commit a bodied entry and hand back its resolved paths. */
+/** Commit a bodied entry and hand back its resolved paths (body by contentHash). */
 async function commitBody(root, key, body = `body-for-${key}`) {
-  await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytesOf(body) });
-  return entryPaths(root, key);
+  const sidecar = await commitEntry(root, { key, status: 'body', contentType: 'text/html', body: bytesOf(body) });
+  return { ...(await entryPaths(root, key)), body: bodyFile(root, sidecar.contentHash) };
 }
 
 /** Every finding category empty except the named ones. */
@@ -52,6 +52,24 @@ describe('fsck — clean root', () => {
     assert.equal(report.counts.sidecars, 3);
     assert.equal(report.counts.bodies, 2);
     assert.equal(report.counts.capFiles, 2);
+  });
+
+  it('a body shared by two captures is one cap/ file, referenced, never an orphan', async () => {
+    const root = await mkroot();
+    const a = await commitBody(root, '20081013100657/http://github.com/s.css', 'body{}');
+    const b = await commitBody(root, '20081024183240/http://github.com/s.css', 'body{}');
+    assert.equal(a.body, b.body, 'one digest-named file');
+
+    const report = await fsck(root);
+    only(report);
+    assert.equal(report.counts.sidecars, 2);
+    assert.equal(report.counts.bodies, 2);
+    assert.equal(report.counts.capFiles, 1);
+
+    // Dropping one sidecar leaves the body referenced by the other.
+    await fsp.unlink(a.meta);
+    only(await fsck(root, { fix: true }));
+    assert.ok(fs.existsSync(b.body), 'a body that a sidecar still names is never reaped');
   });
 
   it('an empty / never-populated root is clean, not an error', async () => {
@@ -100,7 +118,43 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     only(await fsck(root), 'missingBody');
   });
 
-  it('flags a sidecar whose schema version is outside the supported set', async () => {
+  it('--fix keeps the body when its contentHash rots to another valid SRI (evidence, not an orphan)', async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    // Change one character inside the digest: the result is still a valid SRI.
+    const rotted = `sha256-${sidecar.contentHash[7] === 'A' ? 'B' : 'A'}${sidecar.contentHash.slice(8)}`;
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentHash: rotted }));
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'missingBody');
+    assert.equal(report.findings.missingBody[0].contentHash, rotted, 'the rotted digest is reported');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.ok(fs.existsSync(body), 'the true body is kept for investigation');
+  });
+
+  it('--fix keeps the body when its contentHash rots to a value that is not an SRI', async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentHash: 'sha256-unverified' }));
+
+    const report = await fsck(root, { fix: true });
+    only(report, 'missingBody');
+    assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] });
+    assert.ok(fs.existsSync(body), 'the true body is kept for investigation');
+  });
+
+  it("detects status 'body' whose contentHash is not a sha256 SRI (the body cannot be located)", async () => {
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
+    const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
+    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, contentHash: 'sha256-unverified' }));
+    await fsp.unlink(body);
+
+    const report = await fsck(root);
+    only(report, 'missingBody');
+    assert.equal(report.findings.missingBody[0].contentHash, 'sha256-unverified');
+  });
+
+  it('flags a sidecar whose schema version is not the current version', async () => {
     const { meta } = await commitBody(root, '2011/http://x.example/');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
     await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v: 99 }));
@@ -110,18 +164,25 @@ describe('fsck — corruption (report-only, never auto-fixed)', () => {
     assert.equal(report.findings.schemaVersion[0].v, 99);
   });
 
-  it('a legacy v1 sidecar is SUPPORTED — no schemaVersion finding', async () => {
-    const { meta } = await commitBody(root, '2011/http://legacy.example/');
+  it('flags a v1 or v2 sidecar: only the current version is supported (A6)', async () => {
+    const { meta } = await commitBody(root, '2011/http://old.example/');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
-    await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v: 1 })); // as the v1 writer left it
-    only(await fsck(root)); // clean: v1 is still readable, not a migration flag
+    for (const v of [1, 2]) {
+      await fsp.writeFile(meta, JSON.stringify({ ...sidecar, v }));
+      const report = await fsck(root);
+      only(report, 'schemaVersion');
+      assert.equal(report.findings.schemaVersion[0].v, v);
+    }
   });
 
   it('reports an unparseable sidecar as malformed, without throwing', async () => {
-    const { meta } = await commitBody(root, '2011/http://x.example/');
+    const { body, meta } = await commitBody(root, '2011/http://x.example/');
     await fsp.writeFile(meta, '{ this is not json');
 
     only(await fsck(root), 'malformed');
+    // The unreadable sidecar can name any body, so --fix reaps no cap/ file.
+    only(await fsck(root, { fix: true }), 'malformed');
+    assert.ok(fs.existsSync(body), 'the body of an unreadable sidecar is evidence, never reaped');
   });
 
   it('--fix REFUSES to touch corruption (leaves the cap file and finding intact)', async () => {
@@ -193,25 +254,29 @@ describe('fsck — interstitial-as-body (#363, report-only)', () => {
   // cap/ bytes in and re-pinning contentHash so the ONLY finding is the new
   // category — never a hashMismatch.
   async function plantInterstitial(root, key, body) {
-    const { body: capPath, meta } = await commitBody(root, key, '<html><body>benign at commit time</body></html>');
-    await fsp.writeFile(capPath, body);
+    const { body: benign, meta } = await commitBody(root, key, '<html><body>benign at commit time</body></html>');
     const sidecar = JSON.parse(await fsp.readFile(meta, 'utf8'));
     sidecar.contentHash = `sha256-${crypto.createHash('sha256').update(body).digest('base64')}`;
     sidecar.contentLength = Buffer.byteLength(body);
+    // Bodies are content-addressed: the swapped bytes live at their own digest.
+    const capPath = bodyFile(root, sidecar.contentHash);
+    await fsp.mkdir(path.dirname(capPath), { recursive: true });
+    await fsp.writeFile(capPath, body);
+    await fsp.unlink(benign);
     await fsp.writeFile(meta, JSON.stringify(sidecar));
     return { capPath, meta };
   }
 
   it('reports a status:body wrapper stub, with its signature, and never reaps it', async () => {
     const root = await mkroot();
-    await plantInterstitial(root, '2011/http://x.example/', WRAPPER);
+    const { capPath } = await plantInterstitial(root, '2011/http://x.example/', WRAPPER);
 
     const report = await fsck(root, { fix: true });
     only(report, 'interstitialAsBody');
     assert.equal(report.findings.interstitialAsBody[0].signature, 'wrapper-stub');
     assert.deepEqual(report.reaped, { orphanCap: [], staleTmp: [] }, 'remediation is #364, not fsck');
     assert.equal(unresolvedFindings(report), 1);
-    assert.ok(fs.existsSync((await entryPaths(root, '2011/http://x.example/')).body), 'the body is left in place');
+    assert.ok(fs.existsSync(capPath), 'the body is left in place');
   });
 
   it('a clean corpus of real bodies stays clean (no false interstitial findings)', async () => {
@@ -288,14 +353,14 @@ describe('fsck — incomplete requisite closure (store-relative, report-only)', 
 
   /** Commit a body doc that names `children` as its page requisites. */
   async function commitDocWithRequisites(key, children) {
-    await commitEntry(root, {
+    const sidecar = await commitEntry(root, {
       key,
       status: 'body',
       contentType: 'text/html',
       requisites: children,
       body: new TextEncoder().encode(`doc-for-${key}`)
     });
-    return entryPaths(root, key);
+    return { ...(await entryPaths(root, key)), body: bodyFile(root, sidecar.contentHash) };
   }
 
   it('flags a body doc whose requisite child sidecar is absent from the store', async () => {
@@ -392,8 +457,8 @@ describe('fsck — committed corpus fixture', () => {
     );
     assert.deepEqual(
       report.findings.orphanCap.map(f => f.hash),
-      ['d325db355e2cab506a0005ff77da83a07099ceaa5521e96985c67a726db70032'],
-      'the synthetic /orphan cap/ file carries no sidecar (README-documented)'
+      ['1258fb5b5b6c0365c1ddf64a4937bed1e4500efbb7fbc83e5bc7abc73e2d2653'],
+      'the synthetic /orphan cap/ file is named by no sidecar contentHash (README-documented)'
     );
   });
 });

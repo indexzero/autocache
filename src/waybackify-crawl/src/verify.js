@@ -41,6 +41,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { serveCacheRoot } from '@autocache/waybackify-serve/node';
+import { bodyPath } from '@autocache/waybackify/key.js';
 import { BUILD_NAME, remaster } from '@autocache/waybackify/remaster.js';
 import { isUnmirrorable } from '@autocache/waybackify/beacons.js';
 import { dynamicEntryError, SIDECAR_VERSION } from '@autocache/waybackify/cache.js';
@@ -158,12 +159,36 @@ export async function enumerateRemastered(root) {
         contentType: sidecar.contentType,
         contentHash: sidecar.contentHash,
         contentLength: sidecar.contentLength,
-        capPath: path.join(root, 'cap', aa, hash),
+        capPath: bodyFileOf(root, sidecar),
         metaPath
       });
     }
   }
   return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
+ * The content-addressed body file a sidecar names (cap/<dd>/<digest> from its
+ * contentHash), or null when the sidecar names no usable digest.
+ */
+function bodyFileOf(root, sidecar) {
+  if (sidecar.status !== 'body') return null;
+  try {
+    return path.join(root, bodyPath(sidecar.contentHash));
+  } catch {
+    return null;
+  }
+}
+
+/** A remastered body's bytes, or null when the tree lacks them. */
+async function readBody(entry) {
+  if (entry.capPath === null) return null;
+  try {
+    return await fsp.readFile(entry.capPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 /** SRI `sha256-<base64>` over bytes — the form the sidecar + build record use. */
@@ -596,15 +621,10 @@ export async function scanEscapes(entries, { logger = NOOP_LOGGER, progressEvery
   let scanned = 0;
   for (const entry of entries) {
     if (entry.status !== 'body' || !isTextBearing(entry.contentType)) continue;
-    let bytes;
-    try {
-      bytes = await fsp.readFile(entry.capPath);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        findings.push({ tier: 'static', layer: 'escape', key: entry.key, kind: 'body-missing', detail: `no cap/ body for a status:body sidecar` });
-        continue;
-      }
-      throw error;
+    const bytes = await readBody(entry);
+    if (bytes === null) {
+      findings.push({ tier: 'static', layer: 'escape', key: entry.key, kind: 'body-missing', detail: `no cap/ body for a status:body sidecar` });
+      continue;
     }
     scanned++;
     // Silent-loop progress (design §6): the per-body scan had no hook.
@@ -696,15 +716,10 @@ export async function checkDeterminism(root, entries, options = {}) {
       findings.push({ tier: 'static', layer: 'build', key: entry.key, kind: 'build-orphan', detail: 'body present but absent from the build record' });
       continue;
     }
-    let bytes;
-    try {
-      bytes = await fsp.readFile(entry.capPath);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        findings.push({ tier: 'static', layer: 'build', key: entry.key, kind: 'body-missing', detail: 'build record lists a body the tree lacks' });
-        continue;
-      }
-      throw error;
+    const bytes = await readBody(entry);
+    if (bytes === null) {
+      findings.push({ tier: 'static', layer: 'build', key: entry.key, kind: 'body-missing', detail: 'build record lists a body the tree lacks' });
+      continue;
     }
     const got = sri(bytes);
     verified++;

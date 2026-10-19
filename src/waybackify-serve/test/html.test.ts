@@ -13,14 +13,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { stripWaybackChrome } from '../src/html.ts';
-import { captureHash } from '@autocache/waybackify/key.js';
+import { bodyPath, captureHash } from '@autocache/waybackify/key.js';
 
 const FIXTURE_ROOT = fileURLToPath(new URL('./fixtures/cache-root', import.meta.url));
 
 /** Read a capture body straight out of the committed fixture cache-root. */
 async function fixtureBody(key: string): Promise<string> {
   const hash = await captureHash(key);
-  return fsp.readFile(`${FIXTURE_ROOT}/cap/${hash.slice(0, 2)}/${hash}`, 'utf8');
+  const sidecar = JSON.parse(await fsp.readFile(`${FIXTURE_ROOT}/meta/${hash.slice(0, 2)}/${hash}.json`, 'utf8'));
+  return fsp.readFile(`${FIXTURE_ROOT}/${bodyPath(sidecar.contentHash)}`, 'utf8');
 }
 
 /**

@@ -8,10 +8,14 @@
  * contract this class implements, clause by clause:
  * docs/SERVE.md):
  *
- *   <root>/cap/<aa>/<hash>          body bytes, verbatim, no extension
+ *   <root>/cap/<dd>/<digest>        body bytes, verbatim, no extension
  *   <root>/meta/<aa>/<hash>.json    authoritative sidecar (canonical JSON)
  *
  *   hash = sha256hex(captureKey), aa = hash.slice(0, 2)
+ *   digest = the SHA-256 hex that sidecar.contentHash records, dd = digest[0:2]
+ *
+ * Bodies are content-addressed: captures with equal bytes share one cap/
+ * file, and each capture keeps its own sidecar (content-type, status).
  *
  * Load-bearing semantics, all from SERVE.md:
  *
@@ -44,26 +48,23 @@ import { Readable } from 'node:stream';
 // digest. The pinned digest of '20140403040000/http://example.com/' exists
 // in both packages' suites (and in the committed fixture root) precisely to
 // catch a consumer deriving its own variant.
-import { capturePath, metaPath } from '@autocache/waybackify/key.js';
+import { bodyPath, metaPath } from '@autocache/waybackify/key.js';
 import type { Capture, CaptureMeta, CaptureStatus, Store } from './store.ts';
 
 /**
- * The sidecar schema versions this reader accepts (CACHE.md). v2 (#363) added
- * the `interstitial` status; v3 added the optional `dynamic[]` array (browser-
- * discovered requisites). Each is a backward-compatible superset, so v1 (the
- * existing corpus), v2, and v3 roots all read here. The serve reader does NOT
- * consume `dynamic` — it is a fetch/verify fact, not a serve fact — but must
- * accept v3 roots rather than fail loud on them. A version outside the set is
- * genuinely unknown and fails loud — never a silent miss.
+ * The one sidecar schema version this reader accepts. It equals cache.js
+ * SIDECAR_VERSION. Any other version fails loud, never a silent miss.
  */
-const SUPPORTED_SIDECAR_VERSIONS = new Set([1, 2, 3]);
+const SIDECAR_VERSION = 3;
 
-/** The slice of a v1 sidecar this store consumes. */
+/** The slice of a sidecar this store consumes. */
 interface Sidecar {
   v: number;
   key: string;
   contentType: string;
   status: CaptureStatus;
+  /** Present iff status === 'body'. SRI `sha256-<base64>`; locates the body. */
+  contentHash?: string;
   /** Present iff status === 'body'. */
   contentLength?: number;
 }
@@ -75,17 +76,12 @@ export class FsStore implements Store {
     this.#root = root;
   }
 
-  /** meta/<aa>/<hash>.json and cap/<aa>/<hash> for a capture key. */
-  async #paths(key: string): Promise<{ meta: string; body: string }> {
-    // The `<aa>`-sharded object keys come from the shared key module (the one
-    // source of truth for the layout / bucket-key contract); this store joins
-    // them under its root with the same `/` separator the writer uses. These
-    // rootless keys are already `/`-joined — this is a local path, not an
-    // object key, so the `${root}/` prefix stays here and never in the key.
-    return {
-      meta: `${this.#root}/${await metaPath(key)}`,
-      body: `${this.#root}/${await capturePath(key)}`
-    };
+  /** meta/<aa>/<hash>.json for a capture key. */
+  async #metaFile(key: string): Promise<string> {
+    // The `<aa>`-sharded key comes from the shared key module, the one source
+    // of truth for the layout. This store joins it under its root with the
+    // `/` separator that the writer uses.
+    return `${this.#root}/${await metaPath(key)}`;
   }
 
   /**
@@ -94,7 +90,7 @@ export class FsStore implements Store {
    * that EXISTS propagates loudly (rot must not masquerade as a miss).
    */
   async #sidecar(key: string): Promise<Sidecar | null> {
-    const { meta } = await this.#paths(key);
+    const meta = await this.#metaFile(key);
     let raw: string;
     try {
       raw = await fsp.readFile(meta, 'utf8');
@@ -105,7 +101,7 @@ export class FsStore implements Store {
     const sidecar = JSON.parse(raw) as Sidecar;
     // Same authenticity checks the writer's own reader performs: the file at
     // this hash-derived path must claim this key and a known schema version.
-    if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
+    if (sidecar.v !== SIDECAR_VERSION) {
       throw new Error(`FsStore: unsupported sidecar version ${sidecar.v} at ${meta}`);
     }
     if (sidecar.key !== key) {
@@ -151,7 +147,9 @@ export class FsStore implements Store {
     // stream for a `redirect`, say) would be exactly the phantom body the
     // schema's status field exists to prevent.
     if (sidecar.status !== 'body') return meta;
-    const { body } = await this.#paths(key);
+    // The body lives at the digest its contentHash records. A contentHash
+    // that is not a sha256 SRI throws here: rot is loud, never a miss.
+    const body = `${this.#root}/${bodyPath(sidecar.contentHash as string)}`;
     // Stream, don't buffer: bodies can be large and captures are immutable
     // (a same-key rewrite replaces bytes with identical bytes, and an open
     // handle across a concurrent rename still reads the old inode coherently

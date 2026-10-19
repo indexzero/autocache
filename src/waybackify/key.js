@@ -36,13 +36,15 @@
  *                 layout serves every backend — Cloudflare R2, Fastly Object
  *                 Storage, AWS S3 — since all are S3-shaped.
  *
- *   local disk    (cache.js) body at cap/<aa>/<hash>, sidecar at
- *                 meta/<aa>/<hash>.json — byte-identical to the bucket object
- *                 keys, so sync is a rename-free copy. These two rootless
- *                 object keys are derived by capturePath()/metaPath() below —
- *                 the ONE source of truth for the `<aa>`-shard, shared by
- *                 cache.js, the FsStore, and the bucket sync (they ARE the
- *                 Object Storage object keys, verbatim).
+ *   local disk    (cache.js) sidecar at meta/<aa>/<hash>.json, the same
+ *                 key as the bucket sidecar object. The body is
+ *                 CONTENT-ADDRESSED: cap/<dd>/<digest>, where <digest> is the
+ *                 SHA-256 hex that the sidecar's SRI contentHash records and
+ *                 dd = digest.slice(0, 2) (bodyPath() below). Byte-identical
+ *                 captures under different keys share one local body file.
+ *                 The bucket sync copies that shared file to each capture's
+ *                 capturePath() object, because each bucket body object
+ *                 carries its own capture's content-type and status.
  */
 
 /**
@@ -70,14 +72,12 @@ export async function captureHash(key) {
 }
 
 /**
- * Derive the ROOTLESS body object key for a capture key: `cap/<aa>/<hash>`,
- * where <hash> is captureHash(key) and aa = hash.slice(0, 2). Always
- * `/`-joined — these are OBJECT KEYS (R2 / Object Storage / the local layout
- * verbatim), never OS paths. A local consumer joins this under its root with
- * `path.join`; `path.join` semantics (OS separators, `..` collapsing) must
- * never leak back into the returned key. The single source of truth for the
- * `<aa>`-sharded layout — cache.js#entryPaths and fsstore.ts#paths both
- * derive through here.
+ * Derive the ROOTLESS BUCKET body object key for a capture key:
+ * `cap/<aa>/<hash>`, where <hash> is captureHash(key) and aa =
+ * hash.slice(0, 2). Always `/`-joined — these are OBJECT KEYS (R2 / Object
+ * Storage), never OS paths. The remote stores, the bucket sync, and parity
+ * derive through here. A local cache root does NOT store bodies here: see
+ * bodyPath().
  * @param {string} key - verbatim captureKey (NEVER used as a path component)
  * @returns {Promise<string>} `cap/<aa>/<hash>`
  */
@@ -97,6 +97,22 @@ export async function capturePath(key) {
 export async function metaPath(key) {
   const hash = await captureHash(key);
   return `meta/${hash.slice(0, 2)}/${hash}.json`;
+}
+
+/**
+ * Derive the ROOTLESS LOCAL body key for a body: `cap/<dd>/<digest>`, where
+ * <digest> is the hex form of the SHA-256 digest that an SRI contentHash
+ * (`sha256-<base64>`, cache.js) records, and dd = digest.slice(0, 2). Equal
+ * bytes give one key, whatever the capture key. Throws on a value that is not
+ * a sha256 SRI digest.
+ * @param {string} contentHash - the sidecar's `sha256-<base64>` contentHash
+ * @returns {string} `cap/<dd>/<digest>`
+ */
+export function bodyPath(contentHash) {
+  const match = typeof contentHash === 'string' ? /^sha256-([A-Za-z0-9+/]{43}=)$/.exec(contentHash) : null;
+  if (match === null) throw new Error(`bodyPath: contentHash is not a sha256 SRI digest: ${JSON.stringify(contentHash)}`);
+  const digest = Array.from(atob(match[1]), c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  return `cap/${digest.slice(0, 2)}/${digest}`;
 }
 
 /**

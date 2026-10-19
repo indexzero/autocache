@@ -11,8 +11,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commitEntry } from '../cache.js';
-import { capturePath, metaPath } from '../key.js';
+import { commitEntry, readSidecar } from '../cache.js';
+import { bodyPath, capturePath, metaPath } from '../key.js';
 import { emitBucketBatch, emitLine, shellQuote } from '../bucket-batch.js';
 
 // The stdout/stderr + --dry-run behavior formerly smoke-tested through the
@@ -81,8 +81,8 @@ describe('emitBucketBatch', () => {
   it('emits deterministic, hash-sorted cp lines with native metadata', async () => {
     const root = await mkRoot();
     // Distinct hashes; commit in a NON-sorted order to prove the emitter sorts.
-    await commitEntry(root, { key: '2/z', status: 'body', contentType: 'image/jpeg', body: new TextEncoder().encode('jpg') });
-    await commitEntry(root, {
+    const z = await commitEntry(root, { key: '2/z', status: 'body', contentType: 'image/jpeg', body: new TextEncoder().encode('jpg') });
+    const a = await commitEntry(root, {
       key: '1/a',
       status: 'body',
       contentType: 'text/html; charset=utf-8',
@@ -96,13 +96,29 @@ describe('emitBucketBatch', () => {
     const zKey = await capturePath('2/z');
     const aKey = await capturePath('1/a');
     const expected = [
-      { key: zKey, line: `cp --content-type image/jpeg --metadata status=body ${path.join(root, zKey)} s3://mybucket/${zKey}` },
+      { key: zKey, line: `cp --content-type image/jpeg --metadata status=body ${path.join(root, bodyPath(z.contentHash))} s3://mybucket/${zKey}` },
       {
         key: aKey,
-        line: `cp --content-type 'text/html; charset=utf-8' --metadata status=body ${path.join(root, aKey)} s3://mybucket/${aKey}`
+        line: `cp --content-type 'text/html; charset=utf-8' --metadata status=body ${path.join(root, bodyPath(a.contentHash))} s3://mybucket/${aKey}`
       }
     ].sort((x, y) => (x.key < y.key ? -1 : 1));
     assert.deepEqual(lines, expected.map(e => e.line));
+  });
+
+  it('byte-identical captures share one local source and keep one bucket object each', async () => {
+    const root = await mkRoot();
+    const bytes = new TextEncoder().encode('PNG sprite');
+    const first = await commitEntry(root, { key: '20081013100657/http://github.com/sprite.png', status: 'body', contentType: 'image/png', body: bytes });
+    await commitEntry(root, { key: '20081024183240/http://github.com/sprite.png', status: 'body', contentType: 'image/x-png', body: bytes });
+
+    const { lines, summary } = await emitBucketBatch(root, { bucket: 'b' });
+    assert.deepEqual(summary, { total: 2, bodied: 2, bodiless: 0 });
+    const source = path.join(root, bodyPath(first.contentHash));
+    const expected = [
+      `cp --content-type image/png --metadata status=body ${source} s3://b/${await capturePath('20081013100657/http://github.com/sprite.png')}`,
+      `cp --content-type image/x-png --metadata status=body ${source} s3://b/${await capturePath('20081024183240/http://github.com/sprite.png')}`
+    ];
+    assert.deepEqual([...lines].sort(), expected.sort());
   });
 
   it('emits explicit --content-type application/octet-stream for a bodied entry whose contentType is ""', async () => {
@@ -153,10 +169,11 @@ describe('emitBucketBatch', () => {
     const key = '1/huge';
     const rel = await metaPath(key);
     await fsp.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
-    const sidecar = { contentType: `x/${'y'.repeat(1000)}`, fetchedAt: '2026-01-01T00:00:00Z', flag: null, key, requisites: [], status: 'body', v: 1 };
+    const contentHash = 'sha256-LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE=';
+    const sidecar = { contentHash, contentLength: 1, contentType: `x/${'y'.repeat(1000)}`, fetchedAt: '2026-01-01T00:00:00Z', flag: null, key, requisites: [], status: 'body', v: 3 };
     await fsp.writeFile(path.join(root, rel), JSON.stringify(sidecar));
     // Also drop a body so status:body has a source (guard fires before it matters).
-    const cap = await capturePath(key);
+    const cap = bodyPath(contentHash);
     await fsp.mkdir(path.dirname(path.join(root, cap)), { recursive: true });
     await fsp.writeFile(path.join(root, cap), 'x');
     await assert.rejects(emitBucketBatch(root, { bucket: 'b' }), /1000/);
@@ -197,7 +214,7 @@ describe('emitBucketBatch over the committed fixture', () => {
     const expected = [];
     for (const c of cases) {
       const objectKey = await capturePath(c.key);
-      const source = c.status === 'body' ? path.join(FIXTURE_ROOT, objectKey) : emptyFile;
+      const source = c.status === 'body' ? path.join(FIXTURE_ROOT, bodyPath((await readSidecar(FIXTURE_ROOT, c.key)).contentHash)) : emptyFile;
       const ct = c.ct || 'application/octet-stream';
       expected.push({ objectKey, line: `cp --content-type ${shellQuote(ct)} --metadata status=${c.status} ${source} s3://wayback/${objectKey}` });
     }

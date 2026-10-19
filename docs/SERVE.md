@@ -31,19 +31,22 @@ Given a capture key `key = ${timestamp}/${originalUrl}` (what
 body per (timestamp, url) however the replay framed it):
 
 ```js
-import { capturePath, metaPath } from 'spv/waybackify/key.js';
+import { bodyPath, metaPath } from '@autocache/waybackify/key.js';
 
-const meta = `${root}/${await metaPath(key)}`;    // <root>/meta/<aa>/<hash>.json
-const body = `${root}/${await capturePath(key)}`; // <root>/cap/<aa>/<hash>
+const meta = `${root}/${await metaPath(key)}`;             // <root>/meta/<aa>/<hash>.json
+const body = `${root}/${bodyPath(sidecar.contentHash)}`;   // <root>/cap/<dd>/<digest>
 ```
 
-`capturePath()`/`metaPath()` return **rootless, `/`-joined object keys**
-(`cap/<aa>/<hash>`, `meta/<aa>/<hash>.json`) — the shared source of truth for
-the `<aa>`-sharded layout, and the bucket object keys verbatim (see
-[CACHE.md §Bucket projection](./CACHE.md#bucket-projection)). A local consumer
-joins them under its root itself. Always derive through `key.js`
-(`capturePath`/`metaPath`/`captureHash`) — never hand-roll the
-digest or the shard. The pinned test digest
+The sidecar path is a function of the key. The body path is a function of
+the bytes: `bodyPath()` maps the sidecar's SRI `contentHash` to
+`cap/<dd>/<digest>`, the SHA-256 hex of the body. Captures with equal bytes
+(the same page chrome at two snapshot timestamps) share one body file.
+`metaPath()`/`bodyPath()` return **rootless, `/`-joined keys**. A local
+consumer joins them under its root itself. The bucket body object keys are
+per capture (`capturePath(key)` → `cap/<aa>/<hash>`, see
+[CACHE.md §Bucket projection](./CACHE.md#bucket-projection)). Always derive
+through `key.js` (`metaPath`/`bodyPath`/`capturePath`/`captureHash`). Never
+hand-roll the digest or the shard. The pinned test digest
 `sha256('20140403040000/http://example.com/') = 77c4b856ffc51a15b686125ca9ce901456eee045e9639b95fbcd8ae3970dd1ac`
 exists in BOTH packages' suites precisely to catch a consumer deriving its
 own variant. The raw `key` must never be used as a path component (2000+
@@ -64,7 +67,7 @@ head(key):
 
 get(key):
   head(key); null → null
-  status == "body" → open cap/<aa>/<hash> as a stream, return meta + body
+  status == "body" → open cap/<dd>/<digest> (from contentHash) as a stream, return meta + body
   otherwise        → return meta with NO body (see status table)
 ```
 
@@ -87,9 +90,9 @@ CACHE.md §Write / atomicity protocol):
 
 | on disk | meaning | consumer behavior |
 |---|---|---|
-| sidecar present, `cap/` present | complete bodied entry | serve it |
+| sidecar present, the `cap/` file its `contentHash` names present | complete bodied entry | serve it |
 | sidecar present (`status != "body"`), `cap/` absent | complete BODILESS entry | serve status-appropriately, no body |
-| sidecar absent, `cap/` present | **orphan** — crash between renames | absent: `null` / miss / do not sync |
+| no sidecar names a `cap/` file | **orphan** — crash between renames | absent: `null` / miss / do not sync |
 | sidecar absent, `cap/` absent | never cached | absent |
 
 ## Status discriminators
@@ -99,7 +102,7 @@ and `contentLength` exist **iff** `status == "body"`:
 
 | `status` | body file? | suggested serving |
 |---|---|---|
-| `body` | yes | stream `cap/<aa>/<hash>` with `sidecar.contentType` |
+| `body` | yes | stream `cap/<dd>/<digest>` (from `sidecar.contentHash`) with `sidecar.contentType` |
 | `empty` | no | the capture replayed 200 with zero bytes: serve 200, empty body |
 | `redirect` | no | the capture is an archived redirect (only recorded when the populating fetch didn't follow it); a server may 404 or proxy-redirect to the archive — its call, but it MUST NOT treat the entry as missing (that would trigger endless re-fetch attempts upstream) |
 | `error` | no | the archive permanently lacks this asset (replay 404/410 at population time): serve 404. Its existence is the signal "don't try to populate this again" |
@@ -107,8 +110,8 @@ and `contentLength` exist **iff** `status == "body"`:
 
 ## The orphan-body rule
 
-A `cap/` file with no sidecar is **ingest garbage** from a crash between the
-body rename and the sidecar rename. Rules:
+A `cap/` file that no sidecar's `contentHash` names is **ingest garbage** from
+a crash between the body rename and the sidecar rename. Rules:
 
 1. **Never serve it.** `head`/`get` consult only the sidecar, so an orphan is
    naturally invisible — keep it that way.
@@ -140,8 +143,10 @@ capture keys. Requisite closure is a **derived query, not a serving precondition
 
 ## Bucket sync
 
-The bucket object keys ARE this local layout, verbatim (`cap/<aa>/<hash>`,
-`meta/<aa>/<hash>.json`), so sync is a copy, not a mapping. Content-type rides
+The bucket sidecar keys ARE the local sidecar keys (`meta/<aa>/<hash>.json`).
+The bucket body objects are per capture (`cap/<aa>/<hash>`, `capturePath(key)`):
+the sync copies the shared local body `cap/<dd>/<digest>` to each capture's
+object, because each object carries that capture's own metadata. Content-type rides
 each `cap/` object's native `Content-Type` and status rides `x-amz-meta-status`
 (one hybrid-metadata projection for every S3-shaped backend — Cloudflare R2,
 Fastly Object Storage, AWS S3). The full projection + the operational runbook
@@ -160,7 +165,7 @@ Fastly Object Storage, AWS S3). The full projection + the operational runbook
 ([SRI spec §3.1](https://www.w3.org/TR/sri-1/#integrity-metadata-description)),
 recorded during the write. Consumers SHOULD verify it:
 
-- **on sync** (cheap, sequential): hash `cap/<aa>/<hash>` while uploading;
+- **on sync** (cheap, sequential): hash `cap/<dd>/<digest>` while uploading;
   abort the object on mismatch.
 - **on read** (optional — the server's latency call): a Node FsStore can hash the
   stream as it serves and log mismatches after the fact.
@@ -178,9 +183,9 @@ Safe by construction — this is the debate's composability constraint:
   [rename(2)](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html)).
 - A sidecar you can read is an entry you can serve; its cap/ file (if
   `status == "body"`) was published BEFORE it, in the same filesystem.
-- Same-key rewrites replace bytes with identical bytes (timestamp-pinned
-  content), so an open file handle across a concurrent rename still reads a
-  coherent body (the old inode).
+- A body rewrite replaces bytes with identical bytes (the file name is the
+  digest of its bytes), so an open file handle across a concurrent rename
+  still reads a coherent body (the old inode).
 - Never enumerate `tmp/`, never take locks, never cache negative results
   longer than your own request (an entry may complete at any moment).
 

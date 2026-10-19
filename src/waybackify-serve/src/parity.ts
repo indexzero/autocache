@@ -196,7 +196,7 @@ export function normalizeContentType(contentType: string): string {
   return contentType || 'application/octet-stream';
 }
 
-/** The v1 sidecar fields this verifier reads (the archive of record). */
+/** The sidecar fields this verifier reads (the archive of record). */
 interface Sidecar {
   v: number;
   key: string;

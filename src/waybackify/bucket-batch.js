@@ -20,7 +20,9 @@
 //   - status     = sidecar.status, as x-amz-meta-status (s5cmd `--metadata`
 //                  key=value → the object's user metadata; README pin in
 //                  SYNC.md). The known-bad ≠ miss discriminator.
-//   - <src>      = the local cap/<aa>/<hash> file for a bodied entry; for a
+//   - <src>      = the local content-addressed body file for a bodied entry
+//                  (cap/<dd>/<digest>, key.js#bodyPath of sidecar.contentHash.
+//                  Byte-identical captures share ONE local source). For a
 //                  bodiless entry (status empty/redirect/error/interstitial —
 //                  no local cap/ file exists) it is the caller's --empty-file:
 //                  one zero-byte
@@ -34,20 +36,20 @@
 // which go-shellquote implements.
 //
 // LIBRARY-FIRST: all logic lives here; the CLI's `bucket push` handler
-// (spv/waybackify-cli/src/commands/bucket-push.js) is a thin argv+stdout
+// (src/waybackify-cli/src/commands/bucket-push.js) is a thin argv+stdout
 // wrapper. Object-key derivation is reused from key.js
-// (capturePath/metaPath), sidecar reading + its schema-version guard from
+// (capturePath/metaPath/bodyPath), sidecar reading + its schema-version guard from
 // cache.js (readSidecar), and the CR/LF + ≤1000-byte metadata guard from
 // key.js (assertMetadataSafe) — imported, never duplicated.
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { assertMetadataSafe, capturePath, metaPath } from './key.js';
+import { assertMetadataSafe, bodyPath, capturePath, metaPath } from './key.js';
 import { readSidecar } from './cache.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { coerceEvery, emitProgress } from './progress.js';
 
-/** Statuses whose entry OWNS a local cap/<aa>/<hash> body file. */
+/** Statuses whose entry names a local cap/<dd>/<digest> body file. */
 const BODIED = new Set(['body']);
 /** Every legal sidecar.status (the serving discriminator — SERVE.md).
  *  `interstitial` (#363) is bodiless like empty/redirect/error — it ships as a
@@ -188,10 +190,13 @@ export async function emitBucketBatch(root, options = {}) {
       throw new Error(`emit-bucket-batch: sidecar for ${JSON.stringify(probe.key)} is misplaced — at ${rel}, belongs at ${canonical}`);
     }
 
-    const objectKey = await capturePath(probe.key); // cap/<aa>/<hash>
+    // The bucket object stays per capture (cap/<aa>/<hash>): it carries that
+    // capture's own content-type + status as native metadata, so serving is
+    // one GET. Only the LOCAL source is shared between equal bodies.
+    const objectKey = await capturePath(probe.key);
     let source;
     if (BODIED.has(sidecar.status)) {
-      source = path.join(root, objectKey);
+      source = path.join(root, bodyPath(sidecar.contentHash));
       bodied++;
     } else {
       if (emptyFile === null) {

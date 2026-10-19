@@ -8,8 +8,9 @@
 // with text-bearing bodies rewritten for standalone serving (rewrite.js):
 // chrome stripped, wayback references localized to the root-relative
 // `/web/<ts><flag>/<orig>` form. Everything an FsStore needs to serve —
-// `cap/<aa>/<hash>` + `meta/<aa>/<hash>.json` — comes out the far side, so a
-// remastered root drops straight under `waybackify-serve --root`.
+// `meta/<aa>/<hash>.json` + the content-addressed `cap/<dd>/<digest>` each
+// sidecar's contentHash names — comes out the far side, so a remastered root
+// drops straight under `waybackify-serve --root`.
 //
 // WHY A BUILD, NOT SERVE-TIME (issue #362): storage is cheap; serve-time
 // compute is the expensive, latency-adding, forever-verified path. The
@@ -33,7 +34,8 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { RULE_VERSION, classifyContentType, rewrite } from './rewrite.js';
-import { SUPPORTED_SIDECAR_VERSIONS } from './cache.js';
+import { SIDECAR_VERSION } from './cache.js';
+import { bodyPath } from './key.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { coerceEvery, emitProgress } from './progress.js';
 
@@ -147,10 +149,8 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
   const sidecars = [];
   for (const entry of found) {
     const sidecar = JSON.parse(await fsp.readFile(entry.metaPath, 'utf8'));
-    // Accept every sidecar version cache.js currently writes (v1 + v2 + v3
-    // today) — not a hard-pinned 1, which silently rejected the v2 sidecars
-    // cacheCapture has written since the schema bump.
-    if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
+    // Accept only the sidecar version cache.js writes.
+    if (sidecar.v !== SIDECAR_VERSION) {
       throw new Error(`remaster: unsupported sidecar version ${sidecar.v} at ${entry.metaPath}`);
     }
     if (typeof sidecar.key !== 'string') {
@@ -174,7 +174,7 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
 
     if (sidecar.status === 'body') {
       bodies++;
-      const inBody = path.join(hermeticRoot, 'cap', aa, hash);
+      const inBody = path.join(hermeticRoot, bodyPath(sidecar.contentHash));
       const inBytes = await fsp.readFile(inBody);
       inputHash = sri(inBytes);
 
@@ -193,7 +193,9 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
       }
 
       outputHash = sri(outBytes);
-      await writeFileMkdir(path.join(remasteredRoot, 'cap', aa, hash), outBytes);
+      // Content-addressed output: equal output bytes share one file, as in
+      // the hermetic root. A rewrite moves the body to its new digest.
+      await writeFileMkdir(path.join(remasteredRoot, bodyPath(outputHash)), outBytes);
 
       // A rewritten body changes its own hash + length; the carried sidecar
       // must tell the truth about the bytes it now sits beside (FsStore serves
@@ -227,7 +229,7 @@ export async function remaster(hermeticRoot, remasteredRoot, options = {}) {
 
   // ---- the content-addressed build record ----------------------------------
   // Placed at the remastered root, OUTSIDE cap/ and meta/: FsStore only ever
-  // reads cap/<aa>/<hash> and meta/<aa>/<hash>.json, so a root-level file is
+  // reads cap/<dd>/<digest> and meta/<aa>/<hash>.json, so a root-level file is
   // invisible to serving — it never collides with the capture namespace. It
   // is a build artifact (rule + engine version, per-entry input/output body
   // hashes) that remaster verify reads to prove a remastered tree is a current,

@@ -9,7 +9,8 @@
  * sidecar the bucket carries BOTH objects the sync uploads —
  *
  *   cap/<aa>/<hash>          native Content-Type + x-amz-meta-status; a `body`
- *                            entry carries its capture bytes, every bodiless
+ *                            entry carries its capture bytes (read from the
+ *                            local content-addressed body), every bodiless
  *                            status is a zero-byte object (status metadata only).
  *   meta/<aa>/<hash>.json    the sidecar JSON verbatim (DAG durability for GC).
  *
@@ -23,6 +24,7 @@
 import http from 'node:http';
 import fsp from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { bodyPath } from '@autocache/waybackify/key.js';
 
 /** A recorded bucket object: response headers + exact bytes (empty = bodiless). */
 export interface S3Object {
@@ -46,7 +48,7 @@ export async function projectFixtureToBucket(root: string, bucketPrefix = ''): P
       const meta = JSON.parse(rawSidecar.toString('utf8'));
 
       // cap/<aa>/<hash> — the SERVING object.
-      const body = meta.status === 'body' ? await fsp.readFile(`${root}/cap/${aa}/${hash}`) : Buffer.alloc(0);
+      const body = meta.status === 'body' ? await fsp.readFile(`${root}/${bodyPath(meta.contentHash)}`) : Buffer.alloc(0);
       const capHeaders: Record<string, string> = {
         'x-amz-meta-status': meta.status,
         'Content-Length': String(body.length)

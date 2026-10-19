@@ -80,10 +80,10 @@ references are rewritten.
 
 ## Carry-over rules
 
-- **Bodied text entry, rewritten** — new bytes at `cap/<aa>/<hash>` (the
-  filename is unchanged: it is content-addressed by capture *key*, not body
-  bytes); the sidecar's `contentHash` + `contentLength` are updated to
-  describe the new bytes.
+- **Bodied text entry, rewritten** — new bytes at `cap/<dd>/<digest>`, the
+  digest of the NEW bytes (bodies are content-addressed). The sidecar's
+  `contentHash` + `contentLength` are updated to describe the new bytes.
+  Captures whose output bytes are equal share one remastered body.
 - **Bodied entry, unchanged** (binary, or text with no satisfiable ref) —
   bytes and sidecar copied byte-identical.
 - **Bodiless entry** (`empty` / `redirect` / `error`, and any future status
@@ -95,7 +95,7 @@ references are rewritten.
 ## The build record
 
 Written at `<remastered-root>/remaster.build.json` — **outside** `cap/` and
-`meta/`. An FsStore only ever reads `cap/<aa>/<hash>` and
+`meta/`. An FsStore only ever reads `cap/<dd>/<digest>` and
 `meta/<aa>/<hash>.json`, so a root-level file is invisible to serving and never
 collides with the capture namespace. It is a build artifact:
 

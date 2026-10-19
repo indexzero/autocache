@@ -26,7 +26,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FsStore } from '../src/fsstore.ts';
-import { captureHash } from '@autocache/waybackify/key.js';
+import { dirname } from 'node:path';
+import { bodyPath as bodyPathOf, captureHash } from '@autocache/waybackify/key.js';
 import type { Capture } from '../src/store.ts';
 import { runStoreConformance, type Seed } from './store-conformance.ts';
 
@@ -47,7 +48,15 @@ async function makeRoot(): Promise<string> {
   return root;
 }
 
-/** Write layout files for one entry — sidecar and/or body, independently. */
+/** SRI `sha256-<base64>` of a body, the form the writer records in contentHash. */
+function sriOf(body: string): string {
+  return `sha256-${createHash('sha256').update(body).digest('base64')}`;
+}
+
+/**
+ * Write layout files for one entry — sidecar and/or body, independently. The
+ * body lands at its content-addressed path (the digest of its own bytes).
+ */
 async function writeEntry(
   root: string,
   key: string,
@@ -56,23 +65,23 @@ async function writeEntry(
   const hash = await captureHash(key);
   const aa = hash.slice(0, 2);
   const metaPath = `${root}/meta/${aa}/${hash}.json`;
-  const bodyPath = `${root}/cap/${aa}/${hash}`;
+  const bodyPath = `${root}/${bodyPathOf(sriOf(parts.body ?? ''))}`;
   if (parts.sidecar !== undefined) {
     await fsp.mkdir(`${root}/meta/${aa}`, { recursive: true });
     const raw = typeof parts.sidecar === 'string' ? parts.sidecar : JSON.stringify(parts.sidecar);
     await fsp.writeFile(metaPath, raw);
   }
   if (parts.body !== undefined) {
-    await fsp.mkdir(`${root}/cap/${aa}`, { recursive: true });
+    await fsp.mkdir(dirname(bodyPath), { recursive: true });
     await fsp.writeFile(bodyPath, parts.body);
   }
   return { metaPath, bodyPath };
 }
 
-/** A complete v1 bodied sidecar for KEY (canonical field set, CACHE.md). */
+/** A complete v3 bodied sidecar for KEY (canonical field set, CACHE.md). */
 function bodiedSidecar(body: string): Record<string, unknown> {
   return {
-    contentHash: 'sha256-unverified',
+    contentHash: sriOf(body),
     contentLength: body.length,
     contentType: 'text/html; charset=utf-8',
     fetchedAt: '2026-07-12T00:00:00.000Z',
@@ -80,7 +89,7 @@ function bodiedSidecar(body: string): Record<string, unknown> {
     key: KEY,
     requisites: [],
     status: 'body',
-    v: 1
+    v: 3
   };
 }
 
@@ -90,15 +99,14 @@ async function bodyText(capture: Capture): Promise<string> {
 
 /**
  * The population seam for the shared store-conformance suite: realize each
- * seed as the `waybackify cache` writer would on disk — a canonical v1 sidecar
+ * seed as the `waybackify cache` writer would on disk — a canonical v3 sidecar
  * (bodied entries carry a real SRI contentHash + byte contentLength; an orphan
  * is cap/ bytes with NO sidecar). This is the FsStore's one seam impl; the
  * cross-store parity assertions live in store-conformance.ts.
  */
 function sidecarFor(seed: Extract<Seed, { kind: 'entry' }>): Record<string, unknown> {
-  // `interstitial` (#363) is a v2 sidecar carrying its signature; every other
-  // status is written as a legacy v1 sidecar, which also exercises that a v1
-  // root still reads under the v2 reader.
+  // `interstitial` carries its signature. Every sidecar is v3, the one
+  // version readers accept.
   const isInterstitial = seed.status === 'interstitial';
   const base: Record<string, unknown> = {
     contentType: seed.contentType,
@@ -107,12 +115,12 @@ function sidecarFor(seed: Extract<Seed, { kind: 'entry' }>): Record<string, unkn
     key: seed.key,
     requisites: [],
     status: seed.status,
-    v: isInterstitial ? 2 : 1,
+    v: 3,
     ...(isInterstitial ? { signature: 'wrapper-stub' } : {})
   };
   if (seed.status !== 'body') return base;
   const bytes = new TextEncoder().encode(seed.body ?? '');
-  return { ...base, contentHash: `sha256-${createHash('sha256').update(bytes).digest('base64')}`, contentLength: bytes.length };
+  return { ...base, contentHash: sriOf(seed.body ?? ''), contentLength: bytes.length };
 }
 
 runStoreConformance({
@@ -194,6 +202,38 @@ describe('FsStore', () => {
     });
   });
 
+  describe('content-addressed bodies', () => {
+    it('two captures with equal bytes share one body file and keep their own metadata', async () => {
+      const root = await makeRoot();
+      const older = '20081013100657/http://github.com/sprite.png';
+      const newer = '20081024183240/http://github.com/sprite.png';
+      const a = await writeEntry(root, older, { sidecar: { ...bodiedSidecar('PNG'), key: older, contentType: 'image/png' }, body: 'PNG' });
+      const b = await writeEntry(root, newer, { sidecar: { ...bodiedSidecar('PNG'), key: newer, contentType: 'image/x-png' }, body: 'PNG' });
+      assert.equal(a.bodyPath, b.bodyPath, 'one digest-named file');
+      assert.equal((await fsp.readdir(`${root}/cap`, { recursive: true })).filter(f => f.includes('/')).length, 1);
+
+      const store = new FsStore(root);
+      assert.deepEqual(await store.head(older), { contentType: 'image/png', size: 3, status: 'body' });
+      assert.deepEqual(await store.head(newer), { contentType: 'image/x-png', size: 3, status: 'body' });
+      assert.equal(await bodyText((await store.get(older)) as Capture), 'PNG');
+      assert.equal(await bodyText((await store.get(newer)) as Capture), 'PNG');
+    });
+
+    it('get() locates the body by contentHash, never by the key hash', async () => {
+      const root = await makeRoot();
+      await writeEntry(root, KEY, { sidecar: bodiedSidecar('<html>x</html>'), body: '<html>x</html>' });
+      await fsp.mkdir(`${root}/cap/${KEY_HASH.slice(0, 2)}`, { recursive: true });
+      await fsp.writeFile(`${root}/cap/${KEY_HASH.slice(0, 2)}/${KEY_HASH}`, 'decoy under the key hash');
+      assert.equal(await bodyText((await new FsStore(root).get(KEY)) as Capture), '<html>x</html>');
+    });
+
+    it('get() on a bodied sidecar whose contentHash is not a sha256 SRI fails LOUDLY', async () => {
+      const root = await makeRoot();
+      await writeEntry(root, KEY, { sidecar: { ...bodiedSidecar('x'), contentHash: 'sha256-unverified' }, body: 'x' });
+      await assert.rejects(new FsStore(root).get(KEY), /contentHash/);
+    });
+  });
+
   describe('sidecar-presence semantics', () => {
     it('answers null for a never-cached key', async () => {
       const root = await makeRoot();
@@ -225,7 +265,7 @@ describe('FsStore', () => {
             key: KEY,
             requisites: [],
             status,
-            v: 1
+            v: 3
           }
           // No body part: bodiless entries own no cap/ file by contract.
         });
@@ -243,7 +283,7 @@ describe('FsStore', () => {
   describe('rot is loud', () => {
     it('throws on unparseable sidecar JSON (an existing sidecar is never a miss)', async () => {
       const root = await makeRoot();
-      await writeEntry(root, KEY, { sidecar: '{"v":1,"key":' });
+      await writeEntry(root, KEY, { sidecar: '{"v":3,"key":' });
       await assert.rejects(new FsStore(root).head(KEY));
     });
 
@@ -253,19 +293,18 @@ describe('FsStore', () => {
       await assert.rejects(new FsStore(root).head(KEY), /version/);
     });
 
-    it('reads a v2 sidecar (the interstitial schema) — a supported version', async () => {
-      const root = await makeRoot();
-      await writeEntry(root, KEY, { sidecar: { ...bodiedSidecar('x'), v: 2 }, body: 'x' });
-      assert.equal((await new FsStore(root).head(KEY))?.status, 'body');
-    });
+    for (const v of [1, 2]) {
+      it(`throws on a v${v} sidecar: only the current version reads (A6)`, async () => {
+        const root = await makeRoot();
+        await writeEntry(root, KEY, { sidecar: { ...bodiedSidecar('x'), v }, body: 'x' });
+        await assert.rejects(new FsStore(root).head(KEY), /unsupported sidecar version/);
+        await assert.rejects(new FsStore(root).get(KEY), /unsupported sidecar version/);
+      });
+    }
 
     it('reads a v3 sidecar carrying dynamic[] — accepted and served, dynamic ignored', async () => {
-      // The `{1,2}` → `{1,2,3}` support-set bump: a v3 sidecar ADDS the optional
-      // `dynamic[]` array (browser-discovered requisites). FsStore must NOT throw
-      // "unsupported sidecar version" and must serve body + meta correctly — it
-      // is not a `dynamic` consumer, so the extra field is simply ignored. If
-      // SUPPORTED_SIDECAR_VERSIONS regressed to {1,2} this head() would throw
-      // /version/ instead of returning the metadata, failing the test.
+      // A v3 sidecar can carry the optional `dynamic[]` array. FsStore is not a
+      // `dynamic` consumer, so it ignores the field and serves body + meta.
       const root = await makeRoot();
       await writeEntry(root, KEY, {
         sidecar: {

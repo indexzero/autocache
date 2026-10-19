@@ -6,13 +6,15 @@ that IS the deploy artifact** for a wayback mirror — syncing it to
 S3-shaped Object Storage (Cloudflare R2, Fastly Object Storage) is deployment,
 and the mirror server reads it directly.
 
-The layout is the outcome of a five-voice design debate — **position E**:
+The layout began as the outcome of a five-voice design debate — **position E**:
 identity-keyed body + authoritative sidecar recording a content hash
 ("Nix store-realization + containerd ingest-commit + cacache's
 record-on-write integrity, minus cacache's authoritative index"). The
 decisions, dissents, and edge cases that debate produced are reproduced in
-full throughout this document. Implementation:
-[`spv/waybackify/cache.js`](../src/waybackify/cache.js). Consumer contract:
+full throughout this document. One decision has since changed: bodies are
+now **content-addressed** by that recorded hash, so byte-identical
+captures share one `cap/` file. Implementation:
+[`src/waybackify/cache.js`](../src/waybackify/cache.js). Consumer contract:
 [SERVE.md](./SERVE.md).
 
 ## Contents
@@ -37,7 +39,8 @@ full throughout this document. Implementation:
 
 ```
 <root>/
-  cap/<aa>/<hash>          body bytes, verbatim, NO extension
+  cap/<dd>/<digest>        body bytes, verbatim, NO extension, one file per
+                           distinct body (content-addressed)
   meta/<aa>/<hash>.json    sidecar — AUTHORITATIVE (canonical JSON, one line)
   tmp/                     ingest scratch — MUST stay on the same filesystem
                            as cap/ and meta/ (atomic rename cannot cross
@@ -46,12 +49,18 @@ full throughout this document. Implementation:
 hash = sha256hex(captureKey)
 captureKey = `${timestamp}/${originalUrl}`
 aa = hash[0:2]                       (256-way shard)
+digest = sha256hex(body bytes)       (the digest sidecar.contentHash records)
+dd = digest[0:2]                     (256-way shard)
 ```
 
 Rationale, per path:
 
-- **`cap/<aa>/<hash>` — no extension.** Content-type lives ONLY in the
-  sidecar; the filename is pure identity. The bytes are **exactly what
+- **`cap/<dd>/<digest>` — no extension, content-addressed.** Content-type
+  lives ONLY in the sidecar. The filename is the digest of the bytes. The
+  sidecar's `contentHash` names the body (`key.js#bodyPath`), so N captures
+  with equal bytes (shared page chrome at N snapshot timestamps) are N
+  sidecars and one body. Capture identity stays per `(timestamp, url)`: only
+  the storage of equal bytes collapses. The bytes are **exactly what
   archive.org returned** — no toolbar stripping, no URL rewriting. Serve-time
   transforms are the mirror server's job; store-time transforms would make
   the mirror unable to reproduce the archive (the "verbatim bytes" decision).
@@ -83,13 +92,18 @@ so the writer (this CLI) and the server derive **byte-identical** names. The
 pinned digest `sha256('20140403040000/http://example.com/') = 77c4b856…` is
 tested on both sides as the cross-package tripwire.
 
-The `<aa>`-sharded layout itself is derived by the same module:
-`capturePath(key) → cap/<aa>/<hash>` and `metaPath(key) → meta/<aa>/<hash>.json`
-return **rootless, `/`-joined object keys** — the one source of truth the
-cache writer (`cache.js#entryPaths`, which `path.join`s them under the root),
-the mirror server's `FsStore`, and the [bucket sync](#bucket-projection) all
-share. These object keys ARE the bucket keys, verbatim; `path.join`'s OS
-separators live only in the local paths, never in a returned key.
+The sharded layout itself is derived by the same module, as **rootless,
+`/`-joined keys**:
+
+- `metaPath(key) → meta/<aa>/<hash>.json`, the local and the bucket sidecar key.
+- `bodyPath(contentHash) → cap/<dd>/<digest>`, the local body key.
+- `capturePath(key) → cap/<aa>/<hash>`, the per-capture bucket body object key
+  (see [Bucket projection](#bucket-projection)).
+
+The cache writer (`cache.js#entryPaths`/`#bodyFile`, which `path.join` them
+under the root), the mirror server's `FsStore`, and the bucket sync all share
+them. `path.join`'s OS separators live only in the local paths, never in a
+returned key.
 
 Identity-hashing is *forced*, not chosen — three independent constraints
 converge on it:
@@ -112,22 +126,20 @@ authoritative and mandatory.
 
 `meta/<aa>/<hash>.json`, schema version `v: 3`:
 
-> **Schema versions.** New writes stamp `v: 3` (the optional `dynamic[]` array,
-> below). Each version is a backward-compatible **superset** of the last — every
-> older field keeps its meaning; v2 ADDED the `interstitial` status and its
-> `signature`/`target` fields, v3 ADDS the optional `dynamic[]` array. Every
-> consumer (mirror server `FsStore`, sync emitter, `fsck`, this CLI) therefore
-> accepts **any** of them: the whole existing v1 corpus and every v2 root still
-> read. A version outside `{1, 2, 3}` is genuinely unknown and fails loud, never
-> treated as complete-current. (#363 interstitial; v3 dynamic sidecar)
+> **Schema version.** Writers stamp `v: 3`. It carries the `interstitial`
+> status with its `signature`/`target` fields and the optional
+> `dynamic[]` array (below). Every consumer (mirror server `FsStore`, sync
+> emitter, `fsck`, `remaster`, this CLI) accepts **only** `v: 3`. Any other
+> version fails loud. No tool reads or upgrades an older sidecar. Rebuild an
+> older root with `cache add` or `cache fill`.
 
 | field | type | presence | rationale |
 |---|---|---|---|
-| `v` | int | always | Schema version (`3`). Bump on any incompatible change — an added enum value IS incompatible for an old reader — coordinated across every consumer (mirror server, sync tooling, this CLI). Readers accept the supported set `{1, 2, 3}`. |
+| `v` | int | always | Schema version (`3`). Bump on any incompatible change — an added enum value IS incompatible for an old reader — coordinated across every consumer (mirror server, sync tooling, this CLI). Readers accept only `3`. |
 | `key` | string | always | **Verbatim** captureKey, UTF-8. The sole authoritative record of identity — unrecoverable from the hash. Byte-exact round-trip is acceptance criterion EC-2. |
 | `contentType` | string | always (`''` when the archive sent none) | Rides each bucket object's native `Content-Type` header. Write-time enforced (key.js `assertMetadataSafe`): no CR/LF (the value rides an HTTP header — a raw newline is header injection), ≤ 1000 encoded bytes (the sync targets' object-metadata cap). |
 | `status` | `body \| redirect \| error \| empty \| interstitial` | always | The **hasBody discriminator**. Bodiless captures (redirects, errors, zero-byte 200s — ~149 in the measured corpus — and `interstitial`) still get a sidecar; without `status`, a complete bodiless entry would be indistinguishable from a crash between the body and sidecar renames (a point hardened in the design debate). |
-| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (a non-negotiable from the design debate). **Integrity, not addressing**: the filename stays the identity hash. |
+| `contentHash` | string | iff `status == "body"` | SRI form `sha256-<base64>` over the stored bytes ([W3C SRI: "hash-algo, a dash, and the base64-encoded digest"](https://www.w3.org/TR/sri-1/#integrity-metadata-description); [MDN SRI](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)). Computed **during the streaming write** — fsync guarantees durability of what was written, not that the right bytes were written; only record-at-write enables verify-on-read (a non-negotiable from the design debate). The same digest is the body's **address**: `bodyPath(contentHash)` is `cap/<dd>/<digest>`. |
 | `contentLength` | int | iff `status == "body"` | Byte count, counted during the same streaming write. |
 | `signature` | string | iff `status == "interstitial"` | Which interstitial signature fired: `wrapper-stub`, `redirect-interstitial`, `extension-mismatch`, or `archived-error` (#363). The audit trail for why the capture was refused, and the key the #364 remediation sweep dispatches on. |
 | `target` | `{ url, timestamp }` | iff `signature == "redirect-interstitial"` (when decodable) | The decoded destination of a redirect interstitial — the only content that page carried. Absent when the stub had no parseable `/web/…` reference. |
@@ -177,7 +189,7 @@ Per entry — this is normative; `commitEntry()` in
 ```
 1. stream body → tmp/<hash>.<pid>-<rand>.part      hashing as bytes flow
 2. fsync the temp file
-3. atomic rename → cap/<aa>/<hash>                 (bytes visible, entry NOT complete)
+3. atomic rename → cap/<dd>/<digest>               (bytes visible, entry NOT complete)
 4. build sidecar (with step 1's hash) → tmp/<hash>.<pid>-<rand>.json.part, fsync
 5. atomic rename → meta/<aa>/<hash>.json           ← LAST. The completion token.
 ```
@@ -206,7 +218,7 @@ Citations for each primitive:
   per written chunk.
 
 Directory fsyncs (a doubt-cycle hardening): after the **body** rename, the
-implementation fsyncs `cap/<aa>` before writing the sidecar. A process crash
+implementation fsyncs `cap/<dd>` before writing the sidecar. A process crash
 cannot reorder the two renames, but a power cut can persist the sidecar
 rename while losing the body rename ([fsync(2) NOTES](https://man7.org/linux/man-pages/man2/fsync.2.html):
 "Calling fsync() does not necessarily ensure that the entry in the directory
@@ -218,16 +230,17 @@ the sidecar rename to a power cut merely re-exposes the entry as absent —
 exactly the resume path. The protocol needs commit *ordering*, not commit
 *durability*.
 
-Concurrency: **no locks.** Same-key writers use distinct temp names
-(`<pid>-<rand>`) and both rename onto the same final name — last-writer-wins
-on identical bytes (the wayback timestamp pins capture content). Distinct
-keys never share paths. Acceptance criterion EC-3 pins this.
+Concurrency: **no locks.** Writers use distinct temp names
+(`<pid>-<rand>`). Two writers of equal bytes, under the same key or not, both
+rename onto the one digest-named body. Both renames publish identical bytes,
+so every sidecar that names the body stays true. Distinct keys never share a
+sidecar path. Acceptance criterion EC-3 pins this.
 
 ## Resume semantics
 
 - **Completion signal = the sidecar exists.** Nothing else. No done-markers,
   no journals.
-- **Orphan-body rule:** `cap/` file present + sidecar absent (crash between
+- **Orphan-body rule:** `cap/` file present + no sidecar names it (crash between
   steps 3 and 5) ⇒ **ingest garbage**: the entry reports absent, resume
   re-fetches it to completion, and it is never served. There is NO ordering
   in which a partial entry is observable as complete, because the last
@@ -325,29 +338,34 @@ semantics; recorded here as the contract):
 - `contentHash` is recorded at write for every bodied entry and is intended
   to be verified on read and on sync (verify-on-read is only possible
   because we recorded-on-write — the cacache lesson that generalizes).
-- **No dedupe at write time.** Byte-identical bodies under distinct keys are
-  stored independently (EC-3). `contentHash` makes a future GC pass —
-  group sidecars by hash, hardlink the identity-named bodies — cheap and
-  safe, but GC is **explicitly out of scope**: see the GC-leases dissent.
+- **Dedupe at write time.** Byte-identical bodies under distinct keys
+  are stored ONCE, at the digest their shared `contentHash` records (EC-3).
+  Each capture keeps its own sidecar, so replay stays byte-exact and the
+  `(timestamp, url) → body` mapping is intact. The refetch is not avoided:
+  the digest is unknown until the bytes arrive, so each capture key is still
+  fetched once. GC is still **out of scope**. A body is garbage only when no
+  sidecar names it: see the GC-leases dissent.
 
 ## Bucket projection
 
 The cache root is the archive of record; every remote bucket (Cloudflare R2,
-Fastly Object Storage) is a **rebuildable projection** of it. The projection
-is deliberately trivial — the bucket object keys ARE the local layout,
-verbatim:
+Fastly Object Storage) is a **rebuildable projection** of it:
 
 ```
-cap/<aa>/<hash>          body object (the local cap/ file, byte-for-byte)
+cap/<aa>/<hash>          body object, ONE PER CAPTURE (the local
+                         cap/<dd>/<digest> file its sidecar names, byte-for-byte)
 meta/<aa>/<hash>.json    sidecar object (the local meta/ file, byte-for-byte)
 
 hash = sha256hex(captureKey)          (capturePath/metaPath in key.js)
 aa   = hash[0:2]
 ```
 
-No key rewriting on the way up: `capturePath()`/`metaPath()` already return
-rootless `/`-joined object keys, so an object key is just the local relative
-path. Every corpus key is POSIX-impossible raw (`# ; ? ^ |`, 2000+ bytes,
+The sidecar keys are the local keys, verbatim. The body objects are NOT
+content-addressed in the bucket: each one carries its own capture's
+content-type and status as native metadata (below), so the mirror server
+serves a capture in one GET by key. Two captures with equal bytes can still
+differ in content-type, so they need two objects. The dedupe saves local
+storage. The bucket keeps one object per capture. Every corpus key is POSIX-impossible raw (`# ; ? ^ |`, 2000+ bytes,
 mixed unicode normalization), but the hashed layout is legal everywhere — R2
 and S3-compatible object keys cap at 1,024 bytes, which a fixed `<hash>` never
 approaches.
@@ -368,7 +386,8 @@ on purpose:
 **Copy-only sync.** The projection is add/overwrite, never delete-to-match:
 
 - `cap/` — a batch emitter lists `meta/` (never `cap/`, so orphans are
-  excluded by construction) and hands the body-object set to
+  excluded by construction), maps each sidecar's shared local body to its
+  per-capture object key, and hands the body-object set to
   [`s5cmd`](https://github.com/peak/s5cmd) for parallel copy.
 - `meta/` — `rclone copy`, **never `rclone sync`**: `sync` deletes remote
   objects absent from the source, which would let a partial local root reap
@@ -397,8 +416,8 @@ The consumer-side read contract is [SERVE.md §Bucket sync](./SERVE.md#bucket-sy
 
 **A store root contains ONLY `cap/`, `meta/`, and `tmp/`.** Nothing else
 belongs inside it. The root is a *rebuildable projection* — the archive of
-record that syncs verbatim to R2 / Fastly Object Storage (bucket object keys
-ARE the local layout: `cap/<aa>/<hash>`, `meta/<aa>/<hash>.json`) — so any
+record that projects onto R2 / Fastly Object Storage (see
+[Bucket projection](#bucket-projection)) — so any
 foreign entry is either uploaded as a junk object or silently dropped by the
 sync. **Operational artifacts live OUTSIDE the root**: run reports, audit
 checkpoints, driver logs, and any `.runs/`-style scratch belong to an
@@ -417,21 +436,21 @@ engine: [`spv/waybackify/fsck.js`](../src/waybackify/fsck.js)).
 waybackify cache verify --root <store> [--fix] [--json] [--quiet]
 ```
 
-It walks `meta/` (the authority) and `cap/`, deriving paths exactly as
-`cache.js` does, and reports — **report-only by default**, non-zero exit on any
+It walks `meta/` (the authority) and `cap/`, locating each body through its
+sidecar's `contentHash` exactly as `cache.js` does, and reports — **report-only by default**, non-zero exit on any
 discrepancy:
 
 | category | severity | meaning |
 |---|---|---|
 | `hashMismatch` | corruption | `status: "body"` whose `contentHash` ≠ the SRI of the `cap/` bytes — the one failure `fsync` cannot catch (it persists *what* was written, not *that the right bytes* were). |
 | `keyMismatch` | corruption | sidecar filed under a hash ≠ `sha256hex(sidecar.key)` — misfiled or tampered (the `readSidecar` authenticity check). |
-| `missingBody` | corruption | `status: "body"` with no `cap/` file — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
+| `missingBody` | corruption | `status: "body"` with no `cap/` file at its `contentHash` (or with a `contentHash` that is not a sha256 SRI) — an incomplete entry (the body rename was lost, or a body was deleted under a complete sidecar). |
 | `incompleteClosure` | incomplete | a `status: "body"` doc that references a page requisite (`im_`/`cs_`/`js_`/`oe_` captureKey in its `requisites[]`) **or** a well-formed browser-discovered dynamic child (a `dynamic[].key`, v3 — findings marked `dynamic: true`) whose own sidecar is absent from this store. The frontier is `requisites ∪ dynamic`. Store-relative (the doc's own edge list; no ledger, no network). **Report only** — a short closure is filled by re-running `cache add`/`cache fill`, never by reaping — but it keeps the store dirty (nonzero exit) until complete. |
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial (#363) — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the #364 remediation sweep, not fsck's to perform. |
-| `schemaVersion` | advisory | a sidecar whose `v` is outside the supported set `{1, 2, 3}` — a migration flag. (A legacy `v: 1` or `v: 2` sidecar is supported and does NOT trip this.) |
+| `schemaVersion` | advisory | a sidecar whose `v` is not `3`, the one version every reader accepts. Rebuild the root. |
 | `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` — the check that catches a contract violation like a stray `.runs/`. |
-| `orphanCap` | reapable | a `cap/` file with no sidecar — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). |
+| `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. While any sidecar fails to parse, or any `missingBody` finding stands, no `cap/` file is reported orphan. Such a sidecar can name a body that fsck cannot see, so `--fix` keeps every body. |
 | `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. |
 
 `--fix` reaps **only** the two reapable classes — `orphanCap` and `staleTmp` —
@@ -513,7 +532,7 @@ The document's sidecar (one line on disk; wrapped here for reading):
    "20111011002337/http://example.com/media/demo.swf",
    "20111011002337/http://example.com/images/collapsed-scheme.jpg"],
  "status":"body",
- "v":1}
+ "v":3}
 ```
 
 …and one requisite's (`oe_`-flagged flash embed):
@@ -527,7 +546,7 @@ The document's sidecar (one line on disk; wrapped here for reading):
  "key":"20111011002337/http://example.com/media/demo.swf",
  "requisites":[],
  "status":"body",
- "v":1}
+ "v":3}
 ```
 
 ## Sources

@@ -8,11 +8,11 @@
 // silently" — the CACHE.md Verification dissent).
 //
 // LIBRARY-FIRST (thin-CLI rule): all logic lives here; the CLI's
-// `cache verify` handler (spv/waybackify-cli/src/commands/cache-verify.js) is
-// an arg-parsing + report-printing wrapper. The layout knowledge is a deliberate LOCAL copy of
-// cache.js's derivation (walk meta/, hash = basename minus .json, aa =
-// hash[0:2], body at cap/<aa>/<hash>) so a later rebase onto shared
-// capturePath/metaPath helpers is a cheap swap, not a rewrite.
+// `cache verify` handler (src/waybackify-cli/src/commands/cache-verify.js) is
+// an arg-parsing + report-printing wrapper. It walks meta/ (hash = basename
+// minus .json, aa = hash[0:2]) and locates each body through key.js#bodyPath
+// (cap/<dd>/<digest>, the digest that sidecar.contentHash records). Bodies
+// are content-addressed, so one cap/ file can serve many sidecars.
 //
 // WHAT IT CHECKS (report-only by default; see CATEGORIES for severities):
 //   - malformed     sidecar that will not parse (disk rot, NOT absence —
@@ -28,9 +28,10 @@
 //                   what was written, not that the right bytes were written)
 //   - keyMismatch   sidecar filed under a hash != sha256hex(sidecar.key)
 //                   (misfiled / tampered — readSidecar's authenticity check)
-//   - missingBody   status 'body' with no cap/ file (incomplete entry: the
-//                   body rename was lost, or a body was deleted out from
-//                   under a complete sidecar)
+//   - missingBody   status 'body' with no cap/ file at its contentHash
+//                   (incomplete entry: the body rename was lost, or a body
+//                   was deleted out from under a complete sidecar), or with
+//                   a contentHash that is not a sha256 SRI digest
 //   - incompleteClosure  a status 'body' doc that lists a page requisite
 //                   (im_/cs_/js_/oe_ captureKey in its sidecar.requisites[]) OR
 //                   a browser-discovered dynamic child (a well-formed
@@ -57,13 +58,14 @@
 //                   pre-schema capture that predates cache-time refusal. REPORT
 //                   ONLY: the corpus-wide re-commit is the #364 remediation
 //                   sweep, not fsck's to perform.
-//   - schemaVersion sidecar whose v is outside the supported set
+//   - schemaVersion sidecar whose v is not the current SIDECAR_VERSION
 //   - foreignRoot   an entry in the root that is not cap/ meta/ tmp/ — the
 //                   root contract is cap/ + meta/ + tmp/ ONLY (operational
 //                   artifacts belong OUTSIDE the store; this is the check
 //                   that flags a stray .runs/)
-//   - orphanCap     cap/ file with no sidecar (crash between the body and
-//                   sidecar renames: ingest garbage, never served)
+//   - orphanCap     cap/ file that no sidecar's contentHash names (crash
+//                   between the body and sidecar renames: ingest garbage,
+//                   never served)
 //   - staleTmp      leftover tmp/ scratch (an interrupted write's .part file)
 //
 // --fix reaps ONLY the two safe-to-delete classes — orphanCap + staleTmp
@@ -78,9 +80,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { SIDECAR_VERSION, SUPPORTED_SIDECAR_VERSIONS, dynamicEntryError } from './cache.js';
+import { SIDECAR_VERSION, dynamicEntryError } from './cache.js';
 import { isUnmirrorable } from './beacons.js';
-import { captureHash } from './key.js';
+import { bodyPath, captureHash } from './key.js';
 import { detectInterstitial } from './interstitial.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { coerceEvery, emitProgress } from './progress.js';
@@ -97,7 +99,7 @@ export const CATEGORIES = [
   { key: 'missingBody', label: "status 'body' with no cap/ file (incomplete)", severity: 'corruption' },
   { key: 'incompleteClosure', label: "status 'body' requisite whose sidecar is absent (closure short)", severity: 'incomplete' },
   { key: 'interstitialAsBody', label: "status 'body' whose bytes are a wayback interstitial (#363)", severity: 'advisory' },
-  { key: 'schemaVersion', label: 'sidecar schema version outside the supported set', severity: 'advisory' },
+  { key: 'schemaVersion', label: 'sidecar schema version is not the current version', severity: 'advisory' },
   { key: 'foreignRoot', label: 'root entry outside cap/ meta/ tmp/', severity: 'advisory' },
   { key: 'orphanCap', label: 'cap/ file with no sidecar (ingest garbage)', severity: 'reapable' },
   { key: 'staleTmp', label: 'leftover tmp/ scratch file', severity: 'reapable' }
@@ -197,7 +199,11 @@ export async function fsck(root, options = {}) {
 
   // ---- inventory: cap/ bodies + tmp/ scratch --------------------------------
   const capFiles = await walkShards(root, 'cap');
-  const capHashes = new Set(capFiles.map(f => f.name));
+  const capKeys = new Set(capFiles.map(f => `cap/${f.aa}/${f.name}`));
+  // The rootless cap/ keys that at least one sidecar names. A body shared by
+  // many captures is referenced once per sidecar and is never an orphan.
+  const referenced = new Set();
+  let unparseable = 0;
 
   for (const ent of await readdirSafe(path.join(root, 'tmp'))) {
     findings.staleTmp.push({ name: ent.name, isDir: ent.isDirectory(), path: path.join(root, 'tmp', ent.name) });
@@ -225,10 +231,11 @@ export async function fsck(root, options = {}) {
       sidecar = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
     } catch (error) {
       findings.malformed.push({ hash, aa, path: metaPath, error: error.message });
+      unparseable++;
       continue;
     }
 
-    if (!SUPPORTED_SIDECAR_VERSIONS.has(sidecar.v)) {
+    if (sidecar.v !== SIDECAR_VERSION) {
       findings.schemaVersion.push({ hash, aa, key: sidecar.key ?? null, v: sidecar.v ?? null });
     }
 
@@ -272,9 +279,16 @@ export async function fsck(root, options = {}) {
         requisites: Array.isArray(sidecar.requisites) ? sidecar.requisites : [],
         dynamic: dynamicKeys
       });
-      const capPath = path.join(root, 'cap', aa, hash);
-      if (!capHashes.has(hash)) {
-        findings.missingBody.push({ hash, aa, key: sidecar.key ?? null });
+      let capKey = null;
+      try {
+        capKey = bodyPath(sidecar.contentHash);
+        referenced.add(capKey);
+      } catch {
+        // No usable digest: the body cannot be located, so it is missing.
+      }
+      const capPath = capKey === null ? null : path.join(root, capKey);
+      if (capKey === null || !capKeys.has(capKey)) {
+        findings.missingBody.push({ hash, aa, key: sidecar.key ?? null, contentHash: sidecar.contentHash ?? null });
       } else {
         const actual = await fileSRI(capPath);
         if (actual !== sidecar.contentHash) {
@@ -301,8 +315,14 @@ export async function fsck(root, options = {}) {
   }
 
   // ---- orphan cap/ files (body present, no completion token) ----------------
-  for (const f of capFiles) {
-    if (!sidecarHashes.has(f.name)) findings.orphanCap.push({ hash: f.name, aa: f.aa, path: f.path });
+  // Two kinds of sidecar can name a body that fsck cannot see. An unparseable
+  // sidecar can name any body. A missingBody sidecar has a rotted contentHash,
+  // and its true body is on disk under the old digest. While either kind
+  // exists, no cap/ file is provably unreferenced. Orphan detection (and so
+  // --fix) waits until the finding is resolved. Reaping never destroys evidence.
+  const unlocated = unparseable > 0 || findings.missingBody.length > 0;
+  for (const f of unlocated ? [] : capFiles) {
+    if (!referenced.has(`cap/${f.aa}/${f.name}`)) findings.orphanCap.push({ hash: f.name, aa: f.aa, path: f.path });
   }
 
   // ---- requisite closure (store-relative — the doc's own edge list) ---------

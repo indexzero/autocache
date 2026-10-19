@@ -200,9 +200,9 @@ describe('loadCorpusKeySet — the meta-walk', () => {
     const root = await fsp.mkdtemp(`${os.tmpdir()}/wayback-corpus-`);
     try {
       await fsp.mkdir(`${root}/meta/aa`, { recursive: true });
-      await fsp.writeFile(`${root}/meta/aa/good.json`, JSON.stringify({ v: 1, key: '20140403040000/http://example.com/good' }));
+      await fsp.writeFile(`${root}/meta/aa/good.json`, JSON.stringify({ v: 3, key: '20140403040000/http://example.com/good' }));
       await fsp.writeFile(`${root}/meta/aa/broken.json`, '{ not json');
-      await fsp.writeFile(`${root}/meta/aa/keyless.json`, JSON.stringify({ v: 1 })); // no .key
+      await fsp.writeFile(`${root}/meta/aa/keyless.json`, JSON.stringify({ v: 3 })); // no .key
       await fsp.writeFile(`${root}/meta/aa/notjson.txt`, 'ignored');
 
       const keys = await loadCorpusKeySet(root);

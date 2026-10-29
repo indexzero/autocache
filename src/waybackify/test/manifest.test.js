@@ -45,6 +45,7 @@ describe('validateManifest', () => {
       exclude: ['https://live.example.com/']
     });
     assert.equal(m.version, MANIFEST_VERSION);
+    assert.deepEqual(m.sources, {});
     assert.deepEqual(m.rewrites, {});
     assert.deepEqual(Object.keys(m.entries), ['http://a.example.com/']);
     assert.deepEqual(m.exclude, ['https://live.example.com/']);
@@ -66,6 +67,37 @@ describe('validateManifest', () => {
       () => validateManifest({ version: 2, entries: { 'http://a/': { wayback: 'https://example.com/not-wayback' } } }),
       /unparseable wayback URL/
     );
+  });
+
+  it('uses the same value validation and error text for sources and entries', () => {
+    const url = 'http://a.example.com/';
+    const invalid = [
+      null, [], 'capture', {}, { timestamp: '20100101000000' },
+      { wayback: 'https://example.com/', timestamp: '20100101000000' },
+      ...[undefined, null, 20100101000000, '', '20100101', '201001010000000', '2010010100000x',
+        '2010-01-01T00:00:00Z'].map(timestamp => ({ wayback: WB_A, timestamp }))
+    ];
+    for (const entry of invalid) {
+      let expected;
+      assert.throws(() => validateManifest({ version: 2, entries: { [url]: entry } }, 'test.json'), error => {
+        expected = error.message;
+        return true;
+      });
+      assert.throws(() => validateManifest({ version: 2, sources: { [url]: entry } }, 'test.json'), error => {
+        assert.equal(error.message, expected);
+        return true;
+      });
+    }
+    const entry = { wayback: WB_A, timestamp: '20100101000000', checkedAt: '2026-10-29T00:00:00Z' };
+    const m = validateManifest({ version: 2, sources: { [url]: entry } });
+    assert.deepEqual(m.sources, { [url]: entry });
+    assert.notEqual(m.sources[url], entry);
+  });
+
+  it('rejects malformed source maps with context', () => {
+    for (const sources of [null, [], 'capture', 1]) {
+      assert.throws(() => validateManifest({ version: 2, sources }, 'test.json'), /test\.json: invalid manifest.*`sources` must be an object/);
+    }
   });
 
   it('rejects malformed sections with context', () => {
@@ -94,6 +126,32 @@ describe('readManifest / writeManifest', () => {
     assert.equal(raw.version, 2);
     assert.deepEqual(Object.keys(raw.entries), ['http://b.example.com/post', 'http://z.example.com/']);
     assert.deepEqual(readManifest(file), m); // deepEqual is key-order-blind: same content
+  });
+
+  it('round-trips sources byte-for-byte in canonical order', () => {
+    const file = path.join(tmpdir(), 'wayback.json');
+    const m = emptyManifest();
+    m.sources['http://b.example.com/post'] = { wayback: WB_B, timestamp: '20140403040000' };
+    m.sources['http://a.example.com/'] = { wayback: WB_A, timestamp: '20100101000000' };
+    m.noRewrite.push('http://keep.example.com/');
+    m.rewrites['http://moved.example.com/'] = 'https://mirror.example.net/';
+    writeManifest(file, m);
+    const text = fs.readFileSync(file, 'utf8');
+    assert.deepEqual(Object.keys(JSON.parse(text)), ['version', 'sources', 'noRewrite', 'rewrites', 'entries']);
+    assert.deepEqual(Object.keys(JSON.parse(text).sources), ['http://a.example.com/', 'http://b.example.com/post']);
+    assert.deepEqual(readManifest(file), m);
+    writeManifest(file, readManifest(file));
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
+  });
+
+  it('omits sources when absent or empty without changing existing bytes', () => {
+    const file = path.join(tmpdir(), 'wayback.json');
+    const text = '{\n  "version": 2,\n  "entries": {}\n}\n';
+    fs.writeFileSync(file, text);
+    writeManifest(file, readManifest(file));
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
+    writeManifest(file, emptyManifest());
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
   });
 
   it('canonicalize returns EXACTLY the object writeManifest serializes (one canonical form)', () => {
@@ -224,6 +282,16 @@ describe('apply', () => {
     m.entries['http://a.example.com/'] = { wayback: WB_A, timestamp: '20100101000000' };
     return m;
   };
+
+  it('ignores sources for link rewrites and warnings', () => {
+    const m = manifest();
+    const source = 'See [a](http://a.example.com/) and [b](http://b.example.com/post).';
+    const expected = apply(source, m);
+    m.sources['http://a.example.com/'] = { wayback: WB_B, timestamp: '20140403040000' };
+    m.sources['http://b.example.com/post'] = { wayback: WB_B, timestamp: '20140403040000' };
+    assert.deepEqual(apply(source, m), expected);
+    assert.deepEqual(expected.warnings, ['http://b.example.com/post']);
+  });
 
   it('rewrites entry urls to their replay form, pointed at the chrome host', () => {
     const { content, warnings } = apply('See [a](http://a.example.com/).', manifest());

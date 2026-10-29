@@ -95,7 +95,7 @@ describe('flatten', () => {
   });
 
   it('flattening nothing is the empty manifest', () => {
-    assert.deepEqual(flatten([]), { version: 2, noRewrite: [], rewrites: {}, entries: {}, exclude: [] });
+    assert.deepEqual(flatten([]), { version: 2, sources: {}, noRewrite: [], rewrites: {}, entries: {}, exclude: [] });
   });
 
   it('never unions a post noRewrite set into the seen union: it is per-post intent, not a verdict', () => {

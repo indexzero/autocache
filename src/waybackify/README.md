@@ -232,6 +232,12 @@ anywhere (file paths are identity):
 ```json
 {
   "version": 2,
+  "sources": {
+    "<document-url>": {
+      "wayback": "https://web.archive.org/web/<timestamp>/<document-url>",
+      "timestamp": "<YYYYMMDDHHMMSS>"
+    }
+  },
   "noRewrite": ["<url>"],
   "rewrites": { "<url>": "<replacement-url>" },
   "entries": {
@@ -245,6 +251,12 @@ anywhere (file paths are identity):
 }
 ```
 
+- `sources` (optional): the document's Original Resources (URI-R), mapped to
+  their Mementos (URI-M). A merged document can name several originals.
+  Values share the `entries` shape, including optional `checkedAt`.
+  An absent map reads as empty, and empty maps are omitted when writing.
+  Source keys sort before `noRewrite` and `rewrites`. `apply` ignores them.
+  An unresolved source is an error, never a link exclusion.
 - `noRewrite` (optional): urls the author forbids rewriting. Each one
   stays byte-for-byte as written, whatever the archive or the Universe knows.
   It is authored intent, kept apart from `exclude`, which records what the
@@ -260,6 +272,8 @@ Readers (`readManifest`/`validateManifest`) accept version **2** only. Any
 other version fails loud. An entry without a `wayback` URL fails loud too, and
 a reader never converts an entry into an exclusion. `writeManifest` always
 emits canonical v2 (sorted keys, empty optional sections omitted).
+Both `sources` and `entries` require a parseable replay URL and a 14-digit
+`timestamp` string (`YYYYMMDDHHMMSS`). Invalid values fail through the same validator.
 
 ### Universe `fqdns`
 

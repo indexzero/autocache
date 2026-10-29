@@ -11,6 +11,12 @@ facade — zero pages were self-contained, ~90% of page requisites were quietly
 served by live `web.archive.org`, and some captures are stored wayback error
 pages. Remaster closes that gap by producing a tier that stands alone.
 
+Document identity lives in the optional schema v2 `sources` map of
+`wayback.json`. Each Original Resource maps to its Memento using the same
+`{ wayback, timestamp, checkedAt? }` shape as `entries`. Missing `sources`
+reads as empty. A timestamp must contain 14 digits. `apply` ignores this
+map, and an unresolved source remains an error rather than a link exclusion.
+
 ## The two tiers
 
 - **Hermetic** — the sealed originals, exactly as archive.org's replay

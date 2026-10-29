@@ -156,9 +156,9 @@ export function validateManifest(raw, context = 'manifest') {
   out.rewrites = { ...rewrites };
   out.exclude = [...exclude];
   for (const [section, values] of Object.entries({ sources, entries })) {
-    for (const [url, entry] of Object.entries(values)) {
-      out[section][url] = validateEntry(url, entry, bad);
-    }
+    out[section] = Object.fromEntries(
+      Object.entries(values).map(([url, entry]) => [url, validateEntry(url, entry, bad)])
+    );
   }
   return out;
 }

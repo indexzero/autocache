@@ -386,9 +386,10 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *
  * Document identity is separate from link policy: `sources` carries prior
  * captures forward, and `sourceUrls` adds requested originals. Existing
- * sources keep their captures. New sources reuse seen captures or the same
- * resolver and near hint as links. Link rewrites and exclusions never answer
- * a source request. A missing or failed capture enters `unresolvedSources`.
+ * sources keep their captures. New sources reuse captures for the exact
+ * original URL, preserving path/query case, or use the same resolver and near
+ * hint as links with exactOriginal enabled. Link rewrites and exclusions never
+ * answer a source request. A missing or failed capture enters `unresolvedSources`.
  * Callers must leave output files untouched when that list is non-empty.
  *
  * `seen` is Manifest-shaped and READ-WRITE: pass the parsed union file
@@ -406,7 +407,7 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  * @param {Record<string,{wayback:string,timestamp:string,checkedAt?:string}>} [options.sources]
  *   - prior document captures, preserved unchanged
  * @param {string[]} [options.sourceUrls] - document originals to resolve
- * @param {Function} [options.resolve] - async (url, { near }) →
+ * @param {Function} [options.resolve] - async (url, { near, exactOriginal }) →
  *   { url: waybackUrl, timestamp } | null; injectable for offline use/tests
  * @param {WaybackMachine} [options.wayback] - client backing the default resolver
  * @param {Function} [options.probe] - async (url) → { renamed, to? } | null,
@@ -501,21 +502,26 @@ export async function generate(source, universe, seen, options = {}) {
 
   const unresolvedSources = [];
   // Source captures take precedence over link captures in the seen union.
-  // Link generation above never consults this index or document identity.
+  // Link keys may alias another original. Index the capture's actual original
+  // instead, with exact strings: link matching must not fold source identity.
   const seenCaptures = new Map(
-    [...Object.entries(seen.entries), ...Object.entries(seen.sources)].map(([url, entry]) => [matchKey(url), entry])
+    [...Object.values(seen.entries), ...Object.values(seen.sources)]
+      .map(entry => [parseWaybackUrl(entry.wayback)?.original, entry])
+      .filter(([original]) => original !== undefined)
   );
   for (const url of new Set(options.sourceUrls ?? [])) {
     if (Object.hasOwn(manifest.sources, url)) continue;
-    const key = matchKey(url);
-    let entry = seenCaptures.get(key);
+    let entry = seenCaptures.get(url);
     if (!entry) {
       try {
-        const snapshot = await resolve(url, { near });
+        const snapshot = await resolve(url, { near, exactOriginal: true });
         if (!snapshot) throw new Error('no archived capture');
         entry = validateEntry(url, {
           wayback: snapshot.url, timestamp: snapshot.timestamp, checkedAt: new Date().toISOString()
         }, detail => new Error(`source resolution: invalid manifest — ${detail}`));
+        if (parseWaybackUrl(entry.wayback).original !== url) {
+          throw new Error('capture does not match the source original');
+        }
       } catch (error) {
         unresolvedSources.push({ url, error: error?.message ?? String(error) });
         continue;
@@ -523,7 +529,7 @@ export async function generate(source, universe, seen, options = {}) {
     }
     manifest.sources[url] = { ...entry };
     seen.sources[url] = { ...entry };
-    seenCaptures.set(key, entry);
+    seenCaptures.set(url, entry);
   }
 
   return { manifest, seen, deferred, unresolvedSources, stats };

@@ -351,6 +351,7 @@ test('offline sources reuse seen captures independently of link policy', async (
 for (const [name, resolveBad] of [
   ['unarchived', () => null],
   ['resolver failure', () => { throw new Error('resolver unavailable'); }],
+  ['a capture of another original', url => snapshot(url.replace('/post', '/Post'))],
   ['invalid timestamp', url => ({ ...snapshot(url), timestamp: '2014' })]
 ]) {
   test(`a source with ${name} leaves existing manifest and seen bytes unchanged`, async () => {
@@ -399,4 +400,104 @@ test('--source rejects non-web and malformed URLs before writing', async () => {
     assert.equal((await generate([...f.argv, '--source', value])).code, EXIT.USAGE);
   }
   assert.equal(fs.existsSync(f.output), false);
+});
+
+
+const distinctOriginals = [
+  ['path case', 'http://identity.example/Post', 'http://identity.example/post'],
+  ['query value case', 'http://identity.example/?id=ABC', 'http://identity.example/?id=abc'],
+  ['query key case', 'http://identity.example/?ID=abc', 'http://identity.example/?id=abc'],
+  ['scheme', 'http://identity.example/post', 'https://identity.example/post'],
+  ['www host', 'http://www.identity.example/post', 'http://identity.example/post'],
+  ['path slash', 'http://identity.example/post/', 'http://identity.example/post']
+];
+
+for (const [name, first, second] of distinctOriginals) {
+  test(`sources with distinct ${name} resolve separately and exact duplicate flags stay idempotent`, async () => {
+    const f = sourceFixture();
+    const calls = [];
+    const argv = [...f.argv, '-s', f.seen, '--source', first, '--source', second, '--source', first];
+    const result = await generate(argv, { resolve: url => { calls.push(url); return snapshot(url); } });
+    assert.equal(result.code, EXIT.OK);
+    assert.deepEqual(calls, [first, second]);
+    const output = fs.readFileSync(f.output, 'utf8');
+    const seen = fs.readFileSync(f.seen, 'utf8');
+    const manifest = JSON.parse(output);
+    assert.deepEqual(Object.keys(manifest.sources), [first, second].sort());
+    assert.equal(manifest.sources[first].wayback, snapshot(first).url);
+    assert.equal(manifest.sources[second].wayback, snapshot(second).url);
+    assert.deepEqual(manifest.entries, {});
+    assert.equal((await generate([...argv, '--offline'])).code, EXIT.OK);
+    assert.equal(fs.readFileSync(f.output, 'utf8'), output);
+    assert.equal(fs.readFileSync(f.seen, 'utf8'), seen);
+  });
+}
+
+for (const [name, known, requested] of distinctOriginals.slice(0, 3)) {
+  for (const section of ['sources', 'entries']) {
+    test(`offline ${section} do not answer a distinct ${name} source or write either file`, async () => {
+      for (const existingOutput of [false, true]) {
+        const f = sourceFixture();
+        const capture = { wayback: snapshot(known).url, timestamp: '20140403040000' };
+        const seenBytes = JSON.stringify({ version: 2, [section]: { [known]: capture } }, null, 4) + '\n';
+        const outputBytes = '{"version":2,"entries":{}}\n';
+        fs.writeFileSync(f.seen, seenBytes);
+        if (existingOutput) fs.writeFileSync(f.output, outputBytes);
+        const result = await generate([
+          ...f.argv, '-s', f.seen, '--source', known, '--source', requested, '--offline'
+        ]);
+        assert.equal(result.code, EXIT.DOMAIN);
+        assert.deepEqual(result.calls, []);
+        assert.ok(result.stderr.some(message => message.includes(`unresolved source: ${requested}`)));
+        assert.deepEqual(result.stdout, []);
+        assert.equal(fs.readFileSync(f.seen, 'utf8'), seenBytes);
+        if (existingOutput) assert.equal(fs.readFileSync(f.output, 'utf8'), outputBytes);
+        else assert.equal(fs.existsSync(f.output), false);
+      }
+    });
+  }
+}
+
+for (const section of ['sources', 'entries']) {
+  test(`a ${section} key cannot disguise a capture of another original as a source`, async () => {
+    const f = sourceFixture(`[Link](${originalA})`);
+    const wrong = snapshot(originalA.replace('/post', '/Post'));
+    const bytes = JSON.stringify({ version: 2, [section]: {
+      [originalA]: { wayback: wrong.url, timestamp: wrong.timestamp }
+    } }) + '\n';
+    fs.writeFileSync(f.seen, bytes);
+    const result = await generate([...f.argv, '-s', f.seen, '--source', originalA, '--offline']);
+    assert.equal(result.code, EXIT.DOMAIN);
+    assert.equal(fs.existsSync(f.output), false);
+    assert.equal(fs.readFileSync(f.seen, 'utf8'), bytes);
+    assert.ok(result.stderr.some(message => message.includes(`unresolved source: ${originalA}`)));
+  });
+}
+
+
+for (const [name, first, second] of distinctOriginals.slice(0, 3)) {
+  for (const section of ['sources', 'entries']) {
+    test(`offline sources reuse the correct cached ${name} captures from ${section}`, async () => {
+      const f = sourceFixture();
+      const entry = (url, timestamp) => ({ wayback: snapshot(url, timestamp).url, timestamp });
+      const captures = { [first]: entry(first, '20140401000000'), [second]: entry(second, '20140402000000') };
+      fs.writeFileSync(f.seen, JSON.stringify({ version: 2, [section]: captures }));
+      const result = await generate([
+        ...f.argv, '-s', f.seen, '--source', first, '--source', second, '--source', first, '--offline'
+      ]);
+      assert.equal(result.code, EXIT.OK);
+      assert.deepEqual(result.calls, []);
+      assert.deepEqual(JSON.parse(fs.readFileSync(f.output, 'utf8')).sources, captures);
+    });
+  }
+}
+
+test('a source can reuse a known capture by its actual original despite an aliased link key', async () => {
+  const f = sourceFixture();
+  const capture = { wayback: snapshot(originalA).url, timestamp: '20140403040000' };
+  fs.writeFileSync(f.seen, JSON.stringify({ version: 2, entries: { [originalB]: capture } }));
+  const result = await generate([...f.argv, '-s', f.seen, '--source', originalA, '--offline']);
+  assert.equal(result.code, EXIT.OK);
+  assert.deepEqual(result.calls, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.output, 'utf8')).sources, { [originalA]: capture });
 });

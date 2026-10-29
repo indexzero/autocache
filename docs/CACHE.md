@@ -17,6 +17,12 @@ captures share one `cap/` file. Implementation:
 [`src/waybackify/cache.js`](../src/waybackify/cache.js). Consumer contract:
 [SERVE.md](./SERVE.md).
 
+A schema v2 `wayback.json` may record the document's own captures under
+`sources`, separate from the linked resources under `entries`. Both maps
+use `{ wayback, timestamp, checkedAt? }` values and require a 14-digit
+`timestamp`. Missing `sources` reads as empty. An unresolved source remains
+an error, never a link exclusion. `apply` ignores document identity.
+
 ## Contents
 
 - [Layout](#layout)

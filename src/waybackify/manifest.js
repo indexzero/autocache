@@ -7,6 +7,9 @@
 //
 //   {
 //     "version": 2,
+//     "sources":  { "<url>": { "wayback": "<replay-url>",
+//                              "timestamp": "<YYYYMMDDHHMMSS>",
+//                              "checkedAt": "<ISO-8601>" }, ... }, // optional
 //     "noRewrite": [ "<url>", ... ],                          // optional
 //     "rewrites": { "<url>": "<replacement-url>", ... },     // optional
 //     "entries":  { "<url>": { "wayback": "<replay-url>",
@@ -19,9 +22,14 @@
 //     byte-for-byte as written, whatever the archive or the Universe knows.
 //     It is authored intent, so it never mixes with `exclude`, which records
 //     what the pipeline concluded. `generate` carries it forward unchanged.
+//   - `sources`: the document's Original Resources (URI-R), mapped to their
+//     Mementos (URI-M). Values have the same shape as `entries`. An absent
+//     map reads as empty. `apply` ignores it. An unresolved source is an
+//     error, never a link exclusion.
 //   - `entries`:  archive resolutions — rewrite each url to its `wayback`
 //     replay URL. Every `wayback` is non-null and parseable. "Checked, not
-//     archived" is not an entry state (see `exclude`).
+//     archived" is not an entry state (see `exclude`). Both capture maps
+//     require a 14-digit timestamp string (YYYYMMDDHHMMSS).
 //   - `rewrites`: unconditional url → url substitutions, baked from the
 //     Universe subset whose URLs appear in THIS source (universe.js).
 //   - `exclude`:  urls deliberately left untouched — policy-live links AND
@@ -96,19 +104,20 @@ export function toChromeHost(waybackUrl, chromeHost) {
 
 /** An empty manifest — the in-memory canonical shape. */
 export function emptyManifest() {
-  return { version: MANIFEST_VERSION, noRewrite: [], rewrites: {}, entries: {}, exclude: [] };
+  return { version: MANIFEST_VERSION, sources: {}, noRewrite: [], rewrites: {}, entries: {}, exclude: [] };
 }
 
 /**
  * Structurally validate a parsed manifest (the current version only) and
  * return the normalized in-memory shape:
- * `{ version: 2, noRewrite, rewrites, entries, exclude }`, with all
+ * `{ version: 2, sources, noRewrite, rewrites, entries, exclude }`, with all
  * sections present. Throws with `context` in the message on the first
  * violation.
  *
  * @param {unknown} raw
  * @param {string} [context] - label for error messages (usually a file path)
  * @returns {{ version: number, noRewrite: string[], rewrites: Record<string,string>,
+ *   sources: Record<string,{wayback:string,timestamp:string,checkedAt?:string}>,
  *   entries: Record<string,{wayback:string,timestamp:string,checkedAt?:string}>,
  *   exclude: string[] }}
  */
@@ -121,15 +130,17 @@ export function validateManifest(raw, context = 'manifest') {
   if (version !== MANIFEST_VERSION) {
     throw bad(`unsupported version ${JSON.stringify(version)} (supported: ${MANIFEST_VERSION})`);
   }
-  const { noRewrite = [], rewrites = {}, entries = {}, exclude = [] } = raw;
+  const { sources = {}, noRewrite = [], rewrites = {}, entries = {}, exclude = [] } = raw;
   if (!Array.isArray(noRewrite) || noRewrite.some(u => typeof u !== 'string' || u.length === 0)) {
     throw bad('`noRewrite` must be an array of non-empty strings');
   }
   if (rewrites === null || typeof rewrites !== 'object' || Array.isArray(rewrites)) {
     throw bad('`rewrites` must be an object of url → replacement-url');
   }
-  if (entries === null || typeof entries !== 'object' || Array.isArray(entries)) {
-    throw bad('`entries` must be an object of url → { wayback, timestamp }');
+  for (const [section, values] of Object.entries({ sources, entries })) {
+    if (values === null || typeof values !== 'object' || Array.isArray(values)) {
+      throw bad(`\`${section}\` must be an object of url → { wayback, timestamp }`);
+    }
   }
   if (!Array.isArray(exclude) || exclude.some(u => typeof u !== 'string' || u.length === 0)) {
     throw bad('`exclude` must be an array of non-empty strings');
@@ -144,18 +155,26 @@ export function validateManifest(raw, context = 'manifest') {
   out.noRewrite = [...noRewrite];
   out.rewrites = { ...rewrites };
   out.exclude = [...exclude];
-  for (const [url, entry] of Object.entries(entries)) {
-    if (entry === null || typeof entry !== 'object') {
-      throw bad(`entry for ${url} must be an object`);
-    }
-    if (typeof entry.wayback !== 'string' || parseWaybackUrl(entry.wayback) === null) {
-      // An unparseable replay URL is a capture no mirror could ever serve —
-      // a corpus defect to fix at the source, never to skip silently.
-      throw bad(`entry for ${url} has an unparseable wayback URL: ${entry.wayback}`);
-    }
-    out.entries[url] = { ...entry };
+  for (const [section, values] of Object.entries({ sources, entries })) {
+    out[section] = Object.fromEntries(
+      Object.entries(values).map(([url, entry]) => [url, validateEntry(url, entry, bad)])
+    );
   }
   return out;
+}
+
+/** Both capture maps share one value contract and the same error text. */
+function validateEntry(url, entry, bad) {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw bad(`entry for ${url} must be an object`);
+  }
+  if (typeof entry.wayback !== 'string' || parseWaybackUrl(entry.wayback) === null) {
+    throw bad(`entry for ${url} has an unparseable wayback URL: ${entry.wayback}`);
+  }
+  if (typeof entry.timestamp !== 'string' || entry.timestamp.length !== 14 || !/^\d{14}$/.test(entry.timestamp)) {
+    throw bad(`entry for ${url} must have a 14-digit timestamp (YYYYMMDDHHMMSS): ${entry.timestamp}`);
+  }
+  return { ...entry };
 }
 
 /**
@@ -171,8 +190,8 @@ export function readManifest(file) {
 
 /**
  * Normalize a manifest into its canonical schema-v2 JSON shape: `version`
- * first, then (only when non-empty) `noRewrite`, then (only when non-empty)
- * `rewrites`, then `entries`, then (only when non-empty) `exclude`. Url keys
+ * first, then optional `sources`, `noRewrite`, and `rewrites`, then
+ * `entries`, then optional `exclude`. Empty optional sections are omitted. Url keys
  * are sorted. `noRewrite` and `exclude` are deduped and sorted. This is THE
  * serialization order — writeManifest stringifies exactly this object, and
  * anything else that prints a manifest (e.g. `ledger --flatten` on stdout)
@@ -186,6 +205,7 @@ export function canonicalize(manifest, context = 'manifest') {
   const m = validateManifest(manifest, context);
   const sortKeys = obj => Object.fromEntries(Object.keys(obj).sort().map(k => [k, obj[k]]));
   const out = { version: MANIFEST_VERSION };
+  if (Object.keys(m.sources).length > 0) out.sources = sortKeys(m.sources);
   if (m.noRewrite.length > 0) out.noRewrite = [...new Set(m.noRewrite)].sort();
   if (Object.keys(m.rewrites).length > 0) out.rewrites = sortKeys(m.rewrites);
   out.entries = sortKeys(m.entries);

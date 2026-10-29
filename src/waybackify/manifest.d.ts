@@ -9,6 +9,7 @@
 /** One archive resolution: url → its replay capture. */
 export interface ManifestEntry {
   wayback: string;
+  /** Capture timestamp in YYYYMMDDHHMMSS form (14 digits). */
   timestamp: string;
   checkedAt?: string;
 }
@@ -16,6 +17,8 @@ export interface ManifestEntry {
 /** The in-memory Manifest (normalized schema v2; see manifest.js header). */
 export interface Manifest {
   version: number;
+  /** The document's Original Resources and their captures. Apply ignores these. */
+  sources: Record<string, ManifestEntry>;
   /** Urls the author forbids rewriting. Apply leaves them as written. */
   noRewrite: string[];
   rewrites: Record<string, string>;

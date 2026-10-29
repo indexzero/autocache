@@ -739,3 +739,24 @@ describe('noRewrite', () => {
     assert.deepEqual(run.manifest.noRewrite, [KEEP]);
   });
 });
+
+
+describe('sourceRefs document sources', () => {
+  it('includes source-only captures and dedupes with entries by capture identity', () => {
+    const dir = tmpdir();
+    const file = path.join(dir, 'post.md');
+    fs.writeFileSync(file, 'A document with no inline archive references.');
+    const flagged = WB_A.replace('20100101000000/', '20100101000000if_/');
+    writeManifest(path.join(dir, 'wayback.json'), {
+      ...emptyManifest(),
+      entries: { 'http://a.example.com/': { wayback: flagged, timestamp: '20100101000000' } },
+      sources: {
+        'http://a.example.com/': { wayback: WB_A, timestamp: '20100101000000' },
+        'http://b.example.com/post': { wayback: WB_B, timestamp: '20140403040000' }
+      }
+    });
+    assert.deepEqual(sourceRefs(file), []);
+    const refs = sourceRefs(file, { manifest: true });
+    assert.deepEqual(refs.map(r => [r.source, r.waybackUrl]), [['manifest', flagged], ['manifest', WB_B]]);
+  });
+});

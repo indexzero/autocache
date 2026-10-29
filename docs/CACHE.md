@@ -22,6 +22,8 @@ A schema v2 `wayback.json` may record the document's own captures under
 use `{ wayback, timestamp, checkedAt? }` values and require a 14-digit
 `timestamp`. Missing `sources` reads as empty. An unresolved source remains
 an error, never a link exclusion. `apply` ignores document identity.
+The ledger includes both maps in `cache fill`, deduplicated by capture key.
+Once fetched, source captures enter the same crawl and integrity checks as linked captures.
 
 ## Contents
 

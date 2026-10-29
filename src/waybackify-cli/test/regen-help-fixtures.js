@@ -24,7 +24,7 @@ const root = createCLI();
 fs.writeFileSync(path.join(dir, 'root.txt'), root.help());
 
 // Flat verbs + the three groups (each group's own help lists its subcommands).
-const flat = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'audit', 'cache', 'remaster', 'bucket'];
+const flat = ['manifest', 'rewrite', 'ledger', 'merge', 'check', 'search', 'audit', 'cache', 'remaster', 'bucket'];
 for (const name of flat) {
   fs.writeFileSync(path.join(dir, `${name}.txt`), root.help(name));
 }

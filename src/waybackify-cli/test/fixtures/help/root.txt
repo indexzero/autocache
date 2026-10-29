@@ -1,6 +1,6 @@
 waybackify [flags] [command]
 
-manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the waybackify library
+manifest / rewrite / ledger / merge / check / search / audit + the cache · remaster · bucket store groups over the waybackify library
 
 Human-operable, xargs-composable front door over waybackify:
 generate a manifest for a source file, rewrite it to its published
@@ -19,6 +19,7 @@ Commands:
   manifest    Generate the manifest for one markdown source
   rewrite     Apply a manifest to a markdown source
   ledger      Survey the manifests under a tree
+  merge       Compare two cache roots without writing a merged corpus
   check       Full wayback-404 verdict for the exact capture
   search      CDX capture query — re-pick a better capture
   audit       Checkpointed wayback-404 audit of a ledger

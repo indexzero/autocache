@@ -43,11 +43,11 @@ const WB = 'https://web.archive.org/web/20140403040000/http://example.com/';
 
 // Flat verbs (top-level help) + the three tier groups; each group's subcommands
 // are snapshotted separately as `<group>-<verb>.txt`.
-const FLAT = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'audit'];
+const FLAT = ['manifest', 'rewrite', 'ledger', 'merge', 'check', 'search', 'audit'];
 const GROUPS = { cache: ['add', 'fill', 'crawl', 'verify'], remaster: ['build', 'verify'], bucket: ['push', 'verify'] };
 // Handler keys the bin + createCLI() wire (group verbs → cacheAdd, remasterBuild, …).
 const HANDLER_KEYS = [
-  'manifest', 'rewrite', 'ledger', 'check', 'search', 'audit',
+  'manifest', 'rewrite', 'ledger', 'merge', 'check', 'search', 'audit',
   'cacheAdd', 'cacheFill', 'cacheCrawl', 'cacheVerify',
   'remasterBuild', 'remasterVerify',
   'bucketPush', 'bucketVerify'

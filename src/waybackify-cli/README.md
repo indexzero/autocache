@@ -1,5 +1,7 @@
 # @autocache/waybackify-cli
 
+Use [`merge --report`](../../docs/COMPARE.md) for a read-only cache comparison.
+
 `waybackify` — the human-operable, `xargs`-composable front door over the
 [`waybackify`](../waybackify) library.
 

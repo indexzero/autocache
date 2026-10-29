@@ -1,0 +1,19 @@
+waybackify merge [flags] <base-root> <fetch-root>
+
+Compare two cache roots without writing a merged corpus
+
+Report the four capture-key sets after both roots pass fsck.
+Output: one JSONL summary followed by key-sorted conflicts.
+Equal body hashes or equal bodiless statuses agree.
+Both roots must stay quiescent. Neither input is written.
+Only --report is supported. No output root or writer is available.
+
+Arguments:
+  <base-root>    original cache directory
+  <fetch-root>   second cache directory
+
+Flags:
+  --report       required: emit comparison JSONL without writing a corpus
+  --help|-h      Show help
+
+part of the wayback mirror tooling

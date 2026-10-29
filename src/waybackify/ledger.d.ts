@@ -34,7 +34,7 @@ export interface Worklists {
 /** Recursively discover every wayback.json manifest under `root`. */
 export function discover(root: string): DiscoveredManifest[];
 
-/** Union a discovered ledger into one manifest (the seen-file bootstrap). */
+/** Union entries and sources separately, keeping each map's first-seen verdict. */
 export function flatten(discovered: DiscoveredManifest[]): Manifest;
 
 /** Classify every capture the ledger references by the cache root's sidecars. */

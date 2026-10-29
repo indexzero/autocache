@@ -709,6 +709,12 @@ export async function checkDeterminism(root, entries, options = {}) {
   }
 
   const byKey = new Map(build.entries.map(e => [e.key, e]));
+  const present = new Set(entries.map(e => e.key));
+  for (const key of byKey.keys()) {
+    if (!present.has(key)) {
+      findings.push({ tier: 'static', layer: 'build', key, kind: 'entry-missing', detail: 'build record lists a capture the tree lacks' });
+    }
+  }
 
   // INTEGRITY — every remastered body vs its build-record + sidecar hash.
   let verified = 0;

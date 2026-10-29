@@ -90,3 +90,88 @@ test('a GitHub rename streams to stderr as a rewrite candidate', async () => {
   await handler({ args: { dir: 'w' }, flags: { root: '/c' }, logger, out: () => {} });
   assert.deepEqual(stderr, ['rename   https://github.com/a/b/issues/1 → https://github.com/c/d/issues/1 (rewrite candidate, not gone)']);
 });
+
+
+test('a source-only capture fills, enters crawl, remasters, and fails verification when missing', async t => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { createServer } = await import('node:http');
+  const { once } = await import('node:events');
+  const { backfill } = await import('@autocache/waybackify/backfill.js');
+  const { against, discover } = await import('@autocache/waybackify/ledger.js');
+  const { readSidecar } = await import('@autocache/waybackify/cache.js');
+  const { bodyPath, metaPath } = await import('@autocache/waybackify/key.js');
+  const { enumerateHtmlDocKeys } = await import('@autocache/waybackify-crawl');
+  const { run: runCli, EXIT } = await import('../src/cli.js');
+  const { remasterBuildHandler } = await import('../src/commands/remaster-build.js');
+  const { remasterVerifyHandler } = await import('../src/commands/remaster-verify.js');
+  const { cacheVerifyHandler } = await import('../src/commands/cache-verify.js');
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'source-capture-'));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const tree = path.join(temp, 'tree');
+  const cache = path.join(temp, 'cache');
+  const remastered = path.join(temp, 'remastered');
+  await fs.mkdir(tree);
+  const original = 'http://document.example/post';
+  const timestamp = '20140403040000';
+  const key = `${timestamp}/${original}`;
+  const wayback = `https://web.archive.org/web/${key}`;
+  await fs.writeFile(path.join(tree, 'wayback.json'), JSON.stringify({
+    version: 2, sources: { [original]: { wayback, timestamp } }, entries: {}
+  }));
+  const requests = [];
+  const server = createServer((req, res) => {
+    requests.push(req.url);
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<html><body><a href="${wayback}">This document</a></body></html>`);
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const local = `http://127.0.0.1:${server.address().port}`;
+  const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+  const stdout = [];
+  const handlers = {
+    cacheFill: cacheFillHandler({ backfill: options => backfill({ ...options, deps: {
+      wayback: {},
+      fetch: url => {
+        assert.equal(url, wayback);
+        return fetch(`${local}${new URL(url).pathname}`);
+      }
+    } }) }),
+    cacheVerify: cacheVerifyHandler(),
+    remasterBuild: remasterBuildHandler(),
+    remasterVerify: remasterVerifyHandler()
+  };
+  const command = async args => {
+    stdout.length = 0;
+    return runCli(args, { handlers, logger, out: line => stdout.push(line), error() {} });
+  };
+  const before = await against(discover(tree), cache);
+  assert.deepEqual(before.unfetched.map(i => i.key), [key]);
+  assert.equal(await command(['cache', 'fill', tree, '--root', cache, '--delay-ms', '0']), EXIT.OK);
+  assert.equal(JSON.parse(stdout[0]).fetched, 1);
+  assert.equal(requests.length, 1);
+  const after = await against(discover(tree), cache);
+  assert.deepEqual(after.cached.map(i => i.key), [key]);
+  assert.deepEqual(after.unfetched, []);
+  assert.deepEqual(await enumerateHtmlDocKeys(cache), [key]);
+  assert.equal(await command(['cache', 'verify', '--root', cache, '--json']), EXIT.OK);
+  assert.equal(await command(['remaster', 'build', cache, remastered]), EXIT.OK);
+  const sidecar = await readSidecar(remastered, key);
+  const body = path.join(remastered, bodyPath(sidecar.contentHash));
+  assert.match(await fs.readFile(body, 'utf8'), /href="\/web\/20140403040000\/http:\/\/document\.example\/post"/);
+  const verify = ['remaster', 'verify', '--root', remastered, '--tier', 'static', '--json'];
+  assert.equal(await command(verify), EXIT.OK);
+  await fs.unlink(body);
+  assert.equal(await command(verify), EXIT.DOMAIN);
+  assert.ok(JSON.parse(stdout[0]).layers.flatMap(l => l.findings).some(f => f.key === key && f.kind === 'body-missing'));
+  await fs.unlink(path.join(remastered, await metaPath(key)));
+  assert.equal(await command(verify), EXIT.DOMAIN);
+  assert.ok(JSON.parse(stdout[0]).layers.flatMap(l => l.findings).some(f => f.key === key && f.kind === 'entry-missing'));
+  const cached = await readSidecar(cache, key);
+  await fs.unlink(path.join(cache, bodyPath(cached.contentHash)));
+  assert.equal(await command(['cache', 'verify', '--root', cache, '--json']), EXIT.DOMAIN);
+  assert.ok(JSON.parse(stdout[0]).findings.missingBody.some(f => f.key === key));
+});

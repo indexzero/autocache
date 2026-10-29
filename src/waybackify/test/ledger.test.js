@@ -153,3 +153,40 @@ describe('against', () => {
     );
   });
 });
+
+
+describe('document sources', () => {
+  const url = 'http://a.example.com/';
+  const first = { wayback: WB_A, timestamp: '20100101000000' };
+  const later = { wayback: WB_A_LATER, timestamp: '20200101000000' };
+
+  it('flattens sources independently with the first-seen URL verdict', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-sources-'));
+    put(root, 'a/wayback.json', { version: 2, sources: { [url]: first }, entries: { [url]: later } });
+    put(root, 'b/wayback.json', { version: 2, sources: { [url]: later } });
+    const found = discover(root);
+    const union = flatten(found);
+    assert.deepEqual(union.sources, { [url]: first });
+    assert.deepEqual(union.entries, { [url]: later });
+    assert.notEqual(union.sources[url], found[0].manifest.sources[url]);
+  });
+
+  it('dedupes captures across both maps and files, preserving the first spelling', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-sources-'));
+    const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-sources-cache-'));
+    const flagged = { ...first, wayback: WB_A.replace('20100101000000/', '20100101000000if_/') };
+    put(root, 'a/wayback.json', { version: 2, sources: { [url]: first }, entries: { [url]: flagged } });
+    put(root, 'b/wayback.json', { version: 2, entries: { [url]: first } });
+    put(root, 'c/wayback.json', { version: 2, sources: { [url]: later } });
+    const found = discover(root);
+    const before = await against(found, cache);
+    assert.equal(before.unfetched.length, 2);
+    assert.equal(before.unfetched[0].waybackUrl, flagged.wayback);
+    assert.deepEqual(before.unfetched[0].files, ['a/wayback.json', 'b/wayback.json']);
+    assert.deepEqual(before.unfetched[1].files, ['c/wayback.json']);
+    await commitEntry(cache, { key: `20100101000000/${url}`, status: 'empty', contentType: 'text/html' });
+    const after = await against(found, cache);
+    assert.deepEqual(after.cached.map(i => i.key), [`20100101000000/${url}`]);
+    assert.deepEqual(after.unfetched.map(i => i.key), [`20200101000000/${url}`]);
+  });
+});

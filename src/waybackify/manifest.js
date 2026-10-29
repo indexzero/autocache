@@ -287,7 +287,7 @@ export function extractArchiveUrls(markdown) {
  * @property {string} path - The source file path, exactly as given — file
  *   paths are identity here; no directory-layout conventions.
  * @property {'inline'|'manifest'} source - Where the reference lives: prose
- *   markdown, or the sibling manifest's entries.
+ *   markdown, or the sibling manifest's entries and sources.
  * @property {string} timestamp - Capture timestamp, parsed from the URL itself.
  * @property {string} originalUrl - The archived original URL embedded in the URL.
  * @property {string} waybackUrl - The wayback URL exactly as spelled.
@@ -297,7 +297,7 @@ export function extractArchiveUrls(markdown) {
  * Enumerate the wayback references of one markdown source file, deduped per
  * (source, capture) and deterministically ordered (source, then timestamp,
  * then originalUrl). Inline links only by default; `manifest: true` also
- * folds in the sibling `wayback.json` entries (excluded urls reference
+ * folds in the sibling `wayback.json` entries and sources (excluded urls reference
  * nothing and are rightly absent).
  *
  * Throws — loudly, with path + URL context — if an inline reference does not
@@ -337,7 +337,8 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
   if (manifest) {
     const sibling = path.join(path.dirname(filePath), 'wayback.json');
     if (fs.existsSync(sibling)) {
-      for (const entry of Object.values(readManifest(sibling).entries)) {
+      const m = readManifest(sibling);
+      for (const entry of [...Object.values(m.entries), ...Object.values(m.sources)]) {
         add('manifest', entry.wayback);
       }
     }

@@ -325,7 +325,7 @@ const worklists = await against(ledger, cacheRoot);
 ```
 
 `sourceRefs(file, { manifest })` enumerates one file's wayback references
-(inline markdown refs, optionally the sibling `wayback.json`'s entries),
+(inline markdown refs, optionally the sibling `wayback.json`'s entries and sources),
 deduped and deterministically ordered — the per-file unit the CLI's
 enumeration surface wraps.
 

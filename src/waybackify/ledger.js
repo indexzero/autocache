@@ -76,7 +76,8 @@ function walk(root, dir, found) {
  * Determinism: manifests merge in sorted-path order and the FIRST verdict
  * for a url key wins (a url two manifests resolved to different captures —
  * each near its own source's date — keeps the first; a union file needs one
- * representative verdict, not all of them). `exclude` is a set union.
+ * representative verdict, not all of them). `sources` is unioned separately
+ * with the same first-seen rule. `exclude` is a set union.
  * `noRewrite` is never unioned: it is one author's intent for one post, not
  * a verdict that another source can reuse. A url
  * that lands in more than one section is harmless: consumers look up with
@@ -92,8 +93,10 @@ export function flatten(discovered) {
     for (const [url, target] of Object.entries(manifest.rewrites)) {
       if (!Object.hasOwn(out.rewrites, url)) out.rewrites[url] = target;
     }
-    for (const [url, entry] of Object.entries(manifest.entries)) {
-      if (!Object.hasOwn(out.entries, url)) out.entries[url] = { ...entry };
+    for (const section of ['entries', 'sources']) {
+      for (const [url, entry] of Object.entries(manifest[section])) {
+        if (!Object.hasOwn(out[section], url)) out[section][url] = { ...entry };
+      }
     }
     for (const url of manifest.exclude) exclude.add(url);
   }
@@ -115,7 +118,7 @@ export function flatten(discovered) {
 
 /**
  * Join a discovered ledger against a cache root: every capture the ledger's
- * entries reference, deduped by capture key and classified by the root's
+ * entries and sources reference, deduped by capture key and classified by the root's
  * sidecars into worklists —
  *
  *   unfetched     no sidecar: `cache` still has to fetch it
@@ -136,7 +139,7 @@ export function flatten(discovered) {
 export async function against(discovered, cacheRoot) {
   const byKey = new Map();
   for (const { file, manifest } of discovered) {
-    for (const entry of Object.values(manifest.entries)) {
+    for (const entry of [...Object.values(manifest.entries), ...Object.values(manifest.sources)]) {
       // readManifest already proved parseability; parse again here only to
       // derive the capture identity.
       const parsed = parseWaybackUrl(entry.wayback);

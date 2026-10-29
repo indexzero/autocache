@@ -16,6 +16,8 @@ Document identity lives in the optional schema v2 `sources` map of
 `{ wayback, timestamp, checkedAt? }` shape as `entries`. Missing `sources`
 reads as empty. A timestamp must contain 14 digits. `apply` ignores this
 map, and an unresolved source remains an error rather than a link exclusion.
+After `cache fill`, source captures are remastered with the rest of the cache.
+Static verification reports missing bodies and missing captures named by the build record.
 
 ## The two tiers
 

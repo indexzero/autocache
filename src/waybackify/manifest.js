@@ -531,8 +531,11 @@ export async function generate(source, universe, seen, options = {}) {
         continue;
       }
     }
-    manifest.sources[url] = { ...entry };
-    seen.sources[url] = { ...entry };
+    for (const target of [manifest.sources, seen.sources]) {
+      Object.defineProperty(target, url, {
+        value: { ...entry }, enumerable: true, writable: true, configurable: true
+      });
+    }
     seenCaptures.set(key, entry);
   }
 

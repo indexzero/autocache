@@ -95,7 +95,11 @@ export function flatten(discovered) {
     }
     for (const section of ['entries', 'sources']) {
       for (const [url, entry] of Object.entries(manifest[section])) {
-        if (!Object.hasOwn(out[section], url)) out[section][url] = { ...entry };
+        if (!Object.hasOwn(out[section], url)) {
+          Object.defineProperty(out[section], url, {
+            value: { ...entry }, enumerable: true, writable: true, configurable: true
+          });
+        }
       }
     }
     for (const url of manifest.exclude) exclude.add(url);

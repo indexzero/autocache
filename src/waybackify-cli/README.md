@@ -17,7 +17,7 @@ their meanings were inverted from these concepts.
 ## Commands
 
 ```
-waybackify manifest <source.md> -u universe.json [-s seen.json] -o wayback.json [--offline]
+waybackify manifest <source.md> -u universe.json [-s seen.json] -o wayback.json [--source <url> ...] [--offline]
 waybackify rewrite  <source.md> -m wayback.json -o <out.md>
 waybackify ledger   <dir> [--flatten] [--root <cache-root>]
 waybackify check    <wayback-url>
@@ -39,7 +39,7 @@ for commands that emit a single file (`manifest`, `rewrite`). The old spellings
 
 | command | does | output |
 |---|---|---|
-| `manifest` | **Generate** the manifest for one markdown source: extract live links, bake the Universe subset (`-u`, policy), copy verdicts from the seen union (`-s`, **read-write**, Manifest-shaped — bootstrap it with `ledger --flatten`), resolve only never-seen urls against the archive. A previous manifest at `-o` keeps its authored `noRewrite` set. **Idempotent**: a rerun with the same seen file makes zero network calls and writes byte-identical output. `--offline` fails on urls the universe + seen cannot answer instead of querying | canonical manifest at `-o`; seen file extended in place; one JSON stats line (`{output, urls, fromUniverse, fromSeen, resolved, deferred}`) on stdout; unresolved urls → stderr + exit 1, rerun to resume |
+| `manifest` | **Generate** the manifest for one markdown source: extract live links, bake the Universe subset (`-u`, policy), copy verdicts from the seen union (`-s`, **read-write**, Manifest-shaped — bootstrap it with `ledger --flatten`), resolve only never-seen urls against the archive. A previous manifest at `-o` keeps its authored `noRewrite` set and document `sources`. Repeat `--source <url>` to add document captures. **Idempotent**: a rerun with the same seen file makes zero network calls and writes byte-identical output. `--offline` fails on urls the universe + seen cannot answer instead of querying | canonical manifest at `-o`; seen file extended in place; one JSON stats line (`{output, urls, fromUniverse, fromSeen, resolved, deferred}`) on stdout; unresolved urls → stderr + exit 1, rerun to resume |
 | `rewrite` | **Apply** a manifest to a markdown source (the library's `manifest.js#apply`): precedence `noRewrite → exclude → rewrites → entries → untouched + warn`; fenced code and link text never touched; already-archived links pass through | the published form at `-o`; a url with no verdict warns on stderr and exits 1 (written anyway, untouched — surfaced, never guessed) |
 | `ledger` | Survey the **collection**: every `wayback.json` under `<dir>`, file paths as identity. `--flatten` unions the ledger into ONE canonical manifest (the seen-file bootstrap); `--root <cache-root>` joins referenced captures against the cache's sidecars | default: JSONL `{file, entries, rewrites, exclude}` (counts); `--flatten`: one canonical manifest JSON; `--root`: JSONL `{state: unfetched\|cached\|interstitial\|error, key, waybackUrl, timestamp, originalUrl, files, status}` |
 | `check` | Full **wayback-404 verdict** for the exact capture: CDX `statuscode` + soft-404 content heuristics on the replay body — the corpus audit primitive | JSON verdict on stdout (`{verdict: good\|wayback404\|suspect, statuscode, reason, snippet}`); exit 0 = verified good, nonzero = bad/suspect |
@@ -66,6 +66,24 @@ waybackify ledger docs --root /var/cache/wayback \
 waybackify ledger docs --flatten > seen.json
 waybackify manifest docs/post/README.md -u universe.json -s seen.json -o docs/post/wayback.json
 ```
+
+`manifest --source <url>` records the document's Original Resource under
+`sources`. Repeat the flag for a document merged from several originals:
+
+```sh
+waybackify manifest post.md -u universe.json -o wayback.json \
+  --source http://original.example/post --source http://second.example/post
+```
+
+Existing sources keep their captures, including when no source flag is passed.
+New sources reuse captures from the seen union or use the same resolver and
+`--near` hint as links. `--offline` allows only already-known captures.
+Link policy does not answer document identity requests.
+
+If any requested source is unarchived or fails resolution, the command reports
+it and exits 1. Both the output manifest and seen file remain unchanged.
+Successful source captures never change `entries` or link exclusions.
+The existing stdout counts describe link resolution.
 
 ## Exit codes
 

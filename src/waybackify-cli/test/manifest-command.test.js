@@ -279,3 +279,124 @@ test('noRewrite: the prior manifest at -o keeps its authored never-rewrite set a
   assert.equal((await generate([SOURCE, '-u', UNIVERSE, '-s', seenFile, '-o', outFile])).code, EXIT.OK);
   assert.equal(fs.readFileSync(outFile, 'utf8'), first);
 });
+
+
+const originalA = 'http://original.example/post';
+const originalB = 'http://second.example/post';
+const snapshot = (url, timestamp = '20140403040000') => ({
+  url: `https://web.archive.org/web/${timestamp}/${url}`, timestamp
+});
+function sourceFixture(text = 'A document with no links.') {
+  const dir = tmp();
+  const source = path.join(dir, 'post.md');
+  const output = path.join(dir, 'wayback.json');
+  const seen = path.join(dir, 'seen.json');
+  fs.writeFileSync(source, text);
+  return { source, output, seen, argv: [source, '-u', UNIVERSE, '-o', output] };
+}
+
+test('repeated --source flags resolve once each, forward --near, and write sorted sources', async () => {
+  const f = sourceFixture();
+  const calls = [];
+  const result = await generate([...f.argv, '--source', originalB, '--source', originalA, '--source', originalB, '--near', '20140203'], {
+    resolve: (url, opts) => { calls.push([url, opts.near]); return snapshot(url); }
+  });
+  assert.equal(result.code, EXIT.OK);
+  assert.deepEqual(calls, [[originalB, '20140203'], [originalA, '20140203']]);
+  const m = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+  assert.deepEqual(Object.keys(m.sources), [originalA, originalB]);
+  assert.equal(m.sources[originalA].wayback, snapshot(originalA).url);
+  assert.equal(m.sources[originalA].timestamp, '20140403040000');
+  assert.deepEqual(m.entries, {});
+  assert.equal(m.exclude, undefined);
+});
+
+test('source reruns preserve bytes and existing captures, including a run without flags', async () => {
+  const f = sourceFixture();
+  const argv = [...f.argv, '--source', originalA];
+  assert.equal((await generate(argv, { resolve: url => snapshot(url) })).code, EXIT.OK);
+  const first = fs.readFileSync(f.output, 'utf8');
+  const rerun = await generate([...argv, '--offline']);
+  assert.equal(rerun.code, EXIT.OK);
+  assert.deepEqual(rerun.calls, []);
+  assert.equal(fs.readFileSync(f.output, 'utf8'), first);
+  assert.equal((await generate(f.argv)).code, EXIT.OK);
+  assert.equal(fs.readFileSync(f.output, 'utf8'), first);
+  const added = await generate([...f.argv, '--source', originalA, '--source', originalB], { resolve: url => {
+    assert.equal(url, originalB);
+    return snapshot(url, '20200101000000');
+  } });
+  assert.equal(added.code, EXIT.OK);
+  const m = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+  assert.deepEqual(m.sources[originalA], JSON.parse(first).sources[originalA]);
+  assert.equal(m.sources[originalB].timestamp, '20200101000000');
+});
+
+test('offline sources reuse seen captures independently of link policy', async () => {
+  const f = sourceFixture();
+  const excluded = 'https://tracker.example.com/pixel.gif';
+  const entry = url => ({ wayback: snapshot(url).url, timestamp: '20140403040000' });
+  fs.writeFileSync(f.seen, JSON.stringify({
+    version: 2, sources: { [originalA]: entry(originalA) }, entries: { [excluded]: entry(excluded) }, exclude: [originalA]
+  }));
+  const result = await generate([...f.argv, '-s', f.seen, '--source', excluded, '--source', originalA, '--offline']);
+  assert.equal(result.code, EXIT.OK);
+  assert.deepEqual(result.calls, []);
+  const m = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+  assert.deepEqual(m.sources, { [originalA]: entry(originalA), [excluded]: entry(excluded) });
+  assert.deepEqual(m.entries, {});
+  assert.equal(m.exclude, undefined);
+});
+
+for (const [name, resolveBad] of [
+  ['unarchived', () => null],
+  ['resolver failure', () => { throw new Error('resolver unavailable'); }],
+  ['invalid timestamp', url => ({ ...snapshot(url), timestamp: '2014' })]
+]) {
+  test(`a source with ${name} leaves existing manifest and seen bytes unchanged`, async () => {
+    const f = sourceFixture('[Link](http://linked.example/page)');
+    const existing = { wayback: snapshot('http://existing.example/post').url, timestamp: '20140403040000' };
+    const manifestBytes = JSON.stringify({ version: 2, sources: { 'http://existing.example/post': existing }, entries: {} }, null, 4) + '\n';
+    const seenBytes = '{"version":2,"entries":{}}\n';
+    fs.writeFileSync(f.output, manifestBytes);
+    fs.writeFileSync(f.seen, seenBytes);
+    const result = await generate([...f.argv, '-s', f.seen, '--source', originalA, '--source', originalB], {
+      resolve: url => url === originalB ? resolveBad(url) : snapshot(url)
+    });
+    assert.equal(result.code, EXIT.DOMAIN);
+    assert.equal(fs.readFileSync(f.output, 'utf8'), manifestBytes);
+    assert.equal(fs.readFileSync(f.seen, 'utf8'), seenBytes);
+    assert.ok(result.stderr.some(s => s.includes(`unresolved source: ${originalB}`)));
+    assert.deepEqual(result.stdout, []);
+  });
+}
+
+test('unresolved offline sources create neither output file and report every requested source', async () => {
+  const f = sourceFixture();
+  const result = await generate([...f.argv, '-s', f.seen, '--source', originalA, '--source', originalB, '--offline']);
+  assert.equal(result.code, EXIT.DOMAIN);
+  assert.deepEqual(result.calls, []);
+  assert.equal(fs.existsSync(f.output), false);
+  assert.equal(fs.existsSync(f.seen), false);
+  assert.ok(result.stderr.some(s => s.includes(`unresolved source: ${originalA}`)));
+  assert.ok(result.stderr.some(s => s.includes(`unresolved source: ${originalB}`)));
+});
+
+test('sources do not alter ordinary link generation', async () => {
+  const f = sourceFixture(fs.readFileSync(SOURCE, 'utf8'));
+  fs.copyFileSync(SEEN, f.seen);
+  assert.equal((await generate([...f.argv, '-s', f.seen, '--offline'])).code, EXIT.OK);
+  const ordinary = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+  assert.equal((await generate([...f.argv, '-s', f.seen, '--source', originalA], { resolve: url => snapshot(url) })).code, EXIT.OK);
+  const withSource = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+  delete withSource.sources;
+  assert.deepEqual(withSource, ordinary);
+});
+
+test('--source rejects non-web and malformed URLs before writing', async () => {
+  const f = sourceFixture();
+  for (const value of ['not-a-url', 'ftp://original.example/post', 'https://']) {
+    assert.equal((await generate([...f.argv, '--source', value])).code, EXIT.USAGE);
+  }
+  assert.equal(fs.existsSync(f.output), false);
+});

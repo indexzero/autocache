@@ -384,6 +384,13 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *      cannot answer defers the url. Only a link that survives the probe is
  *      `exclude`d.
  *
+ * Document identity is separate from link policy: `sources` carries prior
+ * captures forward, and `sourceUrls` adds requested originals. Existing
+ * sources keep their captures. New sources reuse seen captures or the same
+ * resolver and near hint as links. Link rewrites and exclusions never answer
+ * a source request. A missing or failed capture enters `unresolvedSources`.
+ * Callers must leave output files untouched when that list is non-empty.
+ *
  * `seen` is Manifest-shaped and READ-WRITE: pass the parsed union file
  * (bootstrap it with ledger.js#flatten), and write the RETURNED `seen` — a
  * normalized copy extended with this run's verdicts — back to disk after
@@ -396,6 +403,9 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  * @param {string} [options.near] - preferred capture timestamp (YYYYMMDD[HHMMSS])
  * @param {string[]} [options.noRewrite] - the author's never-rewrite set,
  *   read from the post's previous manifest by the caller
+ * @param {Record<string,{wayback:string,timestamp:string,checkedAt?:string}>} [options.sources]
+ *   - prior document captures, preserved unchanged
+ * @param {string[]} [options.sourceUrls] - document originals to resolve
  * @param {Function} [options.resolve] - async (url, { near }) →
  *   { url: waybackUrl, timestamp } | null; injectable for offline use/tests
  * @param {WaybackMachine} [options.wayback] - client backing the default resolver
@@ -403,6 +413,7 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *   the GitHub root probe (github.js#probeGithub), injectable for tests
  * @returns {Promise<{ manifest: object, seen: object,
  *   deferred: Array<{ url: string, error: string }>,
+ *   unresolvedSources: Array<{ url: string, error: string }>,
  *   stats: { urls: number, fromUniverse: number, fromSeen: number, resolved: number } }>}
  */
 export async function generate(source, universe, seen, options = {}) {
@@ -413,7 +424,9 @@ export async function generate(source, universe, seen, options = {}) {
 
   const probe = options.probe ?? probeGithub;
   const uni = universe ?? emptyUniverse();
-  const manifest = validateManifest({ version: MANIFEST_VERSION, noRewrite: options.noRewrite ?? [] }, 'noRewrite');
+  const manifest = validateManifest({
+    version: MANIFEST_VERSION, noRewrite: options.noRewrite ?? [], sources: options.sources ?? {}
+  }, 'generate');
   const forbidden = new Set(manifest.noRewrite.map(matchKey));
   seen = seen ? validateManifest(seen, 'seen') : emptyManifest();
   const deferred = [];
@@ -486,7 +499,34 @@ export async function generate(source, universe, seen, options = {}) {
     }
   }
 
-  return { manifest, seen, deferred, stats };
+  const unresolvedSources = [];
+  // Source captures take precedence over link captures in the seen union.
+  // Link generation above never consults this index or document identity.
+  const seenCaptures = new Map(
+    [...Object.entries(seen.entries), ...Object.entries(seen.sources)].map(([url, entry]) => [matchKey(url), entry])
+  );
+  for (const url of new Set(options.sourceUrls ?? [])) {
+    if (Object.hasOwn(manifest.sources, url)) continue;
+    const key = matchKey(url);
+    let entry = seenCaptures.get(key);
+    if (!entry) {
+      try {
+        const snapshot = await resolve(url, { near });
+        if (!snapshot) throw new Error('no archived capture');
+        entry = validateEntry(url, {
+          wayback: snapshot.url, timestamp: snapshot.timestamp, checkedAt: new Date().toISOString()
+        }, detail => new Error(`source resolution: invalid manifest — ${detail}`));
+      } catch (error) {
+        unresolvedSources.push({ url, error: error?.message ?? String(error) });
+        continue;
+      }
+    }
+    manifest.sources[url] = { ...entry };
+    seen.sources[url] = { ...entry };
+    seenCaptures.set(key, entry);
+  }
+
+  return { manifest, seen, deferred, unresolvedSources, stats };
 }
 
 /* ------------------------------------------------------------------------ *

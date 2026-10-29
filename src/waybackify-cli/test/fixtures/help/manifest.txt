@@ -11,6 +11,8 @@ makes zero network calls and writes byte-identical output.
 Output: canonical manifest at -o; the seen file (read-write)
 extended with this run's verdicts; one JSON stats line on stdout.
 Unresolved urls defer — exit 1, rerun to resume.
+Repeat --source to record document originals. Existing captures stay.
+An unresolved source exits 1 without writing the manifest or seen file.
 
 Arguments:
   <source.md>            markdown source file (pristine, live-link form)
@@ -19,6 +21,7 @@ Flags:
   --universe|-u <file>   Universe file (rewrites + excludes policy) — required
   --seen|-s <file>       Manifest-shaped resolution union, read-write (bootstrap: ledger --flatten)
   --output|-o <file>     manifest destination (wayback.json) — required
+  --source <url>         document Original Resource to capture (repeatable, merged into sources)
   --offline              fail on urls the universe and seen file cannot answer (zero network)
   --near <ts>            preferred capture timestamp (YYYYMMDD[HHMMSS]) — resolve never-seen urls to the archive capture closest to it
   --help|-h              Show help

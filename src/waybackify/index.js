@@ -1,5 +1,6 @@
 import { Impit } from 'impit';
 import { NOOP_LOGGER } from './noop-logger.js';
+import { sourceFilter, sourceKey } from './source-original.js';
 
 /** CDX from/to (YYYYMMDD) spanning ±`months` around a YYYYMMDD[HHMMSS] date. */
 function window(near, months) {
@@ -56,8 +57,9 @@ class WaybackMachine {
    * @param {string} url - The URL to find an archived version of
    * @param {Object} [opts]
    * @param {string} [opts.near] - Preferred timestamp (YYYYMMDD[HHMMSS])
-   * @param {boolean} [opts.exactOriginal=false] - Require the exact original
-   *   URL before choosing a capture; document sources cannot use CDX aliases.
+   * @param {boolean} [opts.exactOriginal=false] - Require the same original
+   *   before choosing a capture, allowing scheme/host case, default ports, and
+   *   an empty root path. Document sources cannot use CDX resource aliases.
    * @returns {Promise<Object|null>} { url, timestamp, available } or null
    */
   async getSnapshot(url, { near, exactOriginal = false } = {}) {
@@ -125,7 +127,8 @@ class WaybackMachine {
    * so a caller never mistakes a throttle for "not archived".
    * `params` land after the defaults, so they can override them; a null/
    * undefined value DELETES the default (getCapture drops the statuscode:200
-   * filter this way).
+   * filter this way). `exactOriginal` applies source identity on the server
+   * before its result limit and checks the returned originals again locally.
    */
   async #cdxRows(url, params, exactOriginal = false) {
     const api = new URL('https://web.archive.org/cdx/search/cdx');
@@ -138,12 +141,12 @@ class WaybackMachine {
       else api.searchParams.set(k, String(v));
     }
     if (exactOriginal) {
-      // CDX URL keys can fold path/query case. Filter the original field on
-      // the server BEFORE limits so another spelling cannot hide this URL's
-      // nearest/latest capture. CDX accepts repeated, case-sensitive Java
-      // regex filters; quote every metacharacter in the literal URL.
-      api.searchParams.append('filter', `original:^${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+      // CDX URL keys can fold path/query case. Filter the original BEFORE
+      // limits, admitting only the spellings accepted by sourceKey. Case
+      // folding is confined to scheme/host; path/query bytes stay exact.
+      api.searchParams.append('filter', `original:${sourceFilter(url)}`);
     }
+    const requestedKey = exactOriginal ? sourceKey(url) : undefined;
     const requestUrl = api.toString();
 
     let lastError;
@@ -165,7 +168,7 @@ class WaybackMachine {
           this.logger.info({ evt: 'response', url: requestUrl, status: 200, ms, attempt: attempt + 1, contentType, rows: rows.length });
           // Check the response too: an injected transport or an archive that
           // ignores the filter must not attribute another original's capture.
-          return exactOriginal ? rows.filter(row => row[1] === url) : rows;
+          return exactOriginal ? rows.filter(row => sourceKey(row[1]) === requestedKey) : rows;
         }
         lastError = new Error(`HTTP ${res.status}`);
         // transient — back off and retry. The give-up (final attempt) is logged

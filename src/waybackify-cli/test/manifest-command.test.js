@@ -409,7 +409,11 @@ const distinctOriginals = [
   ['query key case', 'http://identity.example/?ID=abc', 'http://identity.example/?id=abc'],
   ['scheme', 'http://identity.example/post', 'https://identity.example/post'],
   ['www host', 'http://www.identity.example/post', 'http://identity.example/post'],
-  ['path slash', 'http://identity.example/post/', 'http://identity.example/post']
+  ['path slash', 'http://identity.example/post/', 'http://identity.example/post'],
+  ['non-default port', 'http://identity.example:8080/post', 'http://identity.example/post'],
+  ['percent encoding', 'http://identity.example/%50ost', 'http://identity.example/Post'],
+  ['percent escape case', 'http://identity.example/?id=%2f', 'http://identity.example/?id=%2F'],
+  ['dot segments', 'http://identity.example/a/../post', 'http://identity.example/post']
 ];
 
 for (const [name, first, second] of distinctOriginals) {
@@ -433,7 +437,7 @@ for (const [name, first, second] of distinctOriginals) {
   });
 }
 
-for (const [name, known, requested] of distinctOriginals.slice(0, 3)) {
+for (const [name, known, requested] of distinctOriginals) {
   for (const section of ['sources', 'entries']) {
     test(`offline ${section} do not answer a distinct ${name} source or write either file`, async () => {
       for (const existingOutput of [false, true]) {
@@ -475,7 +479,7 @@ for (const section of ['sources', 'entries']) {
 }
 
 
-for (const [name, first, second] of distinctOriginals.slice(0, 3)) {
+for (const [name, first, second] of distinctOriginals) {
   for (const section of ['sources', 'entries']) {
     test(`offline sources reuse the correct cached ${name} captures from ${section}`, async () => {
       const f = sourceFixture();
@@ -500,4 +504,75 @@ test('a source can reuse a known capture by its actual original despite an alias
   assert.equal(result.code, EXIT.OK);
   assert.deepEqual(result.calls, []);
   assert.deepEqual(JSON.parse(fs.readFileSync(f.output, 'utf8')).sources, { [originalA]: capture });
+});
+
+
+for (const [name, first, second] of [
+  ['HTTP default port', 'http://identity.example/Post', 'http://identity.example:80/Post'],
+  ['HTTPS default port', 'https://identity.example/Post', 'https://identity.example:443/Post'],
+  ['bare root', 'http://identity.example', 'http://identity.example/'],
+  ['root with query', 'https://identity.example?ID=%2f', 'https://identity.example:443/?ID=%2f'],
+  ['scheme and host case', 'HTTP://Identity.Example/Post', 'http://identity.example/Post'],
+  ['combined spellings', 'HTTPS://Identity.Example:443', 'https://identity.example/']
+]) {
+  for (const section of ['sources', 'entries']) {
+    test(`offline sources reuse ${name} in ${section} without migrating keys or metadata`, async () => {
+      for (const [known, requested] of [[first, second], [second, first]]) {
+        const f = sourceFixture();
+        const capture = {
+          wayback: snapshot(known).url, timestamp: '20140403040000',
+          checkedAt: '2020-01-02T03:04:05Z', note: 'keep prior capture metadata'
+        };
+        const alias = 'http://unrelated.example/alias';
+        const prior = { version: 2, [section]: { [known]: capture, [alias]: capture } };
+        fs.writeFileSync(f.seen, JSON.stringify(prior));
+        const argv = [...f.argv, '-s', f.seen, '--source', requested, '--source', requested, '--offline'];
+        const result = await generate(argv);
+        assert.equal(result.code, EXIT.OK);
+        assert.deepEqual(result.calls, []);
+        const manifest = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+        const seen = JSON.parse(fs.readFileSync(f.seen, 'utf8'));
+        assert.deepEqual(manifest.sources, { [requested]: capture });
+        assert.deepEqual(manifest.entries, {});
+        assert.deepEqual(seen[section][known], capture);
+        assert.deepEqual(seen[section][alias], capture);
+        assert.deepEqual(seen.sources[requested], capture);
+        const outputBytes = fs.readFileSync(f.output, 'utf8');
+        const seenBytes = fs.readFileSync(f.seen, 'utf8');
+        assert.equal((await generate(argv)).code, EXIT.OK);
+        assert.equal(fs.readFileSync(f.output, 'utf8'), outputBytes);
+        assert.equal(fs.readFileSync(f.seen, 'utf8'), seenBytes);
+      }
+    });
+  }
+}
+
+test('equivalent requested spellings share one resolved capture while retaining both source keys', async () => {
+  const f = sourceFixture();
+  const first = 'HTTP://Identity.Example:80/Post';
+  const second = 'http://identity.example/Post';
+  const calls = [];
+  const result = await generate([...f.argv, '--source', first, '--source', second, '--source', first], {
+    resolve: url => { calls.push(url); return snapshot(second); }
+  });
+  assert.equal(result.code, EXIT.OK);
+  assert.deepEqual(calls, [first]);
+  const manifest = JSON.parse(fs.readFileSync(f.output, 'utf8'));
+  assert.deepEqual(Object.keys(manifest.sources), [first, second].sort());
+  assert.deepEqual(manifest.sources[first], manifest.sources[second]);
+  assert.equal(manifest.sources[first].wayback, snapshot(second).url);
+});
+
+test('an existing source keeps its capture when an equivalent seen source has a newer capture', async () => {
+  const f = sourceFixture();
+  const requested = 'http://identity.example/Post';
+  const known = 'HTTP://Identity.Example:80/Post';
+  const prior = { wayback: snapshot(requested).url, timestamp: '20140403040000', note: 'preserve' };
+  const newer = { wayback: snapshot(known, '20200101000000').url, timestamp: '20200101000000' };
+  fs.writeFileSync(f.output, JSON.stringify({ version: 2, sources: { [requested]: prior }, entries: {} }));
+  fs.writeFileSync(f.seen, JSON.stringify({ version: 2, sources: { [known]: newer }, entries: {} }));
+  const result = await generate([...f.argv, '-s', f.seen, '--source', requested, '--source', known, '--offline']);
+  assert.equal(result.code, EXIT.OK);
+  assert.deepEqual(result.calls, []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.output, 'utf8')).sources, { [requested]: prior, [known]: newer });
 });

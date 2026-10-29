@@ -53,6 +53,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseWaybackUrl } from './audit.js';
+import { sourceKey } from './source-original.js';
 import { probeGithub } from './github.js';
 import { WaybackMachine, extractLinks } from './index.js';
 import { emptyUniverse, isExcluded, subset } from './universe.js';
@@ -386,8 +387,9 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *
  * Document identity is separate from link policy: `sources` carries prior
  * captures forward, and `sourceUrls` adds requested originals. Existing
- * sources keep their captures. New sources reuse captures for the exact
- * original URL, preserving path/query case, or use the same resolver and near
+ * sources keep their captures. New sources reuse captures for the same
+ * original (scheme/host case, default port and root slash may differ; path,
+ * query and percent-encoding stay exact), or use the same resolver and near
  * hint as links with exactOriginal enabled. Link rewrites and exclusions never
  * answer a source request. A missing or failed capture enters `unresolvedSources`.
  * Callers must leave output files untouched when that list is non-empty.
@@ -503,15 +505,17 @@ export async function generate(source, universe, seen, options = {}) {
   const unresolvedSources = [];
   // Source captures take precedence over link captures in the seen union.
   // Link keys may alias another original. Index the capture's actual original
-  // instead, with exact strings: link matching must not fold source identity.
+  // instead, under source equivalence: link matching must not fold path/query
+  // case or equate distinct resources. Stored keys and metadata stay unchanged.
   const seenCaptures = new Map(
     [...Object.values(seen.entries), ...Object.values(seen.sources)]
-      .map(entry => [parseWaybackUrl(entry.wayback)?.original, entry])
+      .map(entry => [sourceKey(parseWaybackUrl(entry.wayback)?.original), entry])
       .filter(([original]) => original !== undefined)
   );
   for (const url of new Set(options.sourceUrls ?? [])) {
     if (Object.hasOwn(manifest.sources, url)) continue;
-    let entry = seenCaptures.get(url);
+    const key = sourceKey(url);
+    let entry = seenCaptures.get(key);
     if (!entry) {
       try {
         const snapshot = await resolve(url, { near, exactOriginal: true });
@@ -519,7 +523,7 @@ export async function generate(source, universe, seen, options = {}) {
         entry = validateEntry(url, {
           wayback: snapshot.url, timestamp: snapshot.timestamp, checkedAt: new Date().toISOString()
         }, detail => new Error(`source resolution: invalid manifest — ${detail}`));
-        if (parseWaybackUrl(entry.wayback).original !== url) {
+        if (sourceKey(parseWaybackUrl(entry.wayback).original) !== key) {
           throw new Error('capture does not match the source original');
         }
       } catch (error) {
@@ -529,7 +533,7 @@ export async function generate(source, universe, seen, options = {}) {
     }
     manifest.sources[url] = { ...entry };
     seen.sources[url] = { ...entry };
-    seenCaptures.set(url, entry);
+    seenCaptures.set(key, entry);
   }
 
   return { manifest, seen, deferred, unresolvedSources, stats };

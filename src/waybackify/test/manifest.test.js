@@ -75,7 +75,7 @@ describe('validateManifest', () => {
       null, [], 'capture', {}, { timestamp: '20100101000000' },
       { wayback: 'https://example.com/', timestamp: '20100101000000' },
       ...[undefined, null, 20100101000000, '', '20100101', '201001010000000', '2010010100000x',
-        '2010-01-01T00:00:00Z'].map(timestamp => ({ wayback: WB_A, timestamp }))
+        '2010-01-01T00:00:00Z', '20100101000000\n'].map(timestamp => ({ wayback: WB_A, timestamp }))
     ];
     for (const entry of invalid) {
       let expected;

@@ -171,7 +171,7 @@ function validateEntry(url, entry, bad) {
   if (typeof entry.wayback !== 'string' || parseWaybackUrl(entry.wayback) === null) {
     throw bad(`entry for ${url} has an unparseable wayback URL: ${entry.wayback}`);
   }
-  if (typeof entry.timestamp !== 'string' || !/^\d{14}$/.test(entry.timestamp)) {
+  if (typeof entry.timestamp !== 'string' || entry.timestamp.length !== 14 || !/^\d{14}$/.test(entry.timestamp)) {
     throw bad(`entry for ${url} must have a 14-digit timestamp (YYYYMMDDHHMMSS): ${entry.timestamp}`);
   }
   return { ...entry };

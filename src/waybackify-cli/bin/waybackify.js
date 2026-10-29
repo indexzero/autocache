@@ -16,6 +16,7 @@ import { cacheVerifyHandler } from '../src/commands/cache-verify.js';
 import { checkHandler } from '../src/commands/check.js';
 import { ledgerHandler } from '../src/commands/ledger.js';
 import { manifestHandler } from '../src/commands/manifest.js';
+import { mergeHandler } from '../src/commands/merge.js';
 import { remasterBuildHandler } from '../src/commands/remaster-build.js';
 import { remasterVerifyHandler } from '../src/commands/remaster-verify.js';
 import { rewriteHandler } from '../src/commands/rewrite.js';
@@ -26,6 +27,7 @@ process.exitCode = await run(process.argv.slice(2), {
     manifest: manifestHandler(),
     rewrite: rewriteHandler(),
     ledger: ledgerHandler(),
+    merge: mergeHandler(),
     check: checkHandler(),
     search: searchHandler(),
     audit: auditHandler(),

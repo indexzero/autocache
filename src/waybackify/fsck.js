@@ -354,6 +354,9 @@ async function walkShards(root, sub) {
  * @param {string} root - store root (contains cap/, meta/, tmp/, and the trash/ quarantine)
  * @param {Object} [options]
  * @param {boolean} [options.fix=false] - move orphan cap/ files to trash/, delete stale tmp/
+ * @param {(entry: { key: unknown, path: string }) => void | Promise<void>} [options.onSidecar]
+ *   Receives each parsed object's identity during the scan. This does not
+ *   certify validity: callers must still check the completed fsck report.
  * @param {Object} [options.hooks] - test seams around the moves: `beforeRecheck(finding)` runs
  *   before each move's sidecar re-read, `beforeMove(finding)` runs after that re-read and right
  *   before the move, `afterMoves()` runs after the last move and before the post-move re-read.
@@ -480,6 +483,8 @@ export async function fsck(root, options = {}) {
       findings.malformed.push({ hash, aa, path: metaPath, error: 'not a JSON object' });
       continue;
     }
+
+    await options.onSidecar?.({ key: sidecar.key, path: metaPath });
 
     if (sidecar.v !== SIDECAR_VERSION) {
       findings.schemaVersion.push({ hash, aa, key: sidecar.key ?? null, v: sidecar.v ?? null });

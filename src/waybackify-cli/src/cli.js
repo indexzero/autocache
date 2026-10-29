@@ -243,6 +243,25 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     handlers.rewrite ?? notImplemented('rewrite')
   );
 
+  const merge = command(
+    'merge',
+    summary('Compare two cache roots without writing a merged corpus'),
+    description(
+      'Report the four capture-key sets after both roots pass fsck.\n' +
+        'Output: one JSONL summary followed by key-sorted conflicts.\n' +
+        'Equal body hashes or equal bodiless statuses agree.\n' +
+        'Both roots must stay quiescent. Neither input is written.\n' +
+        'Only --report is supported. No output root or writer is available.'
+    ),
+    arg('<base-root>', 'original cache directory'),
+    arg('<fetch-root>', 'second cache directory'),
+    flag('--report', 'required: emit comparison JSONL without writing a corpus'),
+    validate(({ flags }) => flags.report === true, 'merge requires --report: writing a merged corpus is not supported'),
+    validate(({ args }) => Boolean(args.baseRoot), 'missing required argument: <base-root>'),
+    validate(({ args }) => Boolean(args.fetchRoot), 'missing required argument: <fetch-root>'),
+    handlers.merge ?? notImplemented('merge')
+  );
+
   const ledger = command(
     'ledger',
     summary('Survey the manifests under a tree'),
@@ -629,7 +648,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
 
   const root = command(
     'waybackify',
-    summary('manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the waybackify library'),
+    summary('manifest / rewrite / ledger / merge / check / search / audit + the cache · remaster · bucket store groups over the waybackify library'),
     description(
       'Human-operable, xargs-composable front door over waybackify:\n' +
         'generate a manifest for a source file, rewrite it to its published\n' +
@@ -645,6 +664,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     manifest,
     rewrite,
     ledger,
+    merge,
     check,
     search,
     audit,

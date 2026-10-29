@@ -11,6 +11,7 @@
     "./beacons.js": "./beacons.js",
     "./bucket-batch.js": "./bucket-batch.js",
     "./cache.js": "./cache.js",
+    "./compare.js": "./compare.js",
     "./fsck.js": "./fsck.js",
     "./github.js": "./github.js",
     "./interstitial.js": "./interstitial.js",

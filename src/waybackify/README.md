@@ -1,5 +1,7 @@
 # waybackify
 
+Compare two cache roots with [`compareRoots`](../../docs/COMPARE.md).
+
 Transform dead links into Internet Archive Wayback Machine permalinks.
 
 ## Usage

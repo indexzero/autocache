@@ -10,7 +10,9 @@
 //     (required), and -s/--seen when given AND present on disk (a missing
 //     seen file is an empty union — the bootstrap case);
 //   - reads the previous manifest at -o/--output when it exists, and carries
-//     its authored `noRewrite` set into the new manifest;
+//     its authored `noRewrite` set and document `sources` into the new manifest;
+//   - repeated --source flags add document captures through generate(); an
+//     unresolved source leaves BOTH output files untouched;
 //   - writes the canonical manifest to -o/--output and, when -s was given,
 //     writes the extended seen union BACK to the same path (read-write);
 //   - prints ONE JSON stats line on stdout
@@ -58,7 +60,12 @@ export function manifestHandler(deps = {}) {
     // The author's never-rewrite set lives in the post's own manifest, so a
     // regeneration reads it back from -o before it writes over that file.
     const prior = fs.existsSync(flags.output) ? readManifest(flags.output) : null;
-    const options = { logger, noRewrite: prior?.noRewrite ?? [] };
+    const options = {
+      logger,
+      noRewrite: prior?.noRewrite ?? [],
+      sources: prior?.sources ?? {},
+      sourceUrls: flags.source ?? []
+    };
     // --near passes straight through to generate → resolve(url, { near }):
     // the library picks the archive capture closest to this timestamp for
     // never-seen urls (covered/seen urls are answered offline, unaffected).
@@ -75,6 +82,12 @@ export function manifestHandler(deps = {}) {
     }
 
     const result = await generate(source, universe, seen, options);
+    if (result.unresolvedSources.length > 0) {
+      for (const d of result.unresolvedSources) {
+        logger.warn({ evt: 'unresolved-source', url: d.url, error: d.error }, `unresolved source: ${d.url}: ${d.error}`);
+      }
+      throw new Error(`manifest unchanged: ${result.unresolvedSources.length} source(s) unresolved`);
+    }
 
     // Write order: manifest first (the artifact -o names), then the seen
     // union — the RETURNED seen (a normalized, extended copy), per the

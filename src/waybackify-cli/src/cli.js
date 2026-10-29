@@ -196,12 +196,15 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         '\n' +
         'Output: canonical manifest at -o; the seen file (read-write)\n' +
         'extended with this run\'s verdicts; one JSON stats line on stdout.\n' +
-        'Unresolved urls defer — exit 1, rerun to resume.'
+        'Unresolved urls defer — exit 1, rerun to resume.\n' +
+        'Repeat --source to record document originals. Existing captures stay.\n' +
+        'An unresolved source exits 1 without writing the manifest or seen file.'
     ),
     arg('<source.md>', 'markdown source file (pristine, live-link form)'),
     flag('--universe|-u <file>', 'Universe file (rewrites + excludes policy) — required'),
     flag('--seen|-s <file>', 'Manifest-shaped resolution union, read-write (bootstrap: ledger --flatten)'),
     flag('--output|-o <file>', 'manifest destination (wayback.json) — required'),
+    flag('--source <url>', 'document Original Resource to capture (repeatable, merged into sources)').multiple(),
     flag('--offline', 'fail on urls the universe and seen file cannot answer (zero network)'),
     flag('--near <ts>', 'preferred capture timestamp (YYYYMMDD[HHMMSS]) — resolve never-seen urls to the archive capture closest to it'),
     validate(({ args }) => Boolean(args.source), 'missing required argument: <source.md>'),
@@ -214,6 +217,16 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     validate(
       ({ flags }) => flags.near === undefined || /^(\d{8}|\d{14})$/.test(flags.near),
       '--near must be a YYYYMMDD or YYYYMMDDHHMMSS timestamp (8 or 14 digits)'
+    ),
+    validate(
+      ({ flags }) => (flags.source ?? []).every(url => {
+        try {
+          return /^https?:\/\//i.test(url) && Boolean(new URL(url).hostname);
+        } catch {
+          return false;
+        }
+      }),
+      '--source must be an absolute http(s) URL'
     ),
     handlers.manifest ?? notImplemented('manifest')
   );

@@ -53,6 +53,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseWaybackUrl } from './audit.js';
+import { sourceKey } from './source-original.js';
 import { probeGithub } from './github.js';
 import { WaybackMachine, extractLinks } from './index.js';
 import { emptyUniverse, isExcluded, subset } from './universe.js';
@@ -384,6 +385,15 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  *      cannot answer defers the url. Only a link that survives the probe is
  *      `exclude`d.
  *
+ * Document identity is separate from link policy: `sources` carries prior
+ * captures forward, and `sourceUrls` adds requested originals. Existing
+ * sources keep their captures. New sources reuse captures for the same
+ * original (scheme/host case, default port and root slash may differ; path,
+ * query and percent-encoding stay exact), or use the same resolver and near
+ * hint as links with exactOriginal enabled. Link rewrites and exclusions never
+ * answer a source request. A missing or failed capture enters `unresolvedSources`.
+ * Callers must leave output files untouched when that list is non-empty.
+ *
  * `seen` is Manifest-shaped and READ-WRITE: pass the parsed union file
  * (bootstrap it with ledger.js#flatten), and write the RETURNED `seen` — a
  * normalized copy extended with this run's verdicts — back to disk after
@@ -396,13 +406,17 @@ export function sourceRefs(filePath, { manifest = false } = {}) {
  * @param {string} [options.near] - preferred capture timestamp (YYYYMMDD[HHMMSS])
  * @param {string[]} [options.noRewrite] - the author's never-rewrite set,
  *   read from the post's previous manifest by the caller
- * @param {Function} [options.resolve] - async (url, { near }) →
+ * @param {Record<string,{wayback:string,timestamp:string,checkedAt?:string}>} [options.sources]
+ *   - prior document captures, preserved unchanged
+ * @param {string[]} [options.sourceUrls] - document originals to resolve
+ * @param {Function} [options.resolve] - async (url, { near, exactOriginal }) →
  *   { url: waybackUrl, timestamp } | null; injectable for offline use/tests
  * @param {WaybackMachine} [options.wayback] - client backing the default resolver
  * @param {Function} [options.probe] - async (url) → { renamed, to? } | null,
  *   the GitHub root probe (github.js#probeGithub), injectable for tests
  * @returns {Promise<{ manifest: object, seen: object,
  *   deferred: Array<{ url: string, error: string }>,
+ *   unresolvedSources: Array<{ url: string, error: string }>,
  *   stats: { urls: number, fromUniverse: number, fromSeen: number, resolved: number } }>}
  */
 export async function generate(source, universe, seen, options = {}) {
@@ -413,7 +427,9 @@ export async function generate(source, universe, seen, options = {}) {
 
   const probe = options.probe ?? probeGithub;
   const uni = universe ?? emptyUniverse();
-  const manifest = validateManifest({ version: MANIFEST_VERSION, noRewrite: options.noRewrite ?? [] }, 'noRewrite');
+  const manifest = validateManifest({
+    version: MANIFEST_VERSION, noRewrite: options.noRewrite ?? [], sources: options.sources ?? {}
+  }, 'generate');
   const forbidden = new Set(manifest.noRewrite.map(matchKey));
   seen = seen ? validateManifest(seen, 'seen') : emptyManifest();
   const deferred = [];
@@ -486,7 +502,44 @@ export async function generate(source, universe, seen, options = {}) {
     }
   }
 
-  return { manifest, seen, deferred, stats };
+  const unresolvedSources = [];
+  // Source captures take precedence over link captures in the seen union.
+  // Link keys may alias another original. Index the capture's actual original
+  // instead, under source equivalence: link matching must not fold path/query
+  // case or equate distinct resources. Stored keys and metadata stay unchanged.
+  const seenCaptures = new Map(
+    [...Object.values(seen.entries), ...Object.values(seen.sources)]
+      .map(entry => [sourceKey(parseWaybackUrl(entry.wayback)?.original), entry])
+      .filter(([original]) => original !== undefined)
+  );
+  for (const url of new Set(options.sourceUrls ?? [])) {
+    if (Object.hasOwn(manifest.sources, url)) continue;
+    const key = sourceKey(url);
+    let entry = seenCaptures.get(key);
+    if (!entry) {
+      try {
+        const snapshot = await resolve(url, { near, exactOriginal: true });
+        if (!snapshot) throw new Error('no archived capture');
+        entry = validateEntry(url, {
+          wayback: snapshot.url, timestamp: snapshot.timestamp, checkedAt: new Date().toISOString()
+        }, detail => new Error(`source resolution: invalid manifest — ${detail}`));
+        if (sourceKey(parseWaybackUrl(entry.wayback).original) !== key) {
+          throw new Error('capture does not match the source original');
+        }
+      } catch (error) {
+        unresolvedSources.push({ url, error: error?.message ?? String(error) });
+        continue;
+      }
+    }
+    for (const target of [manifest.sources, seen.sources]) {
+      Object.defineProperty(target, url, {
+        value: { ...entry }, enumerable: true, writable: true, configurable: true
+      });
+    }
+    seenCaptures.set(key, entry);
+  }
+
+  return { manifest, seen, deferred, unresolvedSources, stats };
 }
 
 /* ------------------------------------------------------------------------ *

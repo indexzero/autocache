@@ -411,6 +411,10 @@ const distinctOriginals = [
   ['www host', 'http://www.identity.example/post', 'http://identity.example/post'],
   ['path slash', 'http://identity.example/post/', 'http://identity.example/post'],
   ['non-default port', 'http://identity.example:8080/post', 'http://identity.example/post'],
+  ['http zero port', 'http://identity.example:0/post', 'http://identity.example/post'],
+  ['http padded zero port', 'http://identity.example:000/post', 'http://identity.example/post'],
+  ['https zero port', 'https://identity.example:0/post', 'https://identity.example/post'],
+  ['https padded zero port', 'https://identity.example:000/post', 'https://identity.example/post'],
   ['percent encoding', 'http://identity.example/%50ost', 'http://identity.example/Post'],
   ['percent escape case', 'http://identity.example/?id=%2f', 'http://identity.example/?id=%2F'],
   ['dot segments', 'http://identity.example/a/../post', 'http://identity.example/post']
@@ -510,6 +514,12 @@ test('a source can reuse a known capture by its actual original despite an alias
 for (const [name, first, second] of [
   ['HTTP default port', 'http://identity.example/Post', 'http://identity.example:80/Post'],
   ['HTTPS default port', 'https://identity.example/Post', 'https://identity.example:443/Post'],
+  ['HTTP empty port', 'http://identity.example/Post', 'http://identity.example:/Post'],
+  ['HTTPS empty port', 'https://identity.example/Post', 'https://identity.example:/Post'],
+  ['HTTP padded default port', 'http://identity.example/Post', 'http://identity.example:080/Post'],
+  ['HTTPS padded default port', 'https://identity.example/Post', 'https://identity.example:0443/Post'],
+  ['HTTP twice-padded default port', 'http://identity.example/Post', 'http://identity.example:0080/Post'],
+  ['HTTPS twice-padded default port', 'https://identity.example/Post', 'https://identity.example:00443/Post'],
   ['bare root', 'http://identity.example', 'http://identity.example/'],
   ['root with query', 'https://identity.example?ID=%2f', 'https://identity.example:443/?ID=%2f'],
   ['scheme and host case', 'HTTP://Identity.Example/Post', 'http://identity.example/Post'],

@@ -78,7 +78,8 @@ waybackify manifest post.md -u universe.json -o wayback.json \
 Existing sources keep their captures, including when no source flag is passed.
 New sources reuse captures from the seen union or use the same resolver and
 `--near` hint as links. Captures must name the same original URL: scheme and
-host case, explicit default ports, and an empty root path versus `/` may differ.
+host case, empty ports, default ports with or without leading zeros,
+and an empty root path versus `/` may differ.
 Path, query, and percent-encoding stay exact. Requested keys and the archive
 spelling inside each Memento are preserved.
 Exact duplicate flags resolve once.

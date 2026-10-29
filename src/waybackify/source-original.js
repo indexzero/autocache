@@ -1,5 +1,5 @@
 // Source identity is narrower than link matching: only scheme/host case,
-// explicit default ports, and an empty root path are equivalent. Parse raw
+// empty/default-valued ports, and an empty root path are equivalent. Parse raw
 // components instead of round-tripping through URL, which also rewrites dot
 // segments, percent escapes in hosts, and other resource spellings.
 const HTTP_ORIGINAL = /^(https?):\/\/((?:[^/?#@]*@)?)(\[[^\]]+\]|[^/?#:@]+)(:\d*)?(\/[^?#]*)?([?#].*)?$/i;
@@ -17,9 +17,11 @@ function parts(url) {
   const [, rawScheme, userinfo, rawHost, rawPort = '', rawPath = '', suffix = ''] = match;
   const scheme = rawScheme.toLowerCase();
   const defaultPort = scheme === 'http' ? ':80' : ':443';
+  const portValue = rawPort.slice(1).replace(/^0+/, '');
   return {
     scheme, userinfo, host: foldCase(rawHost), defaultPort,
-    port: rawPort === defaultPort ? '' : rawPort, path: rawPath || '/', suffix
+    port: rawPort === ':' || portValue === defaultPort.slice(1) ? '' : rawPort,
+    path: rawPath || '/', suffix
   };
 }
 
@@ -35,7 +37,7 @@ export function sourceKey(url) {
 export function sourceFilter(url) {
   const p = parts(url);
   if (!p) return `^${quote(url)}$`;
-  const port = p.port ? quote(p.port) : `(?:${p.defaultPort})?`;
+  const port = p.port ? quote(p.port) : `(?::(?:0*${p.defaultPort.slice(1)})?)?`;
   const path = p.path === '/' ? '/?' : quote(p.path);
   return `^${casePattern(p.scheme)}://${quote(p.userinfo)}${casePattern(p.host)}${port}${path}${quote(p.suffix)}$`;
 }

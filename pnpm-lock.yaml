@@ -180,6 +180,9 @@ importers:
       '@autocache/waybackify-crawl':
         specifier: workspace:*
         version: link:../waybackify-crawl
+      '@autocache/waybackify-site':
+        specifier: workspace:*
+        version: link:../waybackify-site
       '@autocache/waybackify-verify':
         specifier: workspace:*
         version: link:../waybackify-verify
@@ -235,6 +238,12 @@ importers:
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
+
+  src/waybackify-site:
+    dependencies:
+      '@autocache/waybackify':
+        specifier: workspace:*
+        version: link:../waybackify
 
   src/waybackify-verify:
     dependencies:

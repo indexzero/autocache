@@ -6,6 +6,8 @@ Drive a cache root to a COMPLETE asset closure of every capture the
 ledger under <dir> references — each referenced page AND its
 requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache add` —
 the whole-corpus population path (wrap it in a thin repo shim).
+Pages (flagless replay URLs) are always fetched before content named
+with a replay flag; --pages-only stops after the pages.
 
 A durable worklist (never-fetched + not-yet-closed captures) is
 enumerated ONCE and reused across runs, so pacing and resume
@@ -14,20 +16,35 @@ next run); a run of connection failures ABORTS (archive.org down);
 a 404 is recorded gone and never retried. Killable + resumable — the
 cache root is the done-truth; re-run to finish.
 
+The worklist is stamped with the ledger that built it and rebuilt
+when the ledger changes. A run of captures that defer with nothing
+fetched (archive.org throttling) STOPS the run; the next one starts
+after the streak. --converge repeats passes, backing off after a
+stop or a pass with no progress, until nothing fetches or defers.
+
 Output: progress on stderr; one JSON summary line on stdout. Exit 0
-normal (deferrals expected — re-run to converge), 1 on abort
-(archive.org unreachable — the mirror is incomplete, re-run).
+normal (deferrals expected — re-run to converge), 1 on a stop
+(archive.org unreachable or throttling — the mirror is incomplete,
+re-run) or, under --converge, when the worklist did not converge.
 
 Arguments:
-  <dir>               root to discover wayback.json manifests under
+  <dir>                    root to discover wayback.json manifests under
 
 Flags:
-  --root|-r <root>    cache root to populate + measure closure against — required
-  --delay-ms <n>      pacing between captures — a page + its requisites fetch together, browser-style (default 1500)
-  --abort-after <n>   consecutive connection failures before aborting (default 5)
-  --max <n>           cap captures fetched this run, then exit (default: no cap)
-  --refresh           rebuild the worklist from a fresh enumerate (default: reuse)
-  --dry-run           build/show the worklist; fetch nothing
-  --help|-h           Show help
+  --root|-r <root>         cache root to populate + measure closure against — required
+  --delay-ms <n>           pacing between captures — a page + its requisites fetch together, browser-style (default 1500)
+  --abort-after <n>        consecutive connection failures before aborting (default 5)
+  --throttle-after <n>     consecutive captures deferred with nothing fetched before stopping (default 6; 0 = never)
+  --request-delay-ms <n>   pacing between the requisite requests of one capture (default 0)
+  --no-requisites          store only the named captures; record their requisite edges, fetch none
+  --pages-only             attempt only the pages (flagless replay URLs); leave id_/im_/oe_ content pending
+  --max <n>                cap captures fetched this run, then exit (default: no cap)
+  --refresh                rebuild the worklist even when the ledger is unchanged
+  --converge               repeat passes until nothing fetches or defers
+  --backoff-s <n>          converge: first backoff after a stop or a no-progress pass (default 300)
+  --backoff-max-s <n>      converge: backoff ceiling; the backoff doubles up to it (default 1800)
+  --max-stall <n>          converge: consecutive no-progress passes before giving up (default 6)
+  --dry-run                build/show the worklist; fetch nothing
+  --help|-h                Show help
 
 part of the wayback mirror tooling

@@ -34,13 +34,23 @@ These steps build one mirror from a content tree to a served site. The local cac
 
    The manifest maps every dead link in the source to a Wayback replay URL.
 
+   A markdown file is one kind of source. To mirror a whole site, enumerate it
+   into a capture list in place of this step. The steps from 2 on are the same.
+
+   ```sh
+   waybackify site enumerate sites.json --ledger ./content
+   ```
+
+   The capture list holds every distinct archived version of every URL under
+   a host, a domain, or a path prefix. See [docs/SITE.md](docs/SITE.md).
+
 2. Populate the hermetic cache root from the ledger of manifests.
 
    ```sh
    waybackify cache fill ./content --root ./cache
    ```
 
-   This fetches each referenced capture and its static requisites: images, stylesheets, and scripts. It is resumable and paces itself.
+   This fetches each referenced capture and its static requisites: images, stylesheets, and scripts. It is resumable and paces itself. Add `--converge` to repeat passes, backing off through outages and throttling, until nothing is left to fetch.
 
 3. Crawl the documents to dynamic completeness.
 
@@ -123,7 +133,8 @@ The server also runs on Cloudflare Workers and Fastly Compute.
 | Package | Role |
 |---|---|
 | [`@autocache/waybackify`](src/waybackify) | Core library: manifests, link rewriting, the cache store, and key derivation. |
-| [`@autocache/waybackify-cli`](src/waybackify-cli) | The `waybackify` CLI: manifest, rewrite, ledger, check, search, audit, cache, remaster, bucket. |
+| [`@autocache/waybackify-cli`](src/waybackify-cli) | The `waybackify` CLI: manifest, rewrite, ledger, check, search, audit, site, cache, remaster, bucket. |
+| [`@autocache/waybackify-site`](src/waybackify-site) | The whole-site source: CDX enumeration into a capture list, and the path-tree export. |
 | [`@autocache/waybackify-crawl`](src/waybackify-crawl) | The completeness crawler that drives documents to a dynamic-requisite fixpoint. |
 | [`@autocache/waybackify-serve`](src/waybackify-serve) | The edge server for Node, Cloudflare Workers, and Fastly Compute. |
 | [`@autocache/waybackify-verify`](src/waybackify-verify) | The bucket verifier: the four-layer parity check behind `bucket verify`, resumable from a checkpoint. |
@@ -134,6 +145,7 @@ Design and operations docs under [`docs/`](docs):
 
 - [CACHE.md](docs/CACHE.md) — the on-disk cache root: identity-keyed bodies, authoritative sidecars, and the atomic write protocol.
 - [BACKFILL.md](docs/BACKFILL.md) — `cache fill`: driving a cache root to full asset closure, paced and resumable.
+- [SITE.md](docs/SITE.md) — `site`: mirroring every archived version of a whole site, the capture list, and the path-tree export.
 - [REMASTER.md](docs/REMASTER.md) — the standalone remaster build: chrome stripped and references localized, deterministically.
 - [SERVE.md](docs/SERVE.md) — the consumer contract for reading a cache root: hash the key, stat one sidecar.
 - [SYNC.md](docs/SYNC.md) — the runbook for projecting a cache root onto Cloudflare R2 and Fastly Object Storage.

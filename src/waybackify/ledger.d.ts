@@ -10,7 +10,18 @@ import type { Manifest } from './manifest.js';
 /** One discovered manifest: root-relative path (identity) + parsed content. */
 export interface DiscoveredManifest {
   file: string;
+  /** For a capture list, the empty manifest. */
   manifest: Manifest;
+  /** Present iff the file is a capture list (`captures.jsonl`). */
+  captures?: CaptureRow[];
+}
+
+/** One capture-list row: a replay URL plus the producer's own provenance. */
+export interface CaptureRow {
+  wayback: string;
+  /** Fetch order, lower first. */
+  rank?: number;
+  [field: string]: unknown;
 }
 
 /** One capture in an `against` worklist. */
@@ -21,6 +32,10 @@ export interface WorklistItem {
   originalUrl: string;
   files: string[];
   status: string | null;
+  /** The sidecar's interstitial signature, when it has one. */
+  signature?: string;
+  /** Fetch order, lower first; 0 for a capture a manifest references. */
+  rank: number;
 }
 
 /** The fetch-worklist join of a ledger against a cache root. */
@@ -31,8 +46,17 @@ export interface Worklists {
   error: WorklistItem[];
 }
 
-/** Recursively discover every wayback.json manifest under `root`. */
+/** The capture-list file name. */
+export const CAPTURE_LIST: 'captures.jsonl';
+
+/** Read + validate one capture list. */
+export function readCaptureList(file: string): CaptureRow[];
+
+/** Recursively discover every manifest and capture list under `root`. */
 export function discover(root: string): DiscoveredManifest[];
+
+/** Every capture the ledger references, deduped by capture key (no cache root). */
+export function captures(discovered: DiscoveredManifest[]): WorklistItem[];
 
 /** Union a discovered ledger into one manifest (the seen-file bootstrap). */
 export function flatten(discovered: DiscoveredManifest[]): Manifest;

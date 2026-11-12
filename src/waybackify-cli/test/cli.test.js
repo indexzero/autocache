@@ -41,14 +41,21 @@ function cli(...argv) {
 
 const WB = 'https://web.archive.org/web/20140403040000/http://example.com/';
 
-// Flat verbs (top-level help) + the three tier groups; each group's subcommands
+// Flat verbs (top-level help) + the `site` source group and the three tier
+// groups; each group's subcommands
 // are snapshotted separately as `<group>-<verb>.txt`.
 const FLAT = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'audit'];
-const GROUPS = { cache: ['add', 'fill', 'crawl', 'verify'], remaster: ['build', 'verify'], bucket: ['push', 'verify'] };
+const GROUPS = {
+  site: ['enumerate', 'export'],
+  cache: ['add', 'fill', 'remediate', 'crawl', 'verify', 'status'],
+  remaster: ['build', 'verify'],
+  bucket: ['push', 'verify']
+};
 // Handler keys the bin + createCLI() wire (group verbs → cacheAdd, remasterBuild, …).
 const HANDLER_KEYS = [
   'manifest', 'rewrite', 'ledger', 'check', 'search', 'audit',
-  'cacheAdd', 'cacheFill', 'cacheCrawl', 'cacheVerify',
+  'siteEnumerate', 'siteExport',
+  'cacheAdd', 'cacheFill', 'cacheRemediate', 'cacheCrawl', 'cacheVerify', 'cacheStatus',
   'remasterBuild', 'remasterVerify',
   'bucketPush', 'bucketVerify'
 ];
@@ -71,7 +78,8 @@ test('root --help lists the flat verbs and the three tier groups (snapshot)', ()
     /check\s+Full wayback-404 verdict for the exact capture/,
     /search\s+CDX capture query — re-pick a better capture/,
     /audit\s+Checkpointed wayback-404 audit of a ledger/,
-    /cache\s+Cache-store ops: add · fill · crawl · verify/,
+    /site\s+Whole-site source: enumerate · export/,
+    /cache\s+Cache-store ops: add · fill · remediate · crawl · verify · status/,
     /remaster\s+Standalone-tier ops: build · verify/,
     /bucket\s+Bucket-projection ops: push · verify/
   ]) {

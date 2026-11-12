@@ -1,0 +1,31 @@
+waybackify site enumerate [flags] <config.json>
+
+Enumerate every archived version of whole sites into a ledger
+
+Walk the CDX index for every query in a site config, inside its date
+window, and write one capture list per site under --ledger:
+<ledger>/<site>/captures.jsonl, one row per distinct version of
+every URL, ranked so one capture of everything is fetched first.
+Beside it: the raw CDX pages (cdx/), the resolved redirects, an
+inventory of every CDX row with its disposition, and a summary.
+
+HTML is listed through the normal replay (cache fill fetches its
+requisites) unless a config rule marks its host raw; everything
+else is listed raw (id_). Deterministic: a rerun over unchanged CDX
+data rewrites nothing, and --offline rebuilds from the saved pages.
+
+Output: progress on stderr; one JSON summary line on stdout. Exit 1
+when the index stays offline — rerun the same command.
+
+Arguments:
+  <config.json>          site config: window, sites → CDX queries, per-host rules
+
+Flags:
+  --ledger <dir>         directory to write <site>/captures.jsonl (+ provenance) under — required
+  --site <name>          only this site (repeatable; default: every site in the config)
+  --offline              no network: rebuild from the saved CDX pages
+  --no-redirects         skip 3xx Location resolution and redirect-target queries
+  --repick-from <root>   skip captures this cache root holds as interstitial, error, or gone; pick the next capture of the same content
+  --help|-h              Show help
+
+part of the wayback mirror tooling

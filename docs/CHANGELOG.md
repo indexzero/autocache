@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🆕 Added
+- **Capture lists in the ledger**: a ledger now holds `captures.jsonl` files beside `wayback.json` manifests. A capture list is JSONL, one capture per row, named by its replay URL (`wayback`), with an optional fetch-order `rank`. It carries no rewrite program, so it can hold every version of one URL. `discover` finds both kinds, `against` joins both, and `captures(discovered)` returns every referenced capture with the files that name it. `waybackify ledger <dir> --captures` prints that view. `ledger --flatten` is unchanged: it is the union manifest and keeps one capture per URL.
+- **`@autocache/waybackify-site` and `waybackify site`**: a new package for the whole-site source. `site enumerate <config.json> --ledger <dir>` walks the CDX index for every query in a site config and writes one capture list per site, with one row per distinct version of every URL, plus the raw CDX pages, the resolved redirects, and an inventory of every CDX row. It is deterministic, and `--offline` rebuilds the ledger from the saved pages. `site export <dir> --root <root> --out <dir>` copies a cache root's bodies to `<host>/<timestamp>/<path>` with an index, and records every path it adjusts for a case-insensitive filesystem. See `docs/SITE.md`.
+- **`cdx.js`: paged CDX enumeration**: `cdxPages` runs a `host`, `domain`, `prefix`, or `exact` query page by page. Every request carries a `limit`, pages chain through the resume key, and an outage (a non-200, or an HTML body under a 200) is retried from 30 s up to 10 min before `CdxUnavailableError`. `waybackify search <url> --match <type> [--from <ts>] [--to <ts>]` exposes it. An outage there exits 1 and is never an empty result.
+- **`cache fill --converge`**: repeats passes until one fetches nothing and defers nothing. It backs off after a stopped or no-progress pass (`--backoff-s`, `--backoff-max-s`) and gives up after `--max-stall` passes without progress. The loop is `backfill.js#converge`.
+- **`cache fill --no-requisites` and `--request-delay-ms`**: the first stores only the named captures and still records their requisite edges. The second paces the requisite requests inside one capture.
+- **`cache remediate`**: the wrapper-stub remediation sweep. It refetches each `wrapper-stub` or `extension-mismatch` sidecar in a root with `id_` and recommits it. It needs no ledger. The engine is `remediate.js`.
+- **`cache status <dir> --root <root>`**: a summary of a root against a ledger: the state histogram overall and per top-level ledger directory, unfetched split into gone and pending, the captures no further pass will fix with their remedy, and the store's footprint. Exit 1 while anything is pending or needs attention. The engine is `status.js`.
+
+### 🚧 Changed
+- **`cache fill` fetches pages before content**: the worklist now orders every capture named by a flagless replay URL ahead of every capture named with a replay flag (`id_`, `im_`, `oe_`), then by rank and key as before. `--pages-only` attempts the pages and leaves the content pending. The archive blocks by request form, so the forms a browser never sends go last. A worklist built before this change keeps its old order until the ledger changes or `--refresh` rebuilds it.
+- **`cache fill --converge` gives up on a lasting throttle**: a throttle stop that fetched nothing counts toward `--max-stall`. An outage does not.
+- **The `cache fill` worklist is bound to its ledger**: `<root>/.refetch/worklist.ledger.json` records a fingerprint of the ledger that built the worklist. A run whose ledger has a different fingerprint rebuilds the worklist. So does a run that finds a worklist with no stamp, which means the first run after this change re-enumerates once. `--refresh` still forces a rebuild.
+- **`cache fill` stops on a throttle**: six captures in a row that defer with nothing fetched stop the run with `"reason": "throttled"` and exit 1, where the run used to defer through the rest of the worklist. `--throttle-after <n>` sets the count and `0` restores the old behavior. A stopped run writes `<root>/.refetch/cursor.json`, and the next run starts after the capture it stopped on. The summary line of a stopped run carries `reason` (`unreachable` or `throttled`).
+- **The `cache fill` worklist orders by rank, then key**: a capture a manifest names has rank 0, so a ledger of manifests keeps its order.
+- **A document fetched raw records `flag: "id_"`**: `cacheCapture` stamps the sidecar of a document named with the `id_` replay flag. Before, every named document recorded `null`. Sidecars already on disk are not rewritten.
+
+### 🐛 Fixed
+- **A changed ledger no longer leaves captures unfetched**: the worklist was built once per root and reused whatever ledger the next run named, so captures added to a ledger were skipped until `--refresh`. The stamp above closes it.
+- **`docs/CACHE.md` agrees with `cache verify` about the root**: the root contract names `.refetch/`, `.crawl/`, `.verify/`, and `remaster.build.json` as the sanctioned command state that `fsck` already allowed.
+
 ## [0.5.0] - 2026-10-19
 
 ### 💥 Breaking

@@ -11,6 +11,7 @@
     "./beacons.js": "./beacons.js",
     "./bucket-batch.js": "./bucket-batch.js",
     "./cache.js": "./cache.js",
+    "./cdx.js": "./cdx.js",
     "./fsck.js": "./fsck.js",
     "./github.js": "./github.js",
     "./interstitial.js": "./interstitial.js",
@@ -18,8 +19,10 @@
     "./ledger.js": "./ledger.js",
     "./manifest.js": "./manifest.js",
     "./remaster.js": "./remaster.js",
+    "./remediate.js": "./remediate.js",
     "./requisites.js": "./requisites.js",
     "./rewrite.js": "./rewrite.js",
+    "./status.js": "./status.js",
     "./strip.js": "./strip.js",
     "./universe.js": "./universe.js",
     "./package.json": "./package.json"

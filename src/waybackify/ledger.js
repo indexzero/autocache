@@ -6,9 +6,26 @@
 // no directory-layout conventions, no id derivation — any tree that contains
 // `wayback.json` files has a ledger.
 //
-// Three operations:
+// A ledger holds a second kind of file beside the manifest: the CAPTURE LIST
+// (`captures.jsonl`). A manifest is keyed by original URL — one capture per
+// URL, because it is a rewrite program. A capture list is keyed by nothing: it
+// is one JSON object per line, each naming one capture by its replay URL, so
+// it can hold every version of a URL. It is how a source that is not a
+// markdown file (a whole-site enumeration, a corpus walk) hands captures to
+// the same fetch pipeline. Row shape:
 //
-//   discover(root)            → every manifest under root, sorted by path
+//   { "wayback": "<replay-url>",        required, parseable
+//     "rank": 0,                        optional, non-negative integer —
+//                                       fetch order: lower ranks first
+//     ...anything else }                the producer's own provenance
+//                                       (mimetype, digest, …), carried, unread
+//
+// Operations:
+//
+//   discover(root)            → every manifest and capture list under root,
+//                               sorted by path
+//   captures(discovered)      → every capture the ledger references, deduped
+//                               by capture key (no cache root needed)
 //   flatten(discovered)       → the union manifest (the seen-file bootstrap
 //                               for manifest.js#generate)
 //   against(discovered, cacheRoot)
@@ -24,19 +41,59 @@ import { readSidecar } from './cache.js';
 import { captureKey } from './key.js';
 import { emptyManifest, readManifest } from './manifest.js';
 
+/** The capture-list file name (the manifest's is `wayback.json`). */
+export const CAPTURE_LIST = 'captures.jsonl';
+
 /**
  * @typedef {Object} DiscoveredManifest
  * @property {string} file - Path relative to the discovery root, `/`-joined
  *   (e.g. `a/b/wayback.json`) — deterministic across platforms.
- * @property {ReturnType<import('./manifest.js').validateManifest>} manifest
+ * @property {ReturnType<import('./manifest.js').validateManifest>} manifest -
+ *   for a capture list, the empty manifest (it carries no rewrite program).
+ * @property {Array<{wayback: string, rank?: number}>} [captures] - present
+ *   IFF the file is a capture list: its rows, in file order.
  */
 
 /**
- * Recursively discover every `wayback.json` manifest under `root`. Each file
- * is read through manifest.js#readManifest (the current version only), so
- * an invalid manifest anywhere under the tree fails loud with its path.
- * Hidden directories and node_modules are skipped. Results are sorted by
- * relative path.
+ * Read + validate a capture list. Every non-blank line must be a JSON object
+ * with a parseable `wayback` replay URL; `rank`, when present, a non-negative
+ * integer. A bad line fails loud with its file and line number — a capture
+ * no mirror could fetch is a defect to fix at the producer, never to skip.
+ *
+ * @param {string} file
+ * @returns {Array<{wayback: string, rank?: number}>}
+ */
+export function readCaptureList(file) {
+  const rows = [];
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  for (const [i, line] of lines.entries()) {
+    if (line.trim() === '') continue;
+    const bad = detail => new Error(`${file}:${i + 1}: invalid capture list — ${detail}`);
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      throw bad('not JSON');
+    }
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) throw bad('row must be an object');
+    if (typeof row.wayback !== 'string' || parseWaybackUrl(row.wayback) === null) {
+      throw bad(`unparseable wayback URL: ${row.wayback}`);
+    }
+    if (row.rank !== undefined && !(Number.isSafeInteger(row.rank) && row.rank >= 0)) {
+      throw bad(`rank must be a non-negative integer: ${JSON.stringify(row.rank)}`);
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Recursively discover every `wayback.json` manifest and `captures.jsonl`
+ * capture list under `root`. Each manifest is read through
+ * manifest.js#readManifest (the current version only) and each capture list
+ * through readCaptureList, so an invalid file anywhere under the tree fails
+ * loud with its path. Hidden directories and node_modules are skipped.
+ * Results are sorted by relative path.
  *
  * @param {string} root
  * @returns {DiscoveredManifest[]}
@@ -61,6 +118,12 @@ function walk(root, dir, found) {
       found.push({
         file: path.relative(root, full).split(path.sep).join('/'),
         manifest: readManifest(full)
+      });
+    } else if (entry.isFile() && entry.name === CAPTURE_LIST) {
+      found.push({
+        file: path.relative(root, full).split(path.sep).join('/'),
+        manifest: emptyManifest(),
+        captures: readCaptureList(full)
       });
     } else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
       walk(root, full, found);
@@ -111,11 +174,56 @@ export function flatten(discovered) {
  * @property {string} originalUrl
  * @property {string[]} files - every manifest (relative path) referencing it.
  * @property {string|null} status - the sidecar's status, null when unfetched.
+ * @property {string} [signature] - the sidecar's interstitial signature
+ *   (present IFF status is `interstitial`).
+ * @property {number} rank - fetch order, lower first: the lowest `rank` any
+ *   capture-list row gives it; 0 for a capture a manifest references.
  */
 
 /**
+ * Every capture a discovered ledger references — manifest entries and
+ * capture-list rows — deduped by capture key and sorted by it. The
+ * capture-level view of a ledger: where `flatten` keeps ONE capture per
+ * original URL, this keeps every (timestamp, original) pair, with the files
+ * that name it. `status` is null throughout: no cache root is consulted
+ * (`against` is the join).
+ *
+ * @param {DiscoveredManifest[]} discovered
+ * @returns {WorklistItem[]}
+ */
+export function captures(discovered) {
+  const byKey = new Map();
+  const add = (file, wayback, rank) => {
+    // The readers already proved parseability; parse again here only to
+    // derive the capture identity.
+    const parsed = parseWaybackUrl(wayback);
+    const key = captureKey(parsed.timestamp, parsed.original);
+    let item = byKey.get(key);
+    if (!item) {
+      item = {
+        key,
+        waybackUrl: wayback,
+        timestamp: parsed.timestamp,
+        originalUrl: parsed.original,
+        files: [],
+        status: null,
+        rank
+      };
+      byKey.set(key, item);
+    }
+    if (rank < item.rank) item.rank = rank;
+    if (!item.files.includes(file)) item.files.push(file);
+  };
+  for (const { file, manifest, captures: rows } of discovered) {
+    for (const entry of Object.values(manifest.entries)) add(file, entry.wayback, 0);
+    for (const row of rows ?? []) add(file, row.wayback, row.rank ?? 0);
+  }
+  return [...byKey.keys()].sort().map(key => byKey.get(key));
+}
+
+/**
  * Join a discovered ledger against a cache root: every capture the ledger's
- * entries reference, deduped by capture key and classified by the root's
+ * entries and capture lists reference, deduped by capture key and classified by the root's
  * sidecars into worklists —
  *
  *   unfetched     no sidecar: `cache` still has to fetch it
@@ -134,28 +242,7 @@ export function flatten(discovered) {
  *   interstitial: WorklistItem[], error: WorklistItem[] }>}
  */
 export async function against(discovered, cacheRoot) {
-  const byKey = new Map();
-  for (const { file, manifest } of discovered) {
-    for (const entry of Object.values(manifest.entries)) {
-      // readManifest already proved parseability; parse again here only to
-      // derive the capture identity.
-      const parsed = parseWaybackUrl(entry.wayback);
-      const key = captureKey(parsed.timestamp, parsed.original);
-      let item = byKey.get(key);
-      if (!item) {
-        item = {
-          key,
-          waybackUrl: entry.wayback,
-          timestamp: parsed.timestamp,
-          originalUrl: parsed.original,
-          files: [],
-          status: null
-        };
-        byKey.set(key, item);
-      }
-      if (!item.files.includes(file)) item.files.push(file);
-    }
-  }
+  const byKey = new Map(captures(discovered).map(item => [item.key, item]));
 
   const worklists = { unfetched: [], cached: [], interstitial: [], error: [] };
   for (const key of [...byKey.keys()].sort()) {
@@ -166,6 +253,7 @@ export async function against(discovered, cacheRoot) {
       continue;
     }
     item.status = sidecar.status;
+    if (sidecar.signature !== undefined) item.signature = sidecar.signature;
     if (sidecar.status === 'interstitial') worklists.interstitial.push(item);
     else if (sidecar.status === 'error') worklists.error.push(item);
     else worklists.cached.push(item); // body | redirect | empty — settled

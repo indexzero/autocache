@@ -386,7 +386,8 @@ async function syncDir(dir) {
  * @param {string} entry.key - verbatim captureKey
  * @param {'body'|'redirect'|'error'|'empty'|'interstitial'} entry.status
  * @param {string} entry.contentType - as returned by archive.org ('' if none)
- * @param {'im_'|'cs_'|'js_'|'oe_'|null} [entry.flag] - requisite-type tag
+ * @param {'im_'|'cs_'|'js_'|'oe_'|'id_'|null} [entry.flag] - requisite-type tag,
+ *   or `id_` for a document fetched raw
  * @param {string[]} [entry.requisites] - verbatim child captureKeys
  * @param {Array<{ key: string, flag: 'im_'|'cs_'|'js_'|'oe_'|null,
  *   via: 'remaster-verify'|'manual', firstSeen?: string }>} [entry.dynamic] -
@@ -670,6 +671,10 @@ async function responseBytes(res) {
  * @param {Object} options
  * @param {string} options.root - cache root directory (REQUIRED)
  * @param {boolean} [options.requisites=true] - fan out to im_/cs_/js_/oe_ refs
+ * @param {number} [options.requestDelayMs=0] - pause before each requisite
+ *   REQUEST after the first, so a page with many requisites does not arrive
+ *   at the archive as one burst
+ * @param {Function} [options.sleep] - (ms) => Promise (injectable for tests)
  * @param {Function} [options.fetch] - fetch-like (injectable for tests);
  *   defaults to a WaybackMachine's impit fetch (browser-impersonated — the
  *   IA throttles naive clients; see index.js)
@@ -686,7 +691,8 @@ async function responseBytes(res) {
  *   failures: Array<{ key: string, error: string }> }>}
  */
 export async function cacheCapture(waybackUrl, options = {}) {
-  const { root, requisites: wantRequisites = true, onEntry = () => {}, hooks = {}, logger = NOOP_LOGGER } = options;
+  const { root, requisites: wantRequisites = true, onEntry = () => {}, hooks = {}, logger = NOOP_LOGGER, requestDelayMs = 0 } = options;
+  const sleep = options.sleep ?? (ms => new Promise(r => setTimeout(r, ms)));
   if (!root) throw new TypeError('cacheCapture: options.root is required');
   const parsed = parseWaybackUrl(waybackUrl);
   if (!parsed) throw new TypeError(`cacheCapture: not a wayback replay URL: ${waybackUrl}`);
@@ -756,19 +762,26 @@ export async function cacheCapture(waybackUrl, options = {}) {
 
     logger.info({ evt: 'response', url: waybackUrl, key: docKey, status: 200, bytes: docBytes.length, contentType, ms, requisites: requisiteRefs.length });
 
+    // `id_` on the named URL asks for the capture's raw bytes (no replay
+    // rewriting, no toolbar). The key ignores the flag, so the sidecar is the
+    // only place that fact can survive: without it nothing downstream can tell
+    // a raw document from a replayed one, and a wrapper-stub remediation
+    // cannot tell whether a raw refetch was already tried.
+    const docFlag = parsed.flags === 'id_' ? 'id_' : null;
+
     docSidecar = await commitEntry(
       root,
       {
         key: docKey,
         status: 'body',
         contentType,
-        flag: null,
+        flag: docFlag,
         requisites: requisiteRefs.map(r => r.key),
         body: docBytes
       },
       hooks
     );
-    record({ key: docKey, hash: docPaths.hash, status: docSidecar.status, action: 'fetched', flag: null });
+    record({ key: docKey, hash: docPaths.hash, status: docSidecar.status, action: 'fetched', flag: docFlag });
   }
 
   // ---- requisite ∪ dynamic fan-out -----------------------------------------
@@ -841,6 +854,7 @@ export async function cacheCapture(waybackUrl, options = {}) {
         docBytes === null ? [] : extractRequisites(new TextDecoder('utf-8').decode(docBytes)).map(r => [r.key, r])
       );
 
+      let requested = 0;
       for (const childKey of missing) {
         // Trust-boundary guard: a requisites[] entry that isn't a capture
         // key (`${timestamp}/${originalUrl}`, both parts non-empty) can't
@@ -868,6 +882,7 @@ export async function cacheCapture(waybackUrl, options = {}) {
             waybackUrl: `https://web.archive.org/web/${childKey.slice(0, childKey.indexOf('/'))}/${childKey.slice(childKey.indexOf('/') + 1)}`
           };
         const { hash } = await entryPaths(root, childKey);
+        if (requestDelayMs > 0 && requested++ > 0) await sleep(requestDelayMs);
         logger.info({ evt: 'request', method: 'GET', url: ref.waybackUrl, key: childKey, flag: ref.flag, attempt: 1, maxAttempts: 1 });
         const started = Date.now();
         try {

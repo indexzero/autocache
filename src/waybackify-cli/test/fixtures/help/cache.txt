@@ -1,14 +1,16 @@
 waybackify cache [flags] [command]
 
-Cache-store ops: add · fill · crawl · verify
+Cache-store ops: add · fill · remediate · crawl · verify · status
 
 The cache-store command group — populate, complete, and verify the
 hermetic wayback cache image (the archive of record):
 
   add       fetch ONE capture (+ its requisites) into a cache root
   fill      drive a whole ledger to full asset closure (bulk, resumable)
+  remediate refetch wrapper-stub captures raw (the id_ sweep)
   crawl     drive documents to a dynamic-completeness fixpoint (browser)
   verify    check a cache root against its own sidecars (fsck)
+  status    summarize a cache root against a ledger
 
 The remastered standalone tier lives under `remaster` and the bucket
 projection under `bucket`.
@@ -21,7 +23,9 @@ Flags:
 Commands:
   add         Fetch one capture into a local bucket image
   fill        Fetch every capture a ledger references into a cache root
+  remediate   Refetch wrapper-stub captures raw
   crawl       Crawl documents to a dynamic-completeness fixpoint
   verify      Verify a cache root against its own sidecars
+  status      Summarize a cache root against a ledger
 
 part of the wayback mirror tooling

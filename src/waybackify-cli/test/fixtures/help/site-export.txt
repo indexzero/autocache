@@ -1,0 +1,24 @@
+waybackify site export [flags] <dir>
+
+Export a cache root as a browsable path tree
+
+Copy every stored body in a cache root to
+<out>/<host>/<timestamp>/<path>, bytes untouched, with an
+index.jsonl row per file (original URL, replay URL, document or
+requisite, content type, digest). Bodiless sidecars are listed in
+_unexported.jsonl. Paths that clash on a case-insensitive filesystem
+are resolved the same way everywhere and listed in
+_collisions.jsonl. Re-runs write only what changed.
+
+Output: one JSON summary line on stdout.
+
+Arguments:
+  <dir>              the ledger the root was filled from (names the documents)
+
+Flags:
+  --root|-r <root>   cache root to read — required
+  --out <dir>        directory to write the tree under (outside the root) — required
+  --dry-run          plan and count; write nothing
+  --help|-h          Show help
+
+part of the wayback mirror tooling

@@ -148,7 +148,7 @@ authoritative and mandatory.
 | `signature` | string | iff `status == "interstitial"` | Which interstitial signature fired: `wrapper-stub`, `redirect-interstitial`, `extension-mismatch`, or `archived-error`. The audit trail for why the capture was refused, and the key the remediation sweep dispatches on. |
 | `target` | `{ url, timestamp }` | iff `signature == "redirect-interstitial"` (when decodable) | The decoded destination of a redirect interstitial — the only content that page carried. Absent when the stub had no parseable `/web/…` reference. |
 | `requisites` | string[] | always (`[]` for non-documents) | The authoritative DAG edge list: each entry a child's **verbatim captureKey**. Keys, not hashes — `sha256hex` is a pure function of the key, so a key edge is already a verifiable pointer, and storing the derived hash as data is the derived-as-authoritative anti-pattern. Verbatim child keys also make one document sidecar self-sufficient for subtree R2 sync. |
-| `flag` | `im_ \| cs_ \| js_ \| oe_ \| null` | always | Requisite-type tag when this entry is itself a requisite (image / stylesheet / script / object-embed replay flags); `null` for operator-named documents. |
+| `flag` | `im_ \| cs_ \| js_ \| oe_ \| id_ \| null` | always | Requisite-type tag when this entry is itself a requisite (image / stylesheet / script / object-embed replay flags). For an operator-named document: `id_` when it was fetched raw (the capture's own bytes, no replay rewriting, no toolbar), `null` when it was fetched through the normal replay. The capture key ignores the flag, so this field is the only record of which bytes the store holds. A sidecar written before the field recorded `id_` says `null` for both. |
 | `dynamic` | array of `{ key, flag, via, firstSeen? }` | optional (present only when a browser probe recorded runtime-discovered requisites; **absent** otherwise) | Browser-discovered requisites (v3). `key` is a child's verbatim captureKey (same identity rules as `requisites[]`); `flag` (`im_`/`cs_`/`js_`/`oe_`/`null`) is the replay flag for the raw-byte fetch, **persisted because it is unrecoverable from the stored bytes** — a runtime-leaked asset never appears in the captured HTML; `via` is the provenance enum (`remaster-verify` for probe-discovered, `manual` reserved); `firstSeen` is an optional ISO-8601 audit field. See [Browser-discovered requisites](#browser-discovered-requisites-v3). |
 | `fetchedAt` | string | always | ISO-8601 fetch time. Provenance only — identity is entirely in `key`. |
 
@@ -167,7 +167,13 @@ recording `signature` (and a redirect's `target`). The detection lives in
 `archived-error` signature is network-derived and arrives INJECTED (`cdxStatus`),
 so detection itself never touches the wire. Wrapper-stub remediation refetches
 the raw bytes with wayback's `id_` flag (`refetchRaw`). The corpus-wide run is
-the remediation sweep.
+the remediation sweep, `waybackify cache remediate --root <root>`
+([`remediate.js`](../src/waybackify/remediate.js)). It walks the root's own
+sidecars, refetches each `wrapper-stub` or `extension-mismatch` entry raw, and
+recommits it through `commitEntry` with `flag: "id_"`. It leaves alone, and
+reports, a stub whose flag is already `id_` and every other signature: those
+need a different capture. See
+[SITE.md](SITE.md#wrapper-stubs-and-cache-remediate).
 
 ## Canonical JSON form
 
@@ -418,19 +424,27 @@ The consumer-side read contract is [SERVE.md §Bucket sync](./SERVE.md#bucket-sy
 
 ## The root contract and `fsck`
 
-**A store root contains ONLY `cap/`, `meta/`, `tmp/`, and `trash/`.** Nothing
+**A store root contains ONLY `cap/`, `meta/`, `tmp/`, and `trash/`, plus the
+durable state of the commands that work on it.** That state lives in three
+dot-directories and one file, and `fsck` allows exactly these: `.refetch/`
+(`cache fill`: the worklist, its ledger stamp, the cursor, the gone and renamed
+ledgers), `.crawl/` (`cache crawl`), `.verify/` (`bucket verify`), and
+`remaster.build.json` (a remastered root's build record). They sit inside the
+root so a root moves, resumes, and is deleted as one unit. None of them
+projects onto a bucket. Nothing
 else belongs inside it. `trash/` is the quarantine `cache verify --fix` fills
 (below). It is part of the contract so that a quarantined body is never a
 foreign entry, and it is never live content. The root is a *rebuildable projection* — the archive of
 record that projects onto R2 / Fastly Object Storage (see
 [Bucket projection](#bucket-projection)) — so any
 foreign entry is either uploaded as a junk object or silently dropped by the
-sync. **Operational artifacts live OUTSIDE the root**: run reports, audit
-checkpoints, driver logs, and any `.runs/`-style scratch belong to an
-operational home alongside the store, never within it. The contract is exactly
-four names so "what is the deploy artifact?" has one answer — walk the root,
-everything you see is `cap/` + `meta/` + `tmp/` + `trash/`, and only the first
-two project onto a bucket.
+sync. **A driver's own artifacts live OUTSIDE the root**: run reports, audit
+checkpoints, exports, and any `.runs/`-style scratch belong to an
+operational home alongside the store, never within it. A driver that wants its
+fill log beside the worklist may write it under `.refetch/`, which is the one
+sanctioned place. The store is exactly four names so "what is the deploy
+artifact?" has one answer — `cap/` + `meta/` + `tmp/` + `trash/`, and only the
+first two project onto a bucket.
 
 `fsck` is the verify-on-read command the design debate deferred (see the
 Verification dissent below): a store without a verify pass rots silently,
@@ -457,7 +471,7 @@ discrepancy:
 | `malformed` | corruption | a sidecar that will not parse — disk rot, not absence (the rename published a whole fsync'd file or nothing) — **or** a structurally-bad `dynamic[]` entry (v3): `dynamic` present but not an array, or an entry that is not an object / has a non-string or separatorless `key` / a `flag` outside `{im_,cs_,js_,oe_,null}`. Same trust boundary as a malformed requisite. A `status` outside `{body, empty, redirect, error, interstitial}` is malformed too: such a sidecar cannot say whether it owns a body. So is a bodiless status that carries `contentHash` or `contentLength` (present iff `status: "body"`): that is a body sidecar whose status rotted, and its body sits in `cap/` unnamed. |
 | `interstitialAsBody` | advisory | a `status: "body"` entry whose stored bytes are a wayback interstitial — a pre-schema capture that predates cache-time refusal. **Report only**: the corpus-wide re-commit is the remediation sweep, not fsck's to perform. |
 | `schemaVersion` | advisory | a sidecar whose `v` is not `3`, the one version every reader accepts. Rebuild the root. |
-| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` `trash/` — the check that catches a contract violation like a stray `.runs/`. A `trash/` that is a symlink, or that lacks the `.fsck-quarantine` marker, is foreign too: this tool did not create it, never follows or inventories it, never moves into it, and refuses to empty or restore it. |
+| `foreignRoot` | advisory | a root entry outside `cap/` `meta/` `tmp/` `trash/` and the sanctioned command state (`.refetch/` `.crawl/` `.verify/` `remaster.build.json`) — the check that catches a contract violation like a stray `.runs/`. A `trash/` that is a symlink, or that lacks the `.fsck-quarantine` marker, is foreign too: this tool did not create it, never follows or inventories it, never moves into it, and refuses to empty or restore it. |
 | `orphanCap` | reapable | a `cap/` file that no sidecar's `contentHash` names — ingest garbage from a crash between the body and sidecar renames (never served: no completion token). A body shared by many sidecars is an orphan only when none names it. fsck reports an orphan only when every sidecar proves its ownership: it parses, carries a known status, and (for `status: "body"`) names a `cap/` file whose bytes match its `contentHash` and whose size equals its `contentLength`. While a `malformed`, `missingBody`, `hashMismatch`, `sizeMismatch`, or `schemaVersion` finding stands, no `cap/` file is reported orphan and `--fix` moves nothing. The report says so with `reapSuspended: true`. `--fix` **moves** an orphan to the `trash/` quarantine, it never deletes one (below). |
 | `staleTmp` | reapable | leftover `tmp/` scratch from an interrupted write. `--fix` deletes it: a `tmp/` file was never renamed into place, so nothing can name it. |
 

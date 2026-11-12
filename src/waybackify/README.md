@@ -224,8 +224,23 @@ anywhere (file paths are identity):
 - a **Universe** (`universe.js`) is compile-time policy — global rewrites +
   excludes, plus per-host behaviors under `fqdns`, consulted only
   while GENERATING manifests, never at rewrite time;
-- the **Ledger** (`ledger.js`) is the COLLECTION — every manifest discovered
-  under a tree.
+- the **Ledger** (`ledger.js`) is the COLLECTION — every manifest and every
+  capture list discovered under a tree.
+
+A **capture list** (`captures.jsonl`) is the ledger's second file kind, for a
+source that is not a markdown file. A manifest is keyed by original URL, so
+it holds one capture per URL. A capture list is one JSON object per line,
+each naming one capture, so it holds every version of a URL:
+
+```json
+{"wayback":"https://web.archive.org/web/<timestamp>id_/<url>","rank":0,"mimetype":"image/gif"}
+```
+
+`wayback` is required and parseable. `rank` is optional, a non-negative
+integer, and sets fetch order (lower first). Every other field is the
+producer's own and is carried unread. `readCaptureList(file)` validates one.
+[`@autocache/waybackify-site`](../waybackify-site) writes them from the CDX
+index.
 
 ### Manifest schema v2
 
@@ -309,6 +324,42 @@ const ledger = discover(root);
 const union = flatten(ledger);
 const worklists = await against(ledger, cacheRoot);
 ```
+
+`captures(ledger)` is the capture-level view: every capture any manifest
+entry or capture-list row references, deduped by capture key, each with the
+`files` that name it and its `rank`. Where `flatten` keeps one capture per
+url, `captures` keeps every `(timestamp, original)` pair.
+
+### Filling a ledger: `backfill.js`, `remediate.js`, `status.js`, `cdx.js`
+
+```js
+import { backfill, converge } from '@autocache/waybackify/backfill.js';
+import { remediate } from '@autocache/waybackify/remediate.js';
+import { status } from '@autocache/waybackify/status.js';
+import { cdxPages } from '@autocache/waybackify/cdx.js';
+
+// One paced, resumable pass over the ledger's worklist — or passes until
+// nothing fetches or defers, backing off through outages and throttling.
+const pass = await backfill({ ledgerDir, root });
+const run = await converge({ ledgerDir, root });   // { converged, stalled, passes, totals, last }
+
+// Refetch raw every capture the archive answered with its viewer page.
+const swept = await remediate(root);               // { interstitials, tally, throttled }
+
+// How far the root is, and what no further pass will fix.
+const report = await status(ledgerDir, root);      // { states, groups, unfetched, attention, store, complete }
+
+// Every capture under a host, domain, or prefix — paged, outage-aware.
+for await (const page of cdxPages({ url: 'example.org', matchType: 'domain', from: '2002', to: '2007' })) {
+  // page.rows: [{ urlkey, timestamp, original, mimetype, statuscode, digest, length }]
+  // page.text: the raw page, verbatim
+}
+```
+
+The worklist `backfill` builds is stamped with a fingerprint of its ledger
+and rebuilt when the ledger changes. A run of captures that defer with
+nothing fetched stops the pass (`reason: 'throttled'`) and the next pass
+starts after them. See [docs/BACKFILL.md](../../docs/BACKFILL.md).
 
 `sourceRefs(file, { manifest })` enumerates one file's wayback references
 (inline markdown refs, optionally the sibling `wayback.json`'s entries),

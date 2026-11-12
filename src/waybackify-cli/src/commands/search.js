@@ -25,6 +25,9 @@
  * the default.
  *
  * @param {Object} [deps]
+ * @param {Function} [deps.cdxPages] - (query, opts) => AsyncIterable<page>, the
+ *   library's paged enumeration face (cdx.js#cdxPages), used when --match,
+ *   --from, or --to is given.
  * @param {Function} [deps.getSnapshots] - (url, opts) => Promise<capture[]>,
  *   the library's multi-row CDX face (WaybackMachine#getSnapshots). A rejected
  *   promise (network/CDX failure) propagates out and is turned into a domain
@@ -35,6 +38,39 @@
  */
 export function searchHandler(deps = {}) {
   return async ({ args, flags, logger, out = console.log }) => {
+    // paparam hands flags through as strings; a missing --limit is undefined,
+    // and Array#slice(0, undefined) keeps the whole list.
+    const limit = flags.limit === undefined ? undefined : Number(flags.limit);
+
+    // ENUMERATION (--match / --from / --to): the library's paged CDX face
+    // (cdx.js#cdxPages) — explicit limit, resume keys, a long backoff while
+    // the index is offline. A failure THROWS (domain exit 1): an outage is
+    // never an empty result.
+    if (flags.match !== undefined || flags.from !== undefined || flags.to !== undefined) {
+      const cdxPages = deps.cdxPages ?? (await import('@autocache/waybackify/cdx.js')).cdxPages;
+      let emitted = 0;
+      const query = { url: args.originalUrl, matchType: flags.match ?? 'exact', from: flags.from, to: flags.to };
+      for await (const page of cdxPages(query, { logger })) {
+        for (const r of page.rows) {
+          if (limit !== undefined && emitted >= limit) return;
+          emitted++;
+          out(
+            JSON.stringify({
+              timestamp: r.timestamp,
+              statuscode: r.statuscode,
+              mimetype: r.mimetype,
+              waybackUrl: `https://web.archive.org/web/${r.timestamp}/${r.original}`,
+              original: r.original,
+              digest: r.digest,
+              length: r.length,
+              urlkey: r.urlkey
+            })
+          );
+        }
+      }
+      return;
+    }
+
     let { getSnapshots } = deps;
     if (!getSnapshots) {
       const { WaybackMachine } = await import('@autocache/waybackify');
@@ -44,10 +80,6 @@ export function searchHandler(deps = {}) {
       const wayback = new WaybackMachine({ baseUrl: 'https://web.archive.org', logger });
       getSnapshots = (url, opts) => wayback.getSnapshots(url, opts);
     }
-
-    // paparam hands flags through as strings; a missing --limit is undefined,
-    // and Array#slice(0, undefined) keeps the whole list.
-    const limit = flags.limit === undefined ? undefined : Number(flags.limit);
 
     // --near forwards verbatim into the query options; a rejection here
     // (network/CDX failure) propagates → domain exit 1 with the message on

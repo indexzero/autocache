@@ -7,8 +7,9 @@
 // so the surface cannot drift by accident.
 //
 // The surface is nested: six flat verbs (manifest · rewrite · ledger · check ·
-// search · audit) plus the three tier GROUPS — `cache` (add · fill · crawl ·
-// verify), `remaster` (build · verify), and `bucket` (push · verify). paparam's help is
+// search · audit) plus the `site` source GROUP (enumerate · export) and the
+// three tier GROUPS — `cache` (add · fill · remediate · crawl · verify ·
+// status), `remaster` (build · verify), and `bucket` (push · verify). paparam's help is
 // variadic — root.help('remaster') yields the group's help, root.help('remaster',
 // 'build') yields the nested leaf's — so the `<group> <verb>` fixtures are named
 // `<group>-<verb>.txt`.
@@ -24,14 +25,15 @@ const root = createCLI();
 fs.writeFileSync(path.join(dir, 'root.txt'), root.help());
 
 // Flat verbs + the three groups (each group's own help lists its subcommands).
-const flat = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'audit', 'cache', 'remaster', 'bucket'];
+const flat = ['manifest', 'rewrite', 'ledger', 'check', 'search', 'audit', 'site', 'cache', 'remaster', 'bucket'];
 for (const name of flat) {
   fs.writeFileSync(path.join(dir, `${name}.txt`), root.help(name));
 }
 
 // Each group's subcommands (nested help), fixtures named `<group>-<verb>.txt`.
 const groups = {
-  cache: ['add', 'fill', 'crawl', 'verify'],
+  site: ['enumerate', 'export'],
+  cache: ['add', 'fill', 'remediate', 'crawl', 'verify', 'status'],
   remaster: ['build', 'verify'],
   bucket: ['push', 'verify']
 };

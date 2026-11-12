@@ -1,0 +1,27 @@
+waybackify cache remediate [flags]
+
+Refetch wrapper-stub captures raw
+
+Sweep a cache root for captures the archive answered with its own
+viewer page instead of the content — `interstitial` sidecars with
+signature wrapper-stub or extension-mismatch. Each is refetched raw
+(the id_ replay flag) and recommitted; the interstitial checks run
+again on the new bytes. No ledger: the root's own sidecars are the
+worklist. A stub that was already fetched raw, and every other
+interstitial signature, needs a different capture — reported as
+`repick`, never touched.
+
+Output: one JSONL row per interstitial sidecar on stdout
+({key, outcome: fixed | still | unavailable | deferred | repick});
+a summary on stderr. Exit 0 when nothing was deferred, 1 when a
+re-run has work left (429/5xx, or the sweep stopped on a throttle).
+
+Flags:
+  --root|-r <root>       cache root to sweep — required
+  --delay-ms <n>         pacing between refetches (default 3000)
+  --throttle-after <n>   consecutive deferrals before stopping (default 6; 0 = never)
+  --max <n>              cap refetches this run (default: no cap)
+  --dry-run              list what would be refetched; fetch nothing
+  --help|-h              Show help
+
+part of the wayback mirror tooling

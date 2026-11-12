@@ -1,0 +1,23 @@
+waybackify site [flags] [command]
+
+Whole-site source: enumerate · export
+
+The whole-site source — mirror every archived version of every URL
+under a host, domain, or prefix:
+
+  enumerate CDX index → one capture list per site (a ledger)
+  export    a filled cache root → <host>/<timestamp>/<path> files
+
+Between the two, the ledger is filled like any other: `cache fill
+--converge`, `cache remediate`, `cache verify`, `cache status`.
+
+Run `waybackify site <verb> --help` for a verb's full surface.
+
+Flags:
+  --help|-h   Show help
+
+Commands:
+  enumerate   Enumerate every archived version of whole sites into a ledger
+  export      Export a cache root as a browsable path tree
+
+part of the wayback mirror tooling

@@ -1,0 +1,23 @@
+waybackify cache status [flags] <dir>
+
+Summarize a cache root against a ledger
+
+One glance at how far a cache root is toward the ledger under <dir>:
+the capture-state histogram (cached | unfetched | interstitial |
+error), the same per top-level directory of the ledger, the
+unfetched split into gone (the archive lacks it) and pending, the
+captures no further pass will fix with their remedy, and the
+store's footprint. Read-only, no network.
+
+Output: a report on stdout (--json for the raw record). Exit 0
+when nothing is pending and nothing needs attention, 1 otherwise.
+
+Arguments:
+  <dir>              root to discover manifests and capture lists under
+
+Flags:
+  --root|-r <root>   cache root to summarize — required
+  --json             emit the raw record as JSON
+  --help|-h          Show help
+
+part of the wayback mirror tooling

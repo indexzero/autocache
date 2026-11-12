@@ -58,6 +58,26 @@ export function ledgerHandler(deps = {}) {
       return;
     }
 
+    if (flags.captures) {
+      // The capture-level view: every (timestamp, original) the ledger names,
+      // with the files that name it. Where --flatten keeps one capture per
+      // url, this keeps them all.
+      const captures = deps.captures ?? (await import('@autocache/waybackify/ledger.js')).captures;
+      for (const item of captures(discovered)) {
+        out(
+          JSON.stringify({
+            key: item.key,
+            waybackUrl: item.waybackUrl,
+            timestamp: item.timestamp,
+            originalUrl: item.originalUrl,
+            files: item.files,
+            rank: item.rank
+          })
+        );
+      }
+      return;
+    }
+
     // --root|-r is canonical; --against is the deprecated alias (cli.js).
     const root = flags.root ?? flags.against;
     if (root) {
@@ -88,7 +108,12 @@ export function ledgerHandler(deps = {}) {
       return;
     }
 
-    for (const { file, manifest } of discovered) {
+    for (const { file, manifest, captures: rows } of discovered) {
+      if (rows) {
+        // A capture list carries no rewrite program — its count is its rows.
+        out(JSON.stringify({ file, captures: rows.length }));
+        continue;
+      }
       out(
         JSON.stringify({
           file,

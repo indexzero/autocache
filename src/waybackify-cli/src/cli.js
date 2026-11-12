@@ -3,8 +3,9 @@
 // This module pins the ENTIRE command/option contract — names, args, flags,
 // help text, exit codes — with ZERO implementation. The command handlers
 // (manifest, rewrite, ledger, check, search, audit, plus the three tier
-// groups: `cache` add · fill · crawl · verify, `remaster` build · verify, and
-// `bucket` push · verify) are injected by the bin; a missing handler throws Not
+// groups: `cache` add · fill · remediate · crawl · verify · status, `remaster`
+// build · verify, and `bucket` push · verify, and the `site` source group:
+// enumerate · export) are injected by the bin; a missing handler throws Not
 // implemented (exit 70) as a defensive path. Implementations never touch argv
 // parsing.
 //
@@ -171,13 +172,29 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'date-anchoring cleverness: --near passes through, default is\n' +
         "CDX's own ordering.\n" +
         '\n' +
+        '--match, --from, or --to switch to ENUMERATION: every capture under\n' +
+        'a host, domain, or prefix, paged, with a long backoff while the\n' +
+        'index is offline. An outage fails the command (exit 1); it is never\n' +
+        'read as "no captures".\n' +
+        '\n' +
         'Output: JSONL, {timestamp, statuscode, mimetype, waybackUrl} per\n' +
-        'capture.'
+        'capture; enumeration adds {original, digest, length, urlkey}.'
     ),
-    arg('<original-url>', 'the archived-site URL to query captures of'),
+    arg('<original-url>', 'the archived-site URL (or host, domain, prefix) to query captures of'),
     flag('--near <ts>', 'preferred timestamp (YYYYMMDD[HHMMSS]); passed through to CDX'),
     flag('--limit <n>', 'maximum captures to emit'),
+    flag('--match <type>', 'enumerate: exact | prefix | host | domain'),
+    flag('--from <ts>', 'enumerate: window start (1–14 digits)'),
+    flag('--to <ts>', 'enumerate: window end (1–14 digits)'),
     validate(({ args }) => Boolean(args.originalUrl), 'missing required argument: <original-url>'),
+    validate(
+      ({ flags }) => flags.match === undefined || ['exact', 'prefix', 'host', 'domain'].includes(flags.match),
+      '--match must be one of exact | prefix | host | domain'
+    ),
+    validate(
+      ({ flags }) => ['from', 'to'].every(k => flags[k] === undefined || /^\d{1,14}$/.test(flags[k])),
+      '--from and --to must be 1–14 digit timestamps'
+    ),
     handlers.search ?? notImplemented('search')
   );
 
@@ -247,21 +264,28 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     'ledger',
     summary('Survey the manifests under a tree'),
     description(
-      'Survey the ledger — every wayback.json manifest under <dir>, file\n' +
-        'paths as identity. Default: one JSONL row per manifest with section\n' +
-        'counts. --flatten: union the ledger into ONE canonical manifest on\n' +
-        'stdout (the seen-file bootstrap for manifest). --against: join the\n' +
-        'ledger against a cache root, one JSONL row per referenced capture,\n' +
+      'Survey the ledger — every wayback.json manifest and captures.jsonl\n' +
+        'capture list under <dir>, file paths as identity. Default: one JSONL\n' +
+        'row per file with section counts. --flatten: union the manifests\n' +
+        'into ONE canonical manifest on stdout (the seen-file bootstrap for\n' +
+        'manifest; one capture per url). --captures: one JSONL row per\n' +
+        'referenced capture, every version kept, with the files that name\n' +
+        'it. --root: the same rows joined against a cache root and\n' +
         'classified unfetched | cached | interstitial | error.'
     ),
     arg('<dir>', 'root to discover wayback.json manifests under'),
     flag('--flatten', 'print the union manifest (canonical JSON) instead of rows'),
+    flag('--captures', 'print one row per referenced capture (no cache root needed)'),
     flag('--root|-r <root>', 'classify referenced captures against this cache root'),
     flag('--against <root>', 'deprecated alias of --root|-r'),
     validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
     validate(
       ({ flags }) => !(flags.flatten && (flags.root || flags.against)),
       '--flatten and --root are mutually exclusive'
+    ),
+    validate(
+      ({ flags }) => !(flags.captures && (flags.flatten || flags.root || flags.against)),
+      '--captures stands alone (not with --flatten or --root)'
     ),
     handlers.ledger ?? notImplemented('ledger')
   );
@@ -303,6 +327,8 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'ledger under <dir> references — each referenced page AND its\n' +
         'requisites (im_/cs_/js_/oe_). The bulk, resumable form of `cache add` —\n' +
         'the whole-corpus population path (wrap it in a thin repo shim).\n' +
+        'Pages (flagless replay URLs) are always fetched before content named\n' +
+        'with a replay flag; --pages-only stops after the pages.\n' +
         '\n' +
         'A durable worklist (never-fetched + not-yet-closed captures) is\n' +
         'enumerated ONCE and reused across runs, so pacing and resume\n' +
@@ -311,16 +337,31 @@ export function createCLI({ handlers = {}, onBail } = {}) {
         'a 404 is recorded gone and never retried. Killable + resumable — the\n' +
         'cache root is the done-truth; re-run to finish.\n' +
         '\n' +
+        'The worklist is stamped with the ledger that built it and rebuilt\n' +
+        'when the ledger changes. A run of captures that defer with nothing\n' +
+        'fetched (archive.org throttling) STOPS the run; the next one starts\n' +
+        'after the streak. --converge repeats passes, backing off after a\n' +
+        'stop or a pass with no progress, until nothing fetches or defers.\n' +
+        '\n' +
         'Output: progress on stderr; one JSON summary line on stdout. Exit 0\n' +
-        'normal (deferrals expected — re-run to converge), 1 on abort\n' +
-        '(archive.org unreachable — the mirror is incomplete, re-run).'
+        'normal (deferrals expected — re-run to converge), 1 on a stop\n' +
+        '(archive.org unreachable or throttling — the mirror is incomplete,\n' +
+        're-run) or, under --converge, when the worklist did not converge.'
     ),
     arg('<dir>', 'root to discover wayback.json manifests under'),
     flag('--root|-r <root>', 'cache root to populate + measure closure against — required'),
     flag('--delay-ms <n>', 'pacing between captures — a page + its requisites fetch together, browser-style (default 1500)'),
     flag('--abort-after <n>', 'consecutive connection failures before aborting (default 5)'),
+    flag('--throttle-after <n>', 'consecutive captures deferred with nothing fetched before stopping (default 6; 0 = never)'),
+    flag('--request-delay-ms <n>', 'pacing between the requisite requests of one capture (default 0)'),
+    flag('--no-requisites', 'store only the named captures; record their requisite edges, fetch none'),
+    flag('--pages-only', 'attempt only the pages (flagless replay URLs); leave id_/im_/oe_ content pending'),
     flag('--max <n>', 'cap captures fetched this run, then exit (default: no cap)'),
-    flag('--refresh', 'rebuild the worklist from a fresh enumerate (default: reuse)'),
+    flag('--refresh', 'rebuild the worklist even when the ledger is unchanged'),
+    flag('--converge', 'repeat passes until nothing fetches or defers'),
+    flag('--backoff-s <n>', 'converge: first backoff after a stop or a no-progress pass (default 300)'),
+    flag('--backoff-max-s <n>', 'converge: backoff ceiling; the backoff doubles up to it (default 1800)'),
+    flag('--max-stall <n>', 'converge: consecutive no-progress passes before giving up (default 6)'),
     flag('--dry-run', 'build/show the worklist; fetch nothing'),
     validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
     validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
@@ -329,14 +370,73 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     // typo like `--delay-ms 1,500` become NaN and silently disable pacing.
     validate(
       ({ flags }) =>
-        ['delayMs', 'abortAfter', 'max'].every(k => {
+        ['delayMs', 'abortAfter', 'max', 'throttleAfter', 'requestDelayMs', 'backoffS', 'backoffMaxS', 'maxStall'].every(k => {
           if (flags[k] === undefined) return true;
           const n = Number(flags[k]);
           return Number.isFinite(n) && n >= 0;
         }),
-      '--delay-ms, --abort-after, and --max must be non-negative numbers'
+      '--delay-ms, --abort-after, --max, --throttle-after, --request-delay-ms, --backoff-s, --backoff-max-s, and --max-stall must be non-negative numbers'
     ),
+    validate(({ flags }) => !(flags.converge && flags.dryRun), '--converge and --dry-run are mutually exclusive'),
     handlers.cacheFill ?? notImplemented('cache fill')
+  );
+
+  const cacheRemediate = command(
+    'remediate',
+    summary('Refetch wrapper-stub captures raw'),
+    description(
+      'Sweep a cache root for captures the archive answered with its own\n' +
+        'viewer page instead of the content — `interstitial` sidecars with\n' +
+        'signature wrapper-stub or extension-mismatch. Each is refetched raw\n' +
+        '(the id_ replay flag) and recommitted; the interstitial checks run\n' +
+        'again on the new bytes. No ledger: the root\'s own sidecars are the\n' +
+        'worklist. A stub that was already fetched raw, and every other\n' +
+        'interstitial signature, needs a different capture — reported as\n' +
+        '`repick`, never touched.\n' +
+        '\n' +
+        'Output: one JSONL row per interstitial sidecar on stdout\n' +
+        '({key, outcome: fixed | still | unavailable | deferred | repick});\n' +
+        'a summary on stderr. Exit 0 when nothing was deferred, 1 when a\n' +
+        're-run has work left (429/5xx, or the sweep stopped on a throttle).'
+    ),
+    flag('--root|-r <root>', 'cache root to sweep — required'),
+    flag('--delay-ms <n>', 'pacing between refetches (default 3000)'),
+    flag('--throttle-after <n>', 'consecutive deferrals before stopping (default 6; 0 = never)'),
+    flag('--max <n>', 'cap refetches this run (default: no cap)'),
+    flag('--dry-run', 'list what would be refetched; fetch nothing'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    validate(
+      ({ flags }) =>
+        ['delayMs', 'throttleAfter', 'max'].every(k => {
+          if (flags[k] === undefined) return true;
+          const n = Number(flags[k]);
+          return Number.isFinite(n) && n >= 0;
+        }),
+      '--delay-ms, --throttle-after, and --max must be non-negative numbers'
+    ),
+    handlers.cacheRemediate ?? notImplemented('cache remediate')
+  );
+
+  const cacheStatus = command(
+    'status',
+    summary('Summarize a cache root against a ledger'),
+    description(
+      'One glance at how far a cache root is toward the ledger under <dir>:\n' +
+        'the capture-state histogram (cached | unfetched | interstitial |\n' +
+        'error), the same per top-level directory of the ledger, the\n' +
+        'unfetched split into gone (the archive lacks it) and pending, the\n' +
+        'captures no further pass will fix with their remedy, and the\n' +
+        'store\'s footprint. Read-only, no network.\n' +
+        '\n' +
+        'Output: a report on stdout (--json for the raw record). Exit 0\n' +
+        'when nothing is pending and nothing needs attention, 1 otherwise.'
+    ),
+    arg('<dir>', 'root to discover manifests and capture lists under'),
+    flag('--root|-r <root>', 'cache root to summarize — required'),
+    flag('--json', 'emit the raw record as JSON'),
+    validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    handlers.cacheStatus ?? notImplemented('cache status')
   );
 
   const cacheCrawl = command(
@@ -417,15 +517,17 @@ export function createCLI({ handlers = {}, onBail } = {}) {
 
   const cache = command(
     'cache',
-    summary('Cache-store ops: add · fill · crawl · verify'),
+    summary('Cache-store ops: add · fill · remediate · crawl · verify · status'),
     description(
       'The cache-store command group — populate, complete, and verify the\n' +
         'hermetic wayback cache image (the archive of record):\n' +
         '\n' +
         '  add       fetch ONE capture (+ its requisites) into a cache root\n' +
         '  fill      drive a whole ledger to full asset closure (bulk, resumable)\n' +
+        '  remediate refetch wrapper-stub captures raw (the id_ sweep)\n' +
         '  crawl     drive documents to a dynamic-completeness fixpoint (browser)\n' +
         '  verify    check a cache root against its own sidecars (fsck)\n' +
+        '  status    summarize a cache root against a ledger\n' +
         '\n' +
         'The remastered standalone tier lives under `remaster` and the bucket\n' +
         'projection under `bucket`.\n' +
@@ -440,8 +542,10 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     footer('part of the wayback mirror tooling'),
     cacheAdd,
     cacheFill,
+    cacheRemediate,
     cacheCrawl,
-    cacheVerify
+    cacheVerify,
+    cacheStatus
   );
 
   // ---- remaster: the standalone-tier command group -------------------------
@@ -594,6 +698,86 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     bucketVerify
   );
 
+  // ---- site: the whole-site source command group ----------------------------
+  // enumerate · export. A source tells the cache pipeline which captures to
+  // fetch; `manifest` is the markdown source, `site` is the whole-site one
+  // (@autocache/waybackify-site). Everything between the two verbs is the
+  // ordinary `cache` group.
+
+  const siteEnumerate = command(
+    'enumerate',
+    summary('Enumerate every archived version of whole sites into a ledger'),
+    description(
+      'Walk the CDX index for every query in a site config, inside its date\n' +
+        'window, and write one capture list per site under --ledger:\n' +
+        '<ledger>/<site>/captures.jsonl, one row per distinct version of\n' +
+        'every URL, ranked so one capture of everything is fetched first.\n' +
+        'Beside it: the raw CDX pages (cdx/), the resolved redirects, an\n' +
+        'inventory of every CDX row with its disposition, and a summary.\n' +
+        '\n' +
+        'HTML is listed through the normal replay (cache fill fetches its\n' +
+        'requisites) unless a config rule marks its host raw; everything\n' +
+        'else is listed raw (id_). Deterministic: a rerun over unchanged CDX\n' +
+        'data rewrites nothing, and --offline rebuilds from the saved pages.\n' +
+        '\n' +
+        'Output: progress on stderr; one JSON summary line on stdout. Exit 1\n' +
+        'when the index stays offline — rerun the same command.'
+    ),
+    arg('<config.json>', 'site config: window, sites → CDX queries, per-host rules'),
+    flag('--ledger <dir>', 'directory to write <site>/captures.jsonl (+ provenance) under — required'),
+    flag('--site <name>', 'only this site (repeatable; default: every site in the config)').multiple(),
+    flag('--offline', 'no network: rebuild from the saved CDX pages'),
+    flag('--no-redirects', 'skip 3xx Location resolution and redirect-target queries'),
+    flag('--repick-from <root>', 'skip captures this cache root holds as interstitial, error, or gone; pick the next capture of the same content'),
+    validate(({ args }) => Boolean(args.config), 'missing required argument: <config.json>'),
+    validate(({ flags }) => Boolean(flags.ledger), 'missing required flag: --ledger <dir>'),
+    handlers.siteEnumerate ?? notImplemented('site enumerate')
+  );
+
+  const siteExport = command(
+    'export',
+    summary('Export a cache root as a browsable path tree'),
+    description(
+      'Copy every stored body in a cache root to\n' +
+        '<out>/<host>/<timestamp>/<path>, bytes untouched, with an\n' +
+        'index.jsonl row per file (original URL, replay URL, document or\n' +
+        'requisite, content type, digest). Bodiless sidecars are listed in\n' +
+        '_unexported.jsonl. Paths that clash on a case-insensitive filesystem\n' +
+        'are resolved the same way everywhere and listed in\n' +
+        '_collisions.jsonl. Re-runs write only what changed.\n' +
+        '\n' +
+        'Output: one JSON summary line on stdout.'
+    ),
+    arg('<dir>', 'the ledger the root was filled from (names the documents)'),
+    flag('--root|-r <root>', 'cache root to read — required'),
+    flag('--out <dir>', 'directory to write the tree under (outside the root) — required'),
+    flag('--dry-run', 'plan and count; write nothing'),
+    validate(({ args }) => Boolean(args.dir), 'missing required argument: <dir>'),
+    validate(({ flags }) => Boolean(flags.root), 'missing required flag: --root|-r <root>'),
+    validate(({ flags }) => Boolean(flags.out), 'missing required flag: --out <dir>'),
+    handlers.siteExport ?? notImplemented('site export')
+  );
+
+  const site = command(
+    'site',
+    summary('Whole-site source: enumerate · export'),
+    description(
+      'The whole-site source — mirror every archived version of every URL\n' +
+        'under a host, domain, or prefix:\n' +
+        '\n' +
+        '  enumerate CDX index → one capture list per site (a ledger)\n' +
+        '  export    a filled cache root → <host>/<timestamp>/<path> files\n' +
+        '\n' +
+        'Between the two, the ledger is filled like any other: `cache fill\n' +
+        '--converge`, `cache remediate`, `cache verify`, `cache status`.\n' +
+        '\n' +
+        'Run `waybackify site <verb> --help` for a verb\'s full surface.'
+    ),
+    footer('part of the wayback mirror tooling'),
+    siteEnumerate,
+    siteExport
+  );
+
   const audit = command(
     'audit',
     summary('Checkpointed wayback-404 audit of a ledger'),
@@ -629,14 +813,15 @@ export function createCLI({ handlers = {}, onBail } = {}) {
 
   const root = command(
     'waybackify',
-    summary('manifest / rewrite / ledger / check / search / audit + the cache · remaster · bucket store groups over the waybackify library'),
+    summary('manifest / rewrite / ledger / check / search / audit + the site source group + the cache · remaster · bucket store groups over the waybackify library'),
     description(
       'Human-operable, xargs-composable front door over waybackify:\n' +
         'generate a manifest for a source file, rewrite it to its published\n' +
         'form, survey the ledger of manifests under a tree, hand-check a\n' +
-        'capture, re-pick a better one, run a checkpointed corpus audit, and —\n' +
-        'under the `cache` / `remaster` / `bucket` groups — populate, verify,\n' +
-        'remaster, and project the wayback mirror image.\n' +
+        'capture, re-pick a better one, run a checkpointed corpus audit,\n' +
+        'enumerate whole sites under the `site` group, and — under the\n' +
+        '`cache` / `remaster` / `bucket` groups — populate, verify, remaster,\n' +
+        'and project the wayback mirror image.\n' +
         '\n' +
         'Exit codes: 0 success · 1 domain failure (bad verdict / not found) ·\n' +
         '2 usage error · 3 suspect verdict (check only).'
@@ -648,6 +833,7 @@ export function createCLI({ handlers = {}, onBail } = {}) {
     check,
     search,
     audit,
+    site,
     cache,
     remaster,
     bucket

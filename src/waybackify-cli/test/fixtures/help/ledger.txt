@@ -2,11 +2,13 @@ waybackify ledger [flags] <dir>
 
 Survey the manifests under a tree
 
-Survey the ledger — every wayback.json manifest under <dir>, file
-paths as identity. Default: one JSONL row per manifest with section
-counts. --flatten: union the ledger into ONE canonical manifest on
-stdout (the seen-file bootstrap for manifest). --against: join the
-ledger against a cache root, one JSONL row per referenced capture,
+Survey the ledger — every wayback.json manifest and captures.jsonl
+capture list under <dir>, file paths as identity. Default: one JSONL
+row per file with section counts. --flatten: union the manifests
+into ONE canonical manifest on stdout (the seen-file bootstrap for
+manifest; one capture per url). --captures: one JSONL row per
+referenced capture, every version kept, with the files that name
+it. --root: the same rows joined against a cache root and
 classified unfetched | cached | interstitial | error.
 
 Arguments:
@@ -14,6 +16,7 @@ Arguments:
 
 Flags:
   --flatten          print the union manifest (canonical JSON) instead of rows
+  --captures         print one row per referenced capture (no cache root needed)
   --root|-r <root>   classify referenced captures against this cache root
   --against <root>   deprecated alias of --root|-r
   --help|-h          Show help

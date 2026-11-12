@@ -7,15 +7,23 @@ re-picking a better capture when check flags one bad. No
 date-anchoring cleverness: --near passes through, default is
 CDX's own ordering.
 
+--match, --from, or --to switch to ENUMERATION: every capture under
+a host, domain, or prefix, paged, with a long backoff while the
+index is offline. An outage fails the command (exit 1); it is never
+read as "no captures".
+
 Output: JSONL, {timestamp, statuscode, mimetype, waybackUrl} per
-capture.
+capture; enumeration adds {original, digest, length, urlkey}.
 
 Arguments:
-  <original-url>   the archived-site URL to query captures of
+  <original-url>   the archived-site URL (or host, domain, prefix) to query captures of
 
 Flags:
   --near <ts>      preferred timestamp (YYYYMMDD[HHMMSS]); passed through to CDX
   --limit <n>      maximum captures to emit
+  --match <type>   enumerate: exact | prefix | host | domain
+  --from <ts>      enumerate: window start (1–14 digits)
+  --to <ts>        enumerate: window end (1–14 digits)
   --help|-h        Show help
 
 part of the wayback mirror tooling

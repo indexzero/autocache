@@ -1,7 +1,7 @@
 {
   "name": "@autocache/waybackify-cli",
   "version": "0.5.0",
-  "description": "waybackify — manifest / rewrite / ledger / check / search / audit / remaster / bucket over the waybackify library. Surface v2: manifest = generation, rewrite = application, ledger = the collection. Audit surveys captures, remaster builds/verifies the standalone tier, bucket pushes/verifies the mirror.",
+  "description": "waybackify — manifest / rewrite / ledger / check / search / audit / site / cache / remaster / bucket over the waybackify library. Surface v2: manifest = generation, rewrite = application, ledger = the collection. Audit surveys captures, site enumerates whole sites, remaster builds/verifies the standalone tier, bucket pushes/verifies the mirror.",
   "type": "module",
   "bin": {
     "waybackify": "./bin/waybackify.js"
@@ -25,6 +25,7 @@
   "dependencies": {
     "@autocache/waybackify": "workspace:*",
     "@autocache/waybackify-crawl": "workspace:*",
+    "@autocache/waybackify-site": "workspace:*",
     "@autocache/waybackify-verify": "workspace:*",
     "paparam": "^1.12.0",
     "pino": "^10.3.1",

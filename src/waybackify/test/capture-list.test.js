@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { selectWorklist } from '../backfill.js';
 import { commitEntry } from '../cache.js';
 import { against, captures, discover, flatten, readCaptureList } from '../ledger.js';
 
@@ -80,5 +81,28 @@ describe('ledger — manifests and capture lists together', () => {
     assert.deepEqual(worklists.unfetched.map(i => [i.timestamp, i.rank]), [['20020101000000', 1]]);
     assert.deepEqual(worklists.cached.map(i => i.timestamp), ['20030101000000']);
     assert.deepEqual(worklists.interstitial.map(i => [i.timestamp, i.signature]), [['20040101000000', 'wrapper-stub']]);
+  });
+
+  it('the worklist puts every page before any content, whatever the rank', () => {
+    const page = (key, rank) => ({ key, rank, waybackUrl: `https://web.archive.org/web/${key}` });
+    const raw = (ts, rest, rank) => ({ key: `${ts}/${rest}`, rank, waybackUrl: `https://web.archive.org/web/${ts}id_/${rest}` });
+    assert.deepEqual(
+      selectWorklist({ unfetched: [raw('1', 'a.gif', 0), page('9/z', 3), raw('2', 'b.pdf', 0), page('1/a', 0)] }),
+      [
+        'https://web.archive.org/web/1/a',
+        'https://web.archive.org/web/9/z',
+        'https://web.archive.org/web/1id_/a.gif',
+        'https://web.archive.org/web/2id_/b.pdf'
+      ],
+      'a rank-3 page still precedes a rank-0 raw capture'
+    );
+  });
+
+  it('the worklist orders by rank before key: one capture of everything comes first', () => {
+    const item = (key, rank) => ({ key, rank, waybackUrl: `https://web.archive.org/web/${key}` });
+    assert.deepEqual(
+      selectWorklist({ unfetched: [item('1/b', 1), item('3/a', 0)], cached: [item('2/a', 1), item('1/a', 0)] }),
+      ['https://web.archive.org/web/1/a', 'https://web.archive.org/web/3/a', 'https://web.archive.org/web/1/b', 'https://web.archive.org/web/2/a']
+    );
   });
 });

@@ -1,0 +1,34 @@
+{
+  "name": "@autocache/waybackify-site",
+  "version": "0.5.0",
+  "description": "The whole-site source for the wayback mirror — enumerates every archived version of every URL under a host, domain, or prefix into a capture list the cache pipeline fills, and exports a filled cache root as a browsable path tree. Depends down on waybackify (facts), never the reverse.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./config": "./src/config.js",
+    "./enumerate": "./src/enumerate.js",
+    "./export": "./src/export.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test ./test/*.test.js"
+  },
+  "keywords": [
+    "wayback",
+    "internet-archive",
+    "cdx",
+    "mirror",
+    "site"
+  ],
+  "author": "Charlie Robbins <npm@charlie.dev>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indexzero/autocache.git",
+    "directory": "src/waybackify-site"
+  },
+  "dependencies": {
+    "@autocache/waybackify": "workspace:*"
+  }
+}
